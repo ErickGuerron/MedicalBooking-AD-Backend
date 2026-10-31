@@ -29,7 +29,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --locked --no-dev --no-install-project
 
-COPY alembic.ini ./
+COPY README.md alembic.ini ./
 COPY migrations ./migrations
 COPY src ./src
 RUN uv sync --locked --no-dev
