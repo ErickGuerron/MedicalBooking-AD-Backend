@@ -28,7 +28,15 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(health_bp)
     _register_error_handlers(app)
     _register_correlation_id(app)
+    _register_replica_header(app, settings.replica_id)
     return app
+
+
+def _register_replica_header(app: Flask, replica_id: str) -> None:
+    @app.after_request
+    def _echo_replica_id(response: Response) -> Response:
+        response.headers["X-Replica-Id"] = replica_id
+        return response
 
 
 def _register_correlation_id(app: Flask) -> None:

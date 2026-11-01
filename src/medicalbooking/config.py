@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import quote_plus
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_env: Literal["local", "test", "production"] = "local"
+
+    # Identifies one replica (for example api-1). Echoed in X-Replica-Id so load
+    # balancing across instances can be observed; it carries no secrets.
+    replica_id: str = Field(default="local", pattern=r"^[A-Za-z0-9._-]{1,64}$")
 
     sqlserver_host: str = "localhost"
     sqlserver_port: int = 1433
