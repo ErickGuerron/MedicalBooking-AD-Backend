@@ -7,6 +7,7 @@ Concurrency is enforced by the database.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from flask import Flask, Response, g, jsonify, request
@@ -20,6 +21,9 @@ from medicalbooking.modules.identity.infrastructure.security import (
     JwtTokenIssuer,
 )
 from medicalbooking.modules.identity.presentation.routes import identity_bp
+from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
+from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
+from medicalbooking.modules.scheduling.presentation.routes import scheduling_bp
 from medicalbooking.shared.domain.errors import AppError
 from medicalbooking.shared.infrastructure.database import create_database_engine
 from medicalbooking.shared.presentation.health import health_bp
@@ -34,9 +38,11 @@ def create_app(settings: Settings | None = None) -> Flask:
     engine = create_database_engine(settings)
     app.extensions["medicalbooking.engine"] = engine
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
+    app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
 
     app.register_blueprint(health_bp)
     app.register_blueprint(identity_bp)
+    app.register_blueprint(scheduling_bp)
     _register_error_handlers(app)
     _register_correlation_id(app)
     _register_replica_header(app, settings.replica_id)
@@ -50,6 +56,15 @@ def _build_identity(settings: Settings, engine: Any) -> IdentityService:
         directory=SqlUserDirectory(engine),
         hasher=Argon2PasswordHasher(),
         tokens=JwtTokenIssuer(signing_key, settings.jwt_access_ttl_minutes),
+    )
+
+
+def _build_scheduling(settings: Settings, engine: Any) -> SchedulingService:
+    """Composition root for scheduling: the clock is injected so rules stay testable."""
+    return SchedulingService(
+        store=SqlSchedulingStore(engine),
+        clock=lambda: datetime.now(UTC),
+        hold_minutes=settings.appointment_hold_minutes,
     )
 
 

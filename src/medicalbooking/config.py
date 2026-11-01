@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     jwt_signing_key: SecretStr | None = None
     jwt_access_ttl_minutes: int = Field(default=15, ge=1, le=60)
 
+    # How long a pending appointment holds its slot before payment (payment phase, E4).
+    appointment_hold_minutes: int = Field(default=15, ge=1, le=120)
+
     @model_validator(mode="after")
     def _check_signing_key_strength(self) -> Settings:
         # HS256 needs at least 256 bits of entropy; shorter keys are brute-forceable.
