@@ -31,7 +31,10 @@ Defaults target the local development instance.
 | `SQLSERVER_DRIVER` | `ODBC Driver 18 for SQL Server` | |
 | `SQLSERVER_ENCRYPT` | `yes` | |
 | `SQLSERVER_TRUST_SERVER_CERTIFICATE` | `yes` | Local only. Azure SQL: `no` |
-| `JWT_SIGNING_KEY` | none | Required outside `local`/`test` |
+| `JWT_SIGNING_KEY` | none | Required outside `local`/`test`; at least 32 characters |
+| `JWT_ACCESS_TTL_MINUTES` | `15` | Access token lifetime (1 to 60) |
+| `APPOINTMENT_HOLD_MINUTES` | `15` | How long a pending appointment holds its slot (1 to 120) |
+| `API_DOCS_ENABLED` | unset | Unset: on outside `production`, off in `production`. Set `true` or `false` to override |
 
 ## Database migrations
 
@@ -65,3 +68,39 @@ uv run flask --app medicalbooking.app:create_app run --port 5000
 ```
 
 Health probes: `GET /health/live` (no dependencies), `GET /health/ready` (database).
+
+## Endpoints
+
+All endpoints except login and health require `Authorization: Bearer <token>`.
+Errors use `application/problem+json` with `correlation_id`.
+
+| Method and path | Purpose | Notes |
+|---|---|---|
+| `POST /api/v1/auth/login` | Sign in, returns a bearer token | Same answer for unknown email and wrong password |
+| `GET /api/v1/me` | Current user, roles and permissions | |
+| `POST /api/v1/users` | Create a user | Requires `usuarios.administrar` |
+| `GET /api/v1/availability?desde=&hasta=&medico_id=` | Free slots in a window | ISO-8601 with offset; window at most 31 days; past slots never returned |
+| `POST /api/v1/appointments` | Reserve a slot (status `PENDIENTE_PAGO`) | Requires header `Idempotency-Key` (8 to 100 characters). Same key and body returns the original (200); same key with another body returns 409; a new reservation returns 201 |
+| `POST /api/v1/appointments/{id}/cancel` | Cancel an own appointment and release its slot | Missing and foreign appointments both return 403 |
+
+Booking is safe under concurrency: the slot is claimed with a conditional update and a
+filtered unique index, so concurrent requests for one slot yield exactly one `201`.
+Pending appointments do not expire yet; the expiration worker belongs to the payment phase.
+
+### API reference (Scalar)
+
+With `API_DOCS_ENABLED` on (default outside production):
+
+- Reference page: `GET /api/docs` (Scalar, can send requests with a bearer token).
+- OpenAPI 3.1 document: `GET /api/v1/openapi.json`.
+
+In production the routes return 404 unless `API_DOCS_ENABLED=true` is set explicitly.
+
+Export the document without a running server or database:
+
+```powershell
+uv run python -c "from medicalbooking.app import create_app; from medicalbooking.config import Settings; c = create_app(Settings(_env_file=None, api_docs_enabled=True)).test_client(); open('docs/api/openapi.json','wb').write(c.get('/api/v1/openapi.json').data)"
+```
+
+`docs/api/openapi.json` is the committed copy used to generate clients (see `docs/`).
+Regenerate it after any contract change.

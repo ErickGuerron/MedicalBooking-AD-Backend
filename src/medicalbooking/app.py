@@ -20,12 +20,15 @@ from medicalbooking.modules.identity.infrastructure.security import (
     Argon2PasswordHasher,
     JwtTokenIssuer,
 )
+from medicalbooking.modules.identity.presentation.openapi import identity_fragment
 from medicalbooking.modules.identity.presentation.routes import identity_bp
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
+from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
 from medicalbooking.modules.scheduling.presentation.routes import scheduling_bp
 from medicalbooking.shared.domain.errors import AppError
 from medicalbooking.shared.infrastructure.database import create_database_engine
+from medicalbooking.shared.presentation.api_docs import register_api_docs
 from medicalbooking.shared.presentation.health import health_bp
 
 _CORRELATION_HEADER = "X-Correlation-ID"
@@ -43,6 +46,8 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(health_bp)
     app.register_blueprint(identity_bp)
     app.register_blueprint(scheduling_bp)
+    if settings.docs_enabled:
+        register_api_docs(app, [identity_fragment(), scheduling_fragment()])
     _register_error_handlers(app)
     _register_correlation_id(app)
     _register_replica_header(app, settings.replica_id)
