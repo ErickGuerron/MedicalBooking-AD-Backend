@@ -13,6 +13,14 @@ from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from medicalbooking.config import Settings
+from medicalbooking.modules.identity.application.use_cases import IdentityService
+from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
+from medicalbooking.modules.identity.infrastructure.security import (
+    Argon2PasswordHasher,
+    JwtTokenIssuer,
+)
+from medicalbooking.modules.identity.presentation.routes import identity_bp
+from medicalbooking.shared.domain.errors import AppError
 from medicalbooking.shared.infrastructure.database import create_database_engine
 from medicalbooking.shared.presentation.health import health_bp
 
@@ -23,13 +31,26 @@ def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or Settings()
     app = Flask("medicalbooking")
     app.extensions["medicalbooking.settings"] = settings
-    app.extensions["medicalbooking.engine"] = create_database_engine(settings)
+    engine = create_database_engine(settings)
+    app.extensions["medicalbooking.engine"] = engine
+    app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
 
     app.register_blueprint(health_bp)
+    app.register_blueprint(identity_bp)
     _register_error_handlers(app)
     _register_correlation_id(app)
     _register_replica_header(app, settings.replica_id)
     return app
+
+
+def _build_identity(settings: Settings, engine: Any) -> IdentityService:
+    """Composition root for identity: wires adapters into the use cases."""
+    signing_key = settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None
+    return IdentityService(
+        directory=SqlUserDirectory(engine),
+        hasher=Argon2PasswordHasher(),
+        tokens=JwtTokenIssuer(signing_key, settings.jwt_access_ttl_minutes),
+    )
 
 
 def _register_replica_header(app: Flask, replica_id: str) -> None:
@@ -68,6 +89,10 @@ def _problem(status: int, title: str, detail: str) -> tuple[Response, int]:
 
 
 def _register_error_handlers(app: Flask) -> None:
+    @app.errorhandler(AppError)
+    def _domain_error(error: AppError) -> tuple[Response, int]:
+        return _problem(error.status, error.title, error.detail)
+
     @app.errorhandler(HTTPException)
     def _http_error(error: HTTPException) -> tuple[Response, int]:
         return _problem(error.code or 500, error.name, error.description or "")

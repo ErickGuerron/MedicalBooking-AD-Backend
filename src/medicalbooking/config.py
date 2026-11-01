@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     sqlserver_trust_server_certificate: bool = True
 
     jwt_signing_key: SecretStr | None = None
+    jwt_access_ttl_minutes: int = Field(default=15, ge=1, le=60)
+
+    @model_validator(mode="after")
+    def _check_signing_key_strength(self) -> Settings:
+        # HS256 needs at least 256 bits of entropy; shorter keys are brute-forceable.
+        if self.jwt_signing_key is not None and len(self.jwt_signing_key.get_secret_value()) < 32:
+            raise ValueError("JWT_SIGNING_KEY must be at least 32 characters")
+        return self
 
     @model_validator(mode="after")
     def _check_production_safety(self) -> Settings:
