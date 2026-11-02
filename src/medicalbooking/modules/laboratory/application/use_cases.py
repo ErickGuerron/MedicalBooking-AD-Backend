@@ -9,8 +9,11 @@ from __future__ import annotations
 import hashlib
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
+from decimal import Decimal
 
+from medicalbooking.modules.clinical.domain.references import PatientContext, classify
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.laboratory.application.ports import (
     AuditEvent,
@@ -130,9 +133,15 @@ class LabService:
                 valor_numerico=entry.valor_numerico,
                 unidad=entry.unidad,
             )
+            if entry.analito_id is not None and not self._store.analyte_exists(entry.analito_id):
+                raise ValidationFailed("Unknown analyte")
 
         status = self._store.record_results(
-            order_id, str(detail_id), list(entries), self._clock(), actor.user_id
+            order_id,
+            str(detail_id),
+            self._classify(order, list(entries)),
+            self._clock(),
+            actor.user_id,
         )
         if status == "DETAIL_NOT_FOUND":
             raise NotFound("Order detail not found")
@@ -140,6 +149,45 @@ class LabService:
             raise Conflict("This test already has results")
         self._audit(actor, order.paciente_id, "resultado_laboratorio", str(detail_id), "registrar")
         return self._store.get_order(order_id) or order
+
+    def _classify(self, order: LabOrder, entries: list[ResultEntry]) -> list[ResultEntry]:
+        """Snapshot the classification against the validated reference (E5 spec 7.2 step 2).
+
+        Results without an analyte are stored unclassified. The category is only ever a snapshot
+        of the reference applied at this moment; it is never recalculated later.
+        """
+        sex, birth = self._store.patient_profile(order.paciente_id)
+        today = self._clock().date()
+        age_days = None if birth is None else (today - birth).days
+        classified = []
+        for entry in entries:
+            if entry.analito_id is None:
+                classified.append(entry)
+                continue
+            references = (
+                self._store.validated_references(entry.analito_id, entry.unidad, today)
+                if entry.unidad
+                else []
+            )
+            verdict = classify(
+                None if entry.valor_numerico is None else Decimal(str(entry.valor_numerico)),
+                entry.unidad,
+                references,
+                PatientContext(sex, age_days, entry.metodo_analitico, entry.tipo_muestra),
+                today,
+            )
+            ref = verdict.reference
+            classified.append(
+                replace(
+                    entry,
+                    interpretacion=verdict.interpretacion,
+                    referencia_id=ref.id if ref else None,
+                    referencia_version=ref.version if ref else None,
+                    referencia_min=float(ref.minimo) if ref and ref.minimo is not None else None,
+                    referencia_max=float(ref.maximo) if ref and ref.maximo is not None else None,
+                )
+            )
+        return classified
 
     def list_results(self, actor: AccessProfile, order_id: str) -> list[LabResult]:
         order = self._readable_order(actor, order_id)

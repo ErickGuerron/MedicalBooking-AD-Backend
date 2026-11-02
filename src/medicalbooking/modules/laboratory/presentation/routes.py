@@ -38,6 +38,10 @@ class ResultItem(BaseModel):
     valor_texto: str | None = Field(default=None, max_length=300)
     valor_numerico: float | None = None
     unidad: str | None = Field(default=None, max_length=40)
+    # Optional (E5): with an analyte the result is classified against its validated reference.
+    analito_id: uuid.UUID | None = None
+    metodo_analitico: str | None = Field(default=None, max_length=150)
+    tipo_muestra: str | None = Field(default=None, max_length=80)
 
 
 class RecordResultsRequest(BaseModel):
@@ -135,6 +139,9 @@ def record_results(order_id: uuid.UUID) -> tuple[Response, int]:
             valor_texto=item.valor_texto,
             valor_numerico=item.valor_numerico,
             unidad=item.unidad,
+            analito_id=None if item.analito_id is None else str(item.analito_id),
+            metodo_analitico=item.metodo_analitico,
+            tipo_muestra=item.tipo_muestra,
         )
         for item in body.resultados
     ]

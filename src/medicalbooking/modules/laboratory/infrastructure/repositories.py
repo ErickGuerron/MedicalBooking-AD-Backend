@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import Connection, Engine, text
 
+from medicalbooking.modules.clinical.domain.references import Reference
 from medicalbooking.modules.laboratory.application.ports import (
     AuditEvent,
     LabDetail,
@@ -48,6 +49,62 @@ class SqlLabStore:
         self._engine = engine
 
     # ---------- lookups ----------
+
+    def analyte_exists(self, analito_id: str) -> bool:
+        guid = _as_guid(analito_id)
+        if guid is None:
+            return False
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text("SELECT 1 FROM conocimiento_analitos WHERE id = :a AND activo = 1"),
+                {"a": guid},
+            ).first()
+        return found is not None
+
+    def patient_profile(self, paciente_id: str) -> tuple[str | None, date | None]:
+        guid = _as_guid(paciente_id)
+        if guid is None:
+            return None, None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT sexo_registrado, fecha_nacimiento FROM pacientes WHERE id = :p"),
+                {"p": guid},
+            ).first()
+        return (None, None) if row is None else (row.sexo_registrado, row.fecha_nacimiento)
+
+    def validated_references(self, analito_id: str, unidad: str, on: date) -> list[Reference]:
+        guid = _as_guid(analito_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, version, unidad, referencia_min, referencia_max, sexo_aplicable, "
+                    "edad_min_dias, edad_max_dias, metodo_analitico, tipo_muestra, contexto, "
+                    "fecha_inicio, fecha_fin FROM conocimiento_referencias "
+                    "WHERE analito_id = :a AND estado = 'VALIDADA' AND unidad = :u "
+                    "AND fecha_inicio <= :hoy AND (fecha_fin IS NULL OR fecha_fin >= :hoy)"
+                ),
+                {"a": guid, "u": unidad, "hoy": on},
+            ).all()
+        return [
+            Reference(
+                id=_canonical(row.id),
+                version=row.version,
+                unidad=row.unidad,
+                minimo=row.referencia_min,
+                maximo=row.referencia_max,
+                sexo=row.sexo_aplicable,
+                edad_min_dias=row.edad_min_dias,
+                edad_max_dias=row.edad_max_dias,
+                metodo=row.metodo_analitico,
+                tipo_muestra=row.tipo_muestra,
+                contexto=row.contexto,
+                fecha_inicio=row.fecha_inicio,
+                fecha_fin=row.fecha_fin,
+            )
+            for row in rows
+        ]
 
     def resolve_patient_id(self, user_id: str) -> str | None:
         with self._engine.connect() as conn:
@@ -208,17 +265,29 @@ class SqlLabStore:
             for entry in entries:
                 conn.execute(
                     text(
-                        "INSERT INTO resultados_laboratorio (id, detalle_orden_id, nombre_analito, "
-                        "valor_texto, valor_numerico, unidad, validado_por, validado_en) "
-                        "VALUES (:id, :d, :nombre, :texto, :numero, :unidad, :validador, :ahora)"
+                        "INSERT INTO resultados_laboratorio (id, detalle_orden_id, analito_id, "
+                        "nombre_analito, valor_texto, valor_numerico, unidad, metodo_analitico, "
+                        "tipo_muestra, interpretacion, referencia_aplicada_id, referencia_version, "
+                        "referencia_min, referencia_max, validado_por, validado_en) "
+                        "VALUES (:id, :d, :analito, :nombre, :texto, :numero, :unidad, :metodo, "
+                        ":muestra, :interpretacion, :referencia, :referencia_version, :minimo, "
+                        ":maximo, :validador, :ahora)"
                     ),
                     {
                         "id": str(uuid.uuid4()),
                         "d": detail_id,
+                        "analito": None if entry.analito_id is None else _as_guid(entry.analito_id),
                         "nombre": entry.nombre_analito,
                         "texto": entry.valor_texto,
                         "numero": entry.valor_numerico,
                         "unidad": entry.unidad,
+                        "metodo": entry.metodo_analitico,
+                        "muestra": entry.tipo_muestra,
+                        "interpretacion": entry.interpretacion,
+                        "referencia": entry.referencia_id,
+                        "referencia_version": entry.referencia_version,
+                        "minimo": entry.referencia_min,
+                        "maximo": entry.referencia_max,
                         "validador": actor_user_id,
                         "ahora": moment,
                     },

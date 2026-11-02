@@ -15,6 +15,11 @@ from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from medicalbooking.config import Settings
+from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
+from medicalbooking.modules.clinical.application.proposals import ProposalService
+from medicalbooking.modules.clinical.infrastructure.repositories import SqlClinicalStore
+from medicalbooking.modules.clinical.presentation.openapi import clinical_fragment
+from medicalbooking.modules.clinical.presentation.routes import clinical_bp
 from medicalbooking.modules.identity.application.use_cases import IdentityService
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
 from medicalbooking.modules.identity.infrastructure.security import (
@@ -51,13 +56,25 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
+    knowledge, proposals = _build_clinical(engine)
+    app.extensions["medicalbooking.knowledge"] = knowledge
+    app.extensions["medicalbooking.proposals"] = proposals
 
     app.register_blueprint(health_bp)
     app.register_blueprint(identity_bp)
     app.register_blueprint(scheduling_bp)
     app.register_blueprint(lab_bp)
+    app.register_blueprint(clinical_bp)
     if settings.docs_enabled:
-        register_api_docs(app, [identity_fragment(), scheduling_fragment(), laboratory_fragment()])
+        register_api_docs(
+            app,
+            [
+                identity_fragment(),
+                scheduling_fragment(),
+                laboratory_fragment(),
+                clinical_fragment(),
+            ],
+        )
     _register_error_handlers(app)
     _register_correlation_id(app)
     _register_replica_header(app, settings.replica_id)
@@ -91,6 +108,18 @@ def _build_laboratory(settings: Settings, engine: Any) -> LabService:
         clock=lambda: datetime.now(UTC),
         correlation_id=lambda: g.get("correlation_id"),
     )
+
+
+def _build_clinical(engine: Any) -> tuple[KnowledgeService, ProposalService]:
+    """Composition root for clinical knowledge (E5): one store shared by both services."""
+    store = SqlClinicalStore(engine)
+    return KnowledgeService(store=store, clock=_utc_now), ProposalService(
+        store=store, clock=_utc_now
+    )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _register_replica_header(app: Flask, replica_id: str) -> None:

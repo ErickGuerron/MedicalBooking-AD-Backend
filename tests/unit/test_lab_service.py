@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import pytest
 
+from medicalbooking.modules.clinical.domain.references import Reference
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.laboratory.application.ports import (
     LabDetail,
@@ -59,8 +61,19 @@ class FakeStore:
     results: dict[str, list[LabResult]] = field(default_factory=dict)
     reviews: dict[str, str] = field(default_factory=dict)
     documents: dict[str, StoredDocument] = field(default_factory=dict)
-    audit: list[dict] = field(default_factory=list)
-    recorded_entries: list[dict] = field(default_factory=list)
+    audit: list = field(default_factory=list)
+    recorded_entries: list = field(default_factory=list)
+    references: list = field(default_factory=list)
+    profile: tuple = (None, None)
+
+    def patient_profile(self, paciente_id):
+        return self.profile
+
+    def analyte_exists(self, analito_id):
+        return not analito_id.startswith("desconocido")
+
+    def validated_references(self, analito_id, unidad, on):
+        return [r for r in self.references if r.id.startswith(analito_id)]
 
     def resolve_patient_id(self, user_id):
         return self.patient_by_user.get(user_id)
@@ -380,7 +393,8 @@ def test_results_never_carry_a_clinical_classification(store, storage, world) ->
 
     service.record_results(world["lab"], order.id, order.details[0].id, [_entry()])
 
-    assert all(not hasattr(entry, "interpretacion") for entry in store.recorded_entries)
+    # Without an analyte there is nothing to classify: the snapshot stays empty (E3 contract).
+    assert all(entry.interpretacion is None for entry in store.recorded_entries)
 
 
 def test_only_laboratory_staff_records_results(store, storage, world) -> None:
@@ -389,6 +403,56 @@ def test_only_laboratory_staff_records_results(store, storage, world) -> None:
 
     with pytest.raises(Forbidden):
         service.record_results(world["doctor"], order.id, order.details[0].id, [_entry()])
+
+
+def test_a_result_for_a_known_analyte_is_classified_at_registration(store, storage, world) -> None:
+    analito = "analito-hb"
+    store.references = [
+        Reference(
+            id=f"{analito}-ref",
+            version=1,
+            unidad="g/dL",
+            minimo=Decimal("12.0"),
+            maximo=Decimal("17.5"),
+            sexo=None,
+            edad_min_dias=None,
+            edad_max_dias=None,
+            metodo=None,
+            tipo_muestra=None,
+            contexto=None,
+            fecha_inicio=date(2020, 1, 1),
+            fecha_fin=None,
+        )
+    ]
+    service = _service(store, storage)
+    order = _order(service, world)
+
+    service.record_results(
+        world["lab"],
+        order.id,
+        order.details[0].id,
+        [_entry(analito_id=analito, valor_numerico=11.0)],
+    )
+
+    recorded = store.recorded_entries[-1]
+    assert recorded.interpretacion == "BAJO"
+    assert recorded.referencia_id == f"{analito}-ref"
+    assert recorded.referencia_version == 1
+
+
+def test_a_result_without_an_approved_reference_stays_unclassified(store, storage, world) -> None:
+    service = _service(store, storage)
+    order = _order(service, world)
+
+    service.record_results(
+        world["lab"],
+        order.id,
+        order.details[0].id,
+        [_entry(analito_id="analito-sin-referencia", valor_numerico=11.0)],
+    )
+
+    assert store.recorded_entries[-1].interpretacion == "NO_EVALUABLE"
+    assert store.recorded_entries[-1].referencia_id is None
 
 
 def test_patient_reads_own_results_and_the_read_is_audited(store, storage, world) -> None:
@@ -599,3 +663,17 @@ def test_audit_carries_the_request_correlation_id(store, storage, world) -> None
     service.list_results(world["patient"], order.id)
 
     assert store.audit[-1].correlation_id == "7d3f8a2e-1b2c-4d5e-8f90-123456789abc"
+
+
+def test_a_result_for_an_unknown_analyte_is_rejected_before_storage(store, storage, world) -> None:
+    service = _service(store, storage)
+    order = _order(service, world)
+
+    with pytest.raises(ValidationFailed):
+        service.record_results(
+            world["lab"],
+            order.id,
+            order.details[0].id,
+            [_entry(analito_id="desconocido-1", valor_numerico=11.0)],
+        )
+    assert store.recorded_entries == []
