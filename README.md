@@ -102,6 +102,16 @@ Errors use `application/problem+json` with `correlation_id`.
 | `POST /api/v1/lab/orders/{id}/review` | Medical review with conclusion | Only the ordering doctor, once, after every test has results (409 otherwise). Results are never rewritten |
 | `POST /api/v1/lab/orders/{id}/documents` | Upload the PDF report (`multipart`, field `archivo`) | Requires `resultados.registrar`. PDF only, `%PDF-` signature, at most 10 MB, stored privately |
 | `GET /api/v1/documents/{id}/download` | Download a stored PDF | Patient or ordering doctor; the file hash is checked before sending |
+| `GET /api/v1/knowledge/analytes` | List active analytes | Requires `conocimiento.leer`. Synthetic seed data only in this repository |
+| `POST /api/v1/knowledge/analytes` | Create an analyte | Requires `conocimiento.administrar` |
+| `GET /api/v1/knowledge/analytes/{id}/references?fecha=` | Validated reference ranges valid on a date | Drafts are never listed |
+| `POST /api/v1/knowledge/analytes/{id}/references` | Create a draft reference range | Requires `conocimiento.administrar`. Invisible until validated |
+| `POST /api/v1/knowledge/references/{id}/validate` | Validate a draft range | Requires `conocimiento.validar`. 409 when it overlaps a validated range |
+| `POST /api/v1/knowledge/rules` | Create a declarative rule draft | Requires `conocimiento.administrar`. Numeric criteria need a unit |
+| `POST /api/v1/knowledge/rules/{id}/validate` | Validate a rule draft | Requires `conocimiento.validar`. Only validated rules run |
+| `POST /api/v1/lab/orders/{id}/evaluate` | Create the preliminary proposal of a complete order | Deterministic. One proposal per order. Never a diagnosis |
+| `GET /api/v1/lab/orders/{id}/proposal` | Read the proposal | Ordering doctor only; denials are audited |
+| `POST /api/v1/clinical/proposals/{id}/reviews` | Record the single medical decision | `ACEPTAR`, `CORREGIR` (needs the corrected conclusion) or `RECHAZAR` (needs a reason). The proposal content is never rewritten |
 
 Booking is safe under concurrency: the slot is claimed with a conditional update and a
 filtered unique index, so concurrent requests for one slot yield exactly one `201`.

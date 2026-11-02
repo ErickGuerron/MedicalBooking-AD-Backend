@@ -1,6 +1,55 @@
 {
   "components": {
     "schemas": {
+      "AnalyteList": {
+        "properties": {
+          "items": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "AnalyteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "nombre": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "Nombre",
+            "type": "string"
+          },
+          "tipo_valor": {
+            "default": "NUMERICO",
+            "maxLength": 20,
+            "title": "Tipo Valor",
+            "type": "string"
+          },
+          "unidad": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Unidad"
+          }
+        },
+        "required": [
+          "nombre"
+        ],
+        "title": "AnalyteRequest",
+        "type": "object"
+      },
       "Appointment": {
         "properties": {
           "estado": {
@@ -216,6 +265,18 @@
           "roles"
         ],
         "title": "CreateUserRequest",
+        "type": "object"
+      },
+      "IdResponse": {
+        "properties": {
+          "estado": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "LabDocument": {
@@ -461,16 +522,165 @@
         ],
         "type": "object"
       },
+      "Proposal": {
+        "properties": {
+          "aviso": {
+            "type": "string"
+          },
+          "conclusion_medica": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "estado": {
+            "enum": [
+              "PENDIENTE",
+              "ACEPTADA",
+              "CORREGIDA",
+              "RECHAZADA",
+              "SIN_EVIDENCIA"
+            ],
+            "type": "string"
+          },
+          "hallazgos": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "orden_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "resumen": {
+            "type": "string"
+          },
+          "version_motor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "orden_id",
+          "estado",
+          "hallazgos",
+          "aviso"
+        ],
+        "type": "object"
+      },
+      "ProposalReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "conclusion_corregida": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Conclusion Corregida"
+          },
+          "decision": {
+            "maxLength": 20,
+            "title": "Decision",
+            "type": "string"
+          },
+          "motivo": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Motivo"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ProposalReviewRequest",
+        "type": "object"
+      },
+      "ProposalReviewResponse": {
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "RecordResultsRequest": {
         "$defs": {
           "ResultItem": {
             "additionalProperties": false,
             "properties": {
+              "analito_id": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Analito Id"
+              },
+              "metodo_analitico": {
+                "anyOf": [
+                  {
+                    "maxLength": 150,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Metodo Analitico"
+              },
               "nombre_analito": {
                 "maxLength": 150,
                 "minLength": 1,
                 "title": "Nombre Analito",
                 "type": "string"
+              },
+              "tipo_muestra": {
+                "anyOf": [
+                  {
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Tipo Muestra"
               },
               "unidad": {
                 "anyOf": [
@@ -542,6 +752,163 @@
         "title": "RecordResultsRequest",
         "type": "object"
       },
+      "ReferenceList": {
+        "properties": {
+          "items": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ReferenceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "contexto": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contexto"
+          },
+          "edad_max_dias": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edad Max Dias"
+          },
+          "edad_min_dias": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Edad Min Dias"
+          },
+          "fecha_fin": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fecha Fin"
+          },
+          "fecha_inicio": {
+            "format": "date",
+            "title": "Fecha Inicio",
+            "type": "string"
+          },
+          "fuente_id": {
+            "format": "uuid",
+            "title": "Fuente Id",
+            "type": "string"
+          },
+          "maximo": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Maximo"
+          },
+          "metodo": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Metodo"
+          },
+          "minimo": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Minimo"
+          },
+          "sexo": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sexo"
+          },
+          "tipo_muestra": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tipo Muestra"
+          },
+          "unidad": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Unidad",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fuente_id",
+          "unidad",
+          "fecha_inicio"
+        ],
+        "title": "ReferenceRequest",
+        "type": "object"
+      },
       "ReviewRequest": {
         "additionalProperties": false,
         "properties": {
@@ -580,6 +947,137 @@
             "type": "string"
           },
           "orden_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "RuleRequest": {
+        "$defs": {
+          "CriterionRequest": {
+            "additionalProperties": false,
+            "properties": {
+              "analito_id": {
+                "format": "uuid",
+                "title": "Analito Id",
+                "type": "string"
+              },
+              "operador": {
+                "maxLength": 20,
+                "title": "Operador",
+                "type": "string"
+              },
+              "umbral": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Umbral"
+              },
+              "unidad": {
+                "anyOf": [
+                  {
+                    "maxLength": 40,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unidad"
+              }
+            },
+            "required": [
+              "analito_id",
+              "operador"
+            ],
+            "title": "CriterionRequest",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "codigo": {
+            "maxLength": 80,
+            "minLength": 2,
+            "title": "Codigo",
+            "type": "string"
+          },
+          "criterios": {
+            "items": {
+              "$ref": "#/$defs/CriterionRequest"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Criterios",
+            "type": "array"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "maxLength": 1500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Descripcion"
+          },
+          "expresion_logica": {
+            "maxLength": 20,
+            "title": "Expresion Logica",
+            "type": "string"
+          },
+          "mensaje": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Mensaje",
+            "type": "string"
+          },
+          "nombre": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Nombre",
+            "type": "string"
+          },
+          "prioridad": {
+            "default": "INFORMATIVA",
+            "maxLength": 25,
+            "title": "Prioridad",
+            "type": "string"
+          },
+          "tipo": {
+            "maxLength": 30,
+            "title": "Tipo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "codigo",
+          "nombre",
+          "tipo",
+          "expresion_logica",
+          "mensaje",
+          "criterios"
+        ],
+        "title": "RuleRequest",
+        "type": "object"
+      },
+      "StateResponse": {
+        "properties": {
+          "estado": {
+            "type": "string"
+          },
+          "id": {
             "format": "uuid",
             "type": "string"
           }
@@ -933,6 +1431,104 @@
         ]
       }
     },
+    "/api/v1/clinical/proposals/{proposal_id}/reviews": {
+      "post": {
+        "description": "ACEPTAR, CORREGIR (needs conclusion_corregida) or RECHAZAR (needs motivo). The original proposal is never rewritten.",
+        "operationId": "reviewClinicalProposal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposalReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalReviewResponse"
+                }
+              }
+            },
+            "description": "Decision recorded"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Proposal not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Already decided"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing text for the decision"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Record the single medical decision on a proposal",
+        "tags": [
+          "Clinical proposals"
+        ]
+      }
+    },
     "/api/v1/documents/{document_id}/download": {
       "get": {
         "description": "The response is an attachment with no-store caching.",
@@ -999,6 +1595,499 @@
         "summary": "Download a stored PDF (patient owner or ordering doctor)",
         "tags": [
           "Laboratory"
+        ]
+      }
+    },
+    "/api/v1/knowledge/analytes": {
+      "get": {
+        "operationId": "listKnowledgeAnalytes",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyteList"
+                }
+              }
+            },
+            "description": "Analytes"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List active analytes",
+        "tags": [
+          "Clinical knowledge"
+        ]
+      },
+      "post": {
+        "operationId": "createKnowledgeAnalyte",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdResponse"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create an analyte (administrator)",
+        "tags": [
+          "Clinical knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/analytes/{analyte_id}/references": {
+      "get": {
+        "operationId": "listValidatedReferences",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analyte_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fecha",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceList"
+                }
+              }
+            },
+            "description": "References"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Analyte not found"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Validated reference ranges valid on a date",
+        "tags": [
+          "Clinical knowledge"
+        ]
+      },
+      "post": {
+        "description": "Drafts are invisible until a doctor validates them.",
+        "operationId": "createReferenceDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analyte_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdResponse"
+                }
+              }
+            },
+            "description": "Draft created"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Analyte not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid range, dates or source"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a draft reference range (administrator)",
+        "tags": [
+          "Clinical knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/references/{reference_id}/validate": {
+      "post": {
+        "description": "Conflicts with 409 when it overlaps a validated reference.",
+        "operationId": "validateReference",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reference_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateResponse"
+                }
+              }
+            },
+            "description": "Validated"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Reference not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not a draft, or overlaps a validated reference"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Validate a draft reference (doctor)",
+        "tags": [
+          "Clinical knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/rules": {
+      "post": {
+        "operationId": "createRuleDraft",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdResponse"
+                }
+              }
+            },
+            "description": "Draft created"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid rule or unknown analyte"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a declarative rule draft (administrator)",
+        "tags": [
+          "Clinical knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/rules/{rule_id}/validate": {
+      "post": {
+        "operationId": "validateRule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateResponse"
+                }
+              }
+            },
+            "description": "Validated"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Rule not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not a draft"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Validate a rule draft (doctor)",
+        "tags": [
+          "Clinical knowledge"
         ]
       }
     },
@@ -1236,6 +2325,141 @@
         "summary": "Upload the PDF report of an order (private storage)",
         "tags": [
           "Laboratory"
+        ]
+      }
+    },
+    "/api/v1/lab/orders/{order_id}/evaluate": {
+      "post": {
+        "description": "Deterministic. Only validated rules run. The result is a preliminary proposal, never a diagnosis. One proposal per order.",
+        "operationId": "evaluateLabOrder",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Proposal"
+                }
+              }
+            },
+            "description": "Proposal"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Order incomplete, or already evaluated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create the preliminary proposal of a complete order",
+        "tags": [
+          "Clinical proposals"
+        ]
+      }
+    },
+    "/api/v1/lab/orders/{order_id}/proposal": {
+      "get": {
+        "operationId": "getLabProposal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Proposal"
+                }
+              }
+            },
+            "description": "Proposal"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No proposal yet"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read the proposal of an order (ordering doctor)",
+        "tags": [
+          "Clinical proposals"
         ]
       }
     },
