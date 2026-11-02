@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import quote_plus
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,10 @@ class Settings(BaseSettings):
 
     app_env: Literal["local", "test", "production"] = "local"
 
+    # Identifies one replica (for example api-1). Echoed in X-Replica-Id so load
+    # balancing across instances can be observed; it carries no secrets.
+    replica_id: str = Field(default="local", pattern=r"^[A-Za-z0-9._-]{1,64}$")
+
     sqlserver_host: str = "localhost"
     sqlserver_port: int = 1433
     sqlserver_database: str = "MedicalBooking"
@@ -36,6 +40,23 @@ class Settings(BaseSettings):
     sqlserver_trust_server_certificate: bool = True
 
     jwt_signing_key: SecretStr | None = None
+    jwt_access_ttl_minutes: int = Field(default=15, ge=1, le=60)
+
+    # How long a pending appointment holds its slot before payment (payment phase, E4).
+    appointment_hold_minutes: int = Field(default=15, ge=1, le=120)
+    # Private PDF storage root (E3). Single-host only until shared storage exists (E7).
+    lab_documents_dir: str = Field(default="storage/documents", min_length=1, max_length=260)
+
+    # Serves the OpenAPI document and Scalar page. Unset means on outside production
+    # and off in production; set API_DOCS_ENABLED explicitly to override either way.
+    api_docs_enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def _check_signing_key_strength(self) -> Settings:
+        # HS256 needs at least 256 bits of entropy; shorter keys are brute-forceable.
+        if self.jwt_signing_key is not None and len(self.jwt_signing_key.get_secret_value()) < 32:
+            raise ValueError("JWT_SIGNING_KEY must be at least 32 characters")
+        return self
 
     @model_validator(mode="after")
     def _check_production_safety(self) -> Settings:
@@ -47,6 +68,12 @@ class Settings(BaseSettings):
             if self.jwt_signing_key is None:
                 raise ValueError("JWT_SIGNING_KEY is required in production")
         return self
+
+    @property
+    def docs_enabled(self) -> bool:
+        if self.api_docs_enabled is None:
+            return self.app_env != "production"
+        return self.api_docs_enabled
 
     @property
     def odbc_connection_string(self) -> str:

@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import os
 from urllib.parse import unquote_plus
 
 import pytest
 from pydantic import ValidationError
 
 from medicalbooking.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def _isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CI sets SQLSERVER_* for integration tests; unit tests must not inherit them.
+    for name in list(os.environ):
+        if name.startswith(("SQLSERVER_", "JWT_", "APP_ENV")):
+            monkeypatch.delenv(name)
 
 
 def _settings(**overrides: object) -> Settings:

@@ -1,0 +1,184 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.11.2"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # pip-audit reads requirements files, so export the exact locked set first.
+      - name: Export locked requirements
+        run: uv export --frozen --no-hashes --no-emit-project --all-groups -o "$RUNNER_TEMP/audit-requirements.txt"
+
+      - name: Fail on known vulnerabilities
+        run: uv run pip-audit -r "$RUNNER_TEMP/audit-requirements.txt" --strict
+
+  deploy-config:
+    name: Validate deployment config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Compose files
+        env:
+          MEDICALBOOKING_IMAGE: ghcr.io/example/medicalbooking:ci
+        run: |
+          docker compose -f compose.yaml config -q
+          docker compose -f deploy/vm1/compose.yaml config -q
+          docker compose -f deploy/vm2/compose.yaml config -q
+
+      # Upstream names must resolve for nginx -t, so map them to loopback.
+      - name: Validate Nginx configuration
+        run: |
+          for conf in deploy/nginx/vm.conf deploy/nginx/local.conf; do
+            docker run --rm \
+              --add-host replica-a:127.0.0.1 --add-host replica-b:127.0.0.1 \
+              --add-host replica-1:127.0.0.1 --add-host replica-2:127.0.0.1 \
+              --add-host replica-3:127.0.0.1 --add-host replica-4:127.0.0.1 \
+              -v "$PWD/$conf:/etc/nginx/conf.d/default.conf:ro" \
+              nginx:1.27-alpine nginx -t
+          done
+
+  test:
+    name: Tests (SQL Server ${{ matrix.sql }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        sql: ["2022"]
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:${{ matrix.sql }}-latest
+        env:
+          ACCEPT_EULA: "Y"
+          # Throwaway credential for an ephemeral CI container only; not a real secret.
+          MSSQL_SA_PASSWORD: "Ci-Only-Passw0rd!"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Ci-Only-Passw0rd!' -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SQLSERVER_HOST: localhost
+      SQLSERVER_PORT: "1433"
+      SQLSERVER_USERNAME: sa
+      SQLSERVER_PASSWORD: "Ci-Only-Passw0rd!"
+      SQLSERVER_ENCRYPT: "yes"
+      SQLSERVER_TRUST_SERVER_CERTIFICATE: "yes"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Microsoft ODBC Driver 18
+        run: |
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          curl -sSL https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list \
+            | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov=medicalbooking --cov-report=term-missing --cov-fail-under=90
+
+  docker:
+    name: Build and smoke-test image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [lint, audit, test, deploy-config]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: medicalbooking:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test container
+        run: |
+          docker run -d --name api -p 8000:8000 medicalbooking:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health/live; then
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Liveness probe did not succeed"
+          docker logs api
+          exit 1
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs api || true
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f api || true
