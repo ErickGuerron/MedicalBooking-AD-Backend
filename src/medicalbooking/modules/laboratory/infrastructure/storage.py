@@ -16,10 +16,12 @@ _KEY = re.compile(r"^[0-9a-f]{32}\.bin$")
 
 class LocalDocumentStorage:
     def __init__(self, root: Path) -> None:
+        # Building the storage never touches the disk: workers boot even without write access.
         self._root = Path(root).resolve()
-        self._root.mkdir(parents=True, exist_ok=True)
 
     def save(self, content: bytes) -> str:
+        # The folder is created on the first write, not when the application starts.
+        self._root.mkdir(parents=True, exist_ok=True)
         key = f"{uuid.uuid4().hex}.bin"
         with open(self._path(key), "xb") as handle:
             handle.write(content)
