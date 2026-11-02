@@ -25,6 +25,7 @@ from medicalbooking.modules.scheduling.application.ports import (
     ReserveStatus,
 )
 from medicalbooking.modules.scheduling.domain.policies import ACTIVE_STATES
+from medicalbooking.shared.infrastructure.sql_errors import is_unique_violation, retry_on_deadlock
 
 _BOOKED = "PENDIENTE_PAGO"
 _CANCELLED = "CANCELADA"
@@ -158,6 +159,9 @@ class SqlSchedulingStore:
         return None if row is None else _appointment(row)
 
     def reserve(self, command: ReserveCommand) -> ReserveOutcome:
+        return retry_on_deadlock(lambda: self._reserve_once(command))
+
+    def _reserve_once(self, command: ReserveCommand) -> ReserveOutcome:
         appointment_id = str(uuid.uuid4())
         try:
             with self._engine.begin() as conn:
@@ -215,9 +219,12 @@ class SqlSchedulingStore:
                     },
                     _utc_naive(command.now),
                 )
-        except IntegrityError:
-            # The unique index on the active slot, or the idempotency key, lost a race.
-            # The transaction was rolled back, so nothing was reserved.
+        except IntegrityError as error:
+            # Only a unique conflict (the active-slot index or the idempotency key lost a
+            # race) is an expected answer. The transaction was rolled back: nothing was
+            # reserved. Any other integrity failure is a defect and must surface as an error.
+            if not is_unique_violation(str(error.orig)):
+                raise
             return ReserveOutcome(ReserveStatus.SLOT_UNAVAILABLE, None)
         appointment = Appointment(
             id=appointment_id,
@@ -232,6 +239,9 @@ class SqlSchedulingStore:
         return ReserveOutcome(ReserveStatus.CREATED, appointment)
 
     def cancel(self, command: CancelCommand) -> CancelOutcome:
+        return retry_on_deadlock(lambda: self._cancel_once(command))
+
+    def _cancel_once(self, command: CancelCommand) -> CancelOutcome:
         now = _utc_naive(command.now)
         with self._engine.begin() as conn:
             row = conn.execute(
