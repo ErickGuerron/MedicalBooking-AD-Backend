@@ -134,6 +134,16 @@ def test_docs_can_be_disabled_outside_production() -> None:
     assert client.get("/api/v1/openapi.json").status_code == 404
 
 
+def test_scalar_script_is_pinned_and_protected_by_subresource_integrity(client) -> None:
+    body = client.get("/api/docs").get_data(as_text=True)
+
+    # A floating CDN URL could change under the page; a pinned version plus SRI makes the
+    # browser refuse any different file.
+    assert "@scalar/api-reference@1.76.4" in body
+    assert 'integrity="sha384-' in body
+    assert 'crossorigin="anonymous"' in body
+
+
 def test_scalar_reference_page_loads_the_document(client) -> None:
     response = client.get("/api/docs")
     body = response.get_data(as_text=True)

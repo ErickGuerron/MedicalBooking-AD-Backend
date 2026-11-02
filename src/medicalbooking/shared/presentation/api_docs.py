@@ -13,7 +13,11 @@ from flask import Blueprint, Flask, Response, jsonify
 
 SPEC_PATH = "/api/v1/openapi.json"
 DOCS_PATH = "/api/docs"
-SCALAR_SCRIPT = "https://cdn.jsdelivr.net/npm/@scalar/api-reference"
+# Pinned version plus Subresource Integrity: the browser refuses any other file.
+# Update both together: npm view @scalar/api-reference version, then recompute the hash.
+SCALAR_VERSION = "1.76.4"
+SCALAR_SCRIPT = f"https://cdn.jsdelivr.net/npm/@scalar/api-reference@{SCALAR_VERSION}"
+SCALAR_INTEGRITY = "sha384-hwB9WroDTpZaI38gr+u9CXA6ksz5gUYgD2GxXazKl/agT1L2GWUiRFWGJYNiFu4Q"
 
 _PROBLEM_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -36,7 +40,7 @@ _PAGE = """<!doctype html>
   </head>
   <body>
     <div id="app"></div>
-    <script src="{script}"></script>
+    <script src="{script}" integrity="{integrity}" crossorigin="anonymous"></script>
     <script>
       Scalar.createApiReference('#app', {{ url: '{spec}' }})
     </script>
@@ -89,7 +93,7 @@ def register_api_docs(app: Flask, fragments: Iterable[dict[str, Any]]) -> None:
 
     @blueprint.get(DOCS_PATH)
     def api_reference() -> Response:
-        page = _PAGE.format(script=SCALAR_SCRIPT, spec=SPEC_PATH)
+        page = _PAGE.format(script=SCALAR_SCRIPT, integrity=SCALAR_INTEGRITY, spec=SPEC_PATH)
         return Response(page, mimetype="text/html")
 
     app.register_blueprint(blueprint)
