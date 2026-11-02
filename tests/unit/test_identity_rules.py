@@ -66,6 +66,12 @@ class FakeDirectory:
     def create_user(self, new_user: NewUser) -> None:
         self.created.append(new_user)
 
+    def register_failed_login(self, user_id: str, now) -> None:
+        return None
+
+    def reset_failed_logins(self, user_id: str) -> None:
+        return None
+
 
 class FakeHasher:
     def hash(self, password: str) -> str:

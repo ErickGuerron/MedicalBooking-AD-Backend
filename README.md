@@ -76,7 +76,7 @@ Errors use `application/problem+json` with `correlation_id`.
 
 | Method and path | Purpose | Notes |
 |---|---|---|
-| `POST /api/v1/auth/login` | Sign in, returns a bearer token | Same answer for unknown email and wrong password |
+| `POST /api/v1/auth/login` | Sign in, returns a bearer token | Same answer for unknown email, wrong password and locked account. Five consecutive failures lock the account for 15 minutes; a success clears the counter |
 | `GET /api/v1/me` | Current user, roles and permissions | |
 | `POST /api/v1/users` | Create a user | Requires `usuarios.administrar` |
 | `GET /api/v1/availability?desde=&hasta=&medico_id=` | Free slots in a window | ISO-8601 with offset; window at most 31 days; past slots never returned |

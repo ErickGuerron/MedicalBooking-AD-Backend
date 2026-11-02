@@ -17,7 +17,7 @@ Branch: develop. Delivery: ask-on-risk. Test runner: uv run pytest (integration 
 - T4 | S1, S3, S7 | inline | done | routes: POST /api/v1/auth/login, GET /api/v1/me, GET /api/v1/patients/{id}, POST /api/v1/users.
 - T5 | S5 | inline | done | scripts/seed_synthetic.py: idempotent; refuses production; rotates synthetic passwords from SEED_PASSWORD.
 - T6 | S1 | inline | done | tests: pure policy matrix, service with fakes, JWT and hasher attack cases, end-to-end matrix against SQL Server.
-- T7 | S2 | pending | not started | login rate limit and lockout (spec 10). bloqueado_hasta exists but there is no failure counter.
+- T7 | S2 | done | migration 0004 (failed-login counter), policy failure_outcome, atomic SQL update, 5 failures lock 15 minutes. Unit (lockout) and integration (test_identity_lockout_api) tests. Per-IP rate limiting is not implemented: it needs a gateway or Nginx limit_req, not app state.
 - T8 | S7 | pending | not started | MEDICO creation with registro_profesional (needs a decision on who registers doctors).
 - T9 | S3 | pending | not started | ownership for laboratorista and resultados (resources arrive in E3).
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +12,10 @@ from medicalbooking.modules.identity.application.ports import (
     AccessProfile,
     CredentialRecord,
     NewUser,
+)
+from medicalbooking.modules.identity.domain.policies import (
+    LOCK_DURATION,
+    MAX_FAILED_LOGINS,
 )
 from medicalbooking.shared.domain.errors import Conflict, ValidationFailed
 
@@ -28,7 +33,8 @@ class SqlUserDirectory:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT u.id, u.estado, c.password_hash "
+                    "SELECT u.id, u.estado, u.bloqueado_hasta, c.password_hash, "
+                    "c.intentos_fallidos "
                     "FROM usuarios u "
                     "LEFT JOIN credenciales_usuario c ON c.usuario_id = u.id "
                     "WHERE u.email = :email"
@@ -42,7 +48,66 @@ class SqlUserDirectory:
             email=email,
             status=row.estado,
             password_hash=row.password_hash,
+            failed_attempts=row.intentos_fallidos or 0,
+            locked_until=row.bloqueado_hasta.replace(tzinfo=UTC) if row.bloqueado_hasta else None,
         )
+
+    def register_failed_login(self, user_id: str, now: datetime) -> None:
+        """Mirror of policies.failure_outcome, applied atomically in SQL.
+
+        The counter update and the lock update run in one transaction, so concurrent
+        failures for one account are all counted.
+        """
+        at = now.astimezone(UTC).replace(tzinfo=None)
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE c SET c.intentos_fallidos = CASE "
+                    "WHEN u.bloqueado_hasta IS NOT NULL AND u.bloqueado_hasta <= :ahora "
+                    "THEN 1 ELSE c.intentos_fallidos + 1 END "
+                    "FROM credenciales_usuario c JOIN usuarios u ON u.id = c.usuario_id "
+                    "WHERE c.usuario_id = :u"
+                ),
+                {"ahora": at, "u": user_id},
+            )
+            # A new window opened above (expired lock) must not keep the stale timestamp,
+            # otherwise every later failure would restart the count at one.
+            conn.execute(
+                text(
+                    "UPDATE usuarios SET bloqueado_hasta = NULL "
+                    "WHERE id = :u AND bloqueado_hasta IS NOT NULL AND bloqueado_hasta <= :ahora"
+                ),
+                {"ahora": at, "u": user_id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE u SET u.bloqueado_hasta = :hasta "
+                    "FROM usuarios u JOIN credenciales_usuario c ON c.usuario_id = u.id "
+                    "WHERE u.id = :u AND c.intentos_fallidos >= :maximo"
+                ),
+                {
+                    "hasta": at + LOCK_DURATION,
+                    "u": user_id,
+                    "maximo": MAX_FAILED_LOGINS,
+                },
+            )
+
+    def reset_failed_logins(self, user_id: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE credenciales_usuario SET intentos_fallidos = 0 "
+                    "WHERE usuario_id = :u AND intentos_fallidos <> 0"
+                ),
+                {"u": user_id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE usuarios SET bloqueado_hasta = NULL "
+                    "WHERE id = :u AND bloqueado_hasta IS NOT NULL"
+                ),
+                {"u": user_id},
+            )
 
     def load_access(self, user_id: str) -> AccessProfile | None:
         with self._engine.connect() as conn:

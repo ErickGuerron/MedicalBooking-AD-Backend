@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from medicalbooking.modules.identity.application.ports import (
     AccessProfile,
@@ -16,6 +18,7 @@ from medicalbooking.modules.identity.application.ports import (
 from medicalbooking.modules.identity.domain.policies import (
     PERM_USERS_ADMIN,
     can_read_patient,
+    is_locked,
 )
 from medicalbooking.shared.domain.errors import Forbidden, Unauthenticated, ValidationFailed
 
@@ -38,10 +41,12 @@ class IdentityService:
         directory: UserDirectory,
         hasher: PasswordHasher,
         tokens: TokenIssuer,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._directory = directory
         self._hasher = hasher
         self._tokens = tokens
+        self._clock = clock or (lambda: datetime.now(UTC))
         # Verified against when the account is unknown, so response time does not
         # reveal whether an email is registered.
         self._dummy_hash = hasher.hash(secrets.token_urlsafe(32))
@@ -51,10 +56,18 @@ class IdentityService:
         if record is None or record.password_hash is None:
             self._hasher.verify(self._dummy_hash, password)
             raise Unauthenticated("Invalid credentials")
-        if not self._hasher.verify(record.password_hash, password):
+        now = self._clock()
+        password_ok = self._hasher.verify(record.password_hash, password)
+        if is_locked(record.locked_until, now):
+            # Same answer as a wrong password, and the same hashing cost: a locked
+            # account reveals nothing and the correct password does not unlock it early.
+            raise Unauthenticated("Invalid credentials")
+        if not password_ok:
+            self._directory.register_failed_login(record.user_id, now)
             raise Unauthenticated("Invalid credentials")
         if record.status != ACTIVE:
             raise Unauthenticated("Invalid credentials")
+        self._directory.reset_failed_logins(record.user_id)
         token, expires_in = self._tokens.issue(record.user_id)
         return IssuedToken(access_token=token, expires_in=expires_in)
 

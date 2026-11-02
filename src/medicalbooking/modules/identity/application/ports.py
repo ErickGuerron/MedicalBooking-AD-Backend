@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 
@@ -12,6 +13,8 @@ class CredentialRecord:
     email: str
     status: str
     password_hash: str | None
+    failed_attempts: int = 0
+    locked_until: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,12 @@ class UserDirectory(Protocol):
     def has_active_patient_access(self, clinician_user_id: str, patient_id: str) -> bool: ...
 
     def create_user(self, new_user: NewUser) -> None: ...
+
+    def register_failed_login(self, user_id: str, now: datetime) -> None:
+        """Count one failure atomically and lock the account when the threshold is reached."""
+        ...
+
+    def reset_failed_logins(self, user_id: str) -> None: ...
 
 
 class PasswordHasher(Protocol):
