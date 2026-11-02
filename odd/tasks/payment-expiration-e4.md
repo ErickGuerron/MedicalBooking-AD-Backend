@@ -13,11 +13,11 @@ Branch: develop. Delivery: ask-on-risk. Test runner: uv run pytest (integration 
 - S9: ASSUMPTION: the hold length stays APPOINTMENT_HOLD_MINUTES (default 15). Payment confirmation is not implemented yet; no appointment becomes CONFIRMADA in this feature.
 
 ## Tasks
-- T1 | S3, S4 | inline | done | service use case expire_overdue_holds with batches; unit RED observed (4 failing: no method, no batch size), then GREEN (24 passed). Commit: pending (unit 1 of 2)
-- T2 | S3, S4, S5 | inline | done | SQL adapter _expire_once (UPDLOCK, READPAST, conditional UPDATE, history, outbox); integration tests incl. 4 concurrent sweeps and a locked-hold probe (tests/integration/test_scheduling_expiration.py). Commit: pending (unit 1 of 2, risk item 4 named)
+- T1 | S3, S4 | inline | done | service use case expire_overdue_holds with batches; unit RED observed (4 failing: no method, no batch size), then GREEN (24 passed). Commit: 1ae6b50
+- T2 | S3, S4, S5 | inline | done | SQL adapter _expire_once (UPDLOCK, READPAST, conditional UPDATE, history, outbox); integration tests incl. 4 concurrent sweeps and a locked-hold probe (tests/integration/test_scheduling_expiration.py). Commit: 1ae6b50 (risk item 4 named, own commit)
 - T3 | S5, S7 | inline | done | integration: replay of EXPIRADA, cancel answers 409, slot reusable by another patient. Same file as T2
-- T4 | S6 | inline | done | workers/expire_holds.py one-shot run()/main(); unit RED observed (import error), then GREEN (2 passed); smoke run against MedicalBooking_test: expired_holds=0 exit 0; failure path exit 1 with error type only. Commit: pending (unit 2 of 2)
-- T5 | S8 | inline | done | README (worker section), docs/deployment.md (VM schedule). Docker command NOT run: needs Docker Desktop (not running). Commit: pending (unit 2 of 2)
+- T4 | S6 | inline | done | workers/expire_holds.py one-shot run()/main(); unit RED observed (import error), then GREEN (2 passed); smoke run against MedicalBooking_test: expired_holds=0 exit 0; failure path exit 1 with error type only. Commit: fd05fa0
+- T5 | S8 | inline | done | README (worker section), docs/deployment.md (VM schedule). Docker command NOT run: needs Docker Desktop (not running). Commit: fd05fa0
 
 Route: all inline. Verification: independent read-only verifier (gentle-ai-verify) because risk item 4 is named; ran once after the change checks.
 
