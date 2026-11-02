@@ -135,6 +135,14 @@ class LabService:
             )
             if entry.analito_id is not None and not self._store.analyte_exists(entry.analito_id):
                 raise ValidationFailed("Unknown analyte")
+            if entry.analito_id is not None:
+                # A result belongs to the test it is entered under. Analytes that were not part
+                # of the order need a new order, never a silent extra row on this one.
+                detail = next((d for d in order.details if d.id == str(detail_id)), None)
+                if detail is not None and not self._store.analyte_linked_to_test(
+                    entry.analito_id, detail.tipo_prueba_id
+                ):
+                    raise ValidationFailed("This analyte is not part of the ordered test")
 
         status = self._store.record_results(
             order_id,

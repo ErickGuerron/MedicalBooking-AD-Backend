@@ -50,6 +50,20 @@ class SqlLabStore:
 
     # ---------- lookups ----------
 
+    def analyte_linked_to_test(self, analito_id: str, tipo_prueba_id: str) -> bool:
+        analito, prueba = _as_guid(analito_id), _as_guid(tipo_prueba_id)
+        if analito is None or prueba is None:
+            return False
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text(
+                    "SELECT 1 FROM conocimiento_pruebas_analitos "
+                    "WHERE analito_id = :a AND tipo_prueba_id = :t"
+                ),
+                {"a": analito, "t": prueba},
+            ).first()
+        return found is not None
+
     def analyte_exists(self, analito_id: str) -> bool:
         guid = _as_guid(analito_id)
         if guid is None:

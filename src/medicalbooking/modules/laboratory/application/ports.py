@@ -112,6 +112,10 @@ class LabStore(Protocol):
         """True when the analyte is in the active knowledge catalog."""
         ...
 
+    def analyte_linked_to_test(self, analito_id: str, tipo_prueba_id: str) -> bool:
+        """True when the analyte is a part of this test (conocimiento_pruebas_analitos)."""
+        ...
+
     def patient_profile(self, paciente_id: str) -> tuple[str | None, date | None]:
         """Return (sexo_registrado, fecha_nacimiento); None means unknown."""
         ...

@@ -65,6 +65,10 @@ class FakeStore:
     recorded_entries: list = field(default_factory=list)
     references: list = field(default_factory=list)
     profile: tuple = (None, None)
+    linked: set | None = None  # None: every analyte is linked (no restriction in the fake)
+
+    def analyte_linked_to_test(self, analito_id, tipo_prueba_id):
+        return self.linked is None or (analito_id, tipo_prueba_id) in self.linked
 
     def patient_profile(self, paciente_id):
         return self.profile
@@ -677,3 +681,32 @@ def test_a_result_for_an_unknown_analyte_is_rejected_before_storage(store, stora
             [_entry(analito_id="desconocido-1", valor_numerico=11.0)],
         )
     assert store.recorded_entries == []
+
+
+def test_a_result_must_belong_to_the_test_it_is_entered_under(store, storage, world) -> None:
+    store.linked = {("analito-hb", HEMO)}  # only hemoglobin is part of a hemogram
+    service = _service(store, storage)
+    order = _order(service, world, tests=(HEMO,))
+
+    with pytest.raises(ValidationFailed):
+        service.record_results(
+            world["lab"],
+            order.id,
+            order.details[0].id,
+            [_entry(analito_id="analito-glu", valor_numerico=95.0)],
+        )
+    assert store.recorded_entries == []
+
+
+def test_a_linked_analyte_is_accepted_under_its_test(store, storage, world) -> None:
+    store.linked = {("analito-hb", HEMO)}
+    service = _service(store, storage)
+    order = _order(service, world, tests=(HEMO,))
+
+    service.record_results(
+        world["lab"],
+        order.id,
+        order.details[0].id,
+        [_entry(analito_id="analito-hb", valor_numerico=13.0)],
+    )
+    assert len(store.recorded_entries) == 1

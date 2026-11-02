@@ -45,6 +45,6 @@ Route: all inline. Deviation disclosed: integration tests were written after the
   - A3 (fixed): numeric criteria need a unit; without one they never compare raw numbers (S16; unit and integration tests).
   - A1 (accepted with reading): review updates review-state columns only (S9 clarified).
   - A4 (accepted, open): denials of knowledge administration (analytes, drafts, rules) are refused but not audited. S12 covers clinical records, not the catalog.
-  - A5 (open): a lab result may reference any active analyte, not only analytes linked to its order's test type (conocimiento_pruebas_analitos). Not enforced in E5; recorded for a later phase.
+  - A5 (fixed after the verifier, by decision): a lab result must belong to the test it is entered under (conocimiento_pruebas_analitos). Otherwise 422 and nothing is stored. Rationale: a hemoglobin value filed under a glucose order would produce false categories and alerts; ISO 15189 traceability requires the result to match the requested test. Analytes that were not ordered need a new order. Pinned by test_a_result_must_belong_to_the_test_it_is_entered_under and test_a_result_for_an_analyte_outside_the_ordered_test_is_rejected.
   - Verifier scratch: a copy containing the local .env was created under TEMP; removed after the run.
 - L7 (evidence, after fixes): unit 192 passed; clinical integration 26 passed; full suite and lint pending final run.

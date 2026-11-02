@@ -18,9 +18,12 @@ from sqlalchemy import Engine
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
 from tests.integration.test_lab_api import (
+    _create_order,
     _detail,
     _doctor,
     _order_for,
+    _patient_id,
+    _test_type,
 )
 from tests.integration.test_scheduling_api import _count, _token, _user
 
@@ -456,8 +459,45 @@ def test_denied_proposal_reads_and_evaluations_are_audited(app, engine) -> None:
 GLU_SEEDED = "a0000000-0000-4000-8000-00000000b002"  # synthetic glucose, seed 0006
 
 
+def _order_with_test(app, engine, code: str):
+    """An order for one specific synthetic test type. Returns (order_id, doctor_headers)."""
+    patient = _user(engine, "PACIENTE")
+    doctor = _doctor(engine)
+    headers = _token(app, doctor)
+    response = _create_order(
+        app.test_client(), headers, _patient_id(engine, patient), [_test_type(engine, code)]
+    )
+    assert response.status_code == 201, response.get_json()
+    return response.get_json()["id"], headers
+
+
+def test_a_result_for_an_analyte_outside_the_ordered_test_is_rejected(app, engine) -> None:
+    order_id, doctor_headers = _order_with_test(app, engine, "HEMO-SINT")
+    detail = _detail(app, order_id, doctor_headers)
+    before = _count(engine, "SELECT COUNT(*) FROM resultados_laboratorio")
+
+    response = app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/results",
+        json={
+            "detalle_id": detail,
+            "resultados": [
+                {
+                    "nombre_analito": "Glucosa",
+                    "valor_numerico": 95.0,
+                    "unidad": "mg/dL",
+                    "analito_id": GLU_SEEDED,
+                }
+            ],
+        },
+        headers=_token(app, _user(engine, "LABORATORISTA")),
+    )
+
+    assert response.status_code == 422
+    assert _count(engine, "SELECT COUNT(*) FROM resultados_laboratorio") == before
+
+
 def test_glucose_outside_the_range_fires_the_seeded_fuera_rule(app, engine) -> None:
-    order_id, _, _, doctor_headers = _order_for(app, engine)
+    order_id, doctor_headers = _order_with_test(app, engine, "GLUC-SINT")
     detail = _detail(app, order_id, doctor_headers)
     app.test_client().post(
         f"/api/v1/lab/orders/{order_id}/results",
