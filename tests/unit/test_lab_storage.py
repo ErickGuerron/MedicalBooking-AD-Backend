@@ -39,3 +39,21 @@ def test_delete_removes_the_file_and_tolerates_missing_keys(storage) -> None:
 
 def test_two_saves_never_share_a_key(storage) -> None:
     assert storage.save(b"%PDF-a") != storage.save(b"%PDF-a")
+
+
+def test_building_the_storage_does_not_touch_the_disk(tmp_path) -> None:
+    """Workers boot without write access: the folder is created on the first save."""
+    root = tmp_path / "no" / "existe" / "documentos"
+
+    LocalDocumentStorage(root)
+
+    assert not root.exists()
+
+
+def test_the_first_save_creates_the_folder(tmp_path) -> None:
+    root = tmp_path / "primera" / "vez"
+    storage = LocalDocumentStorage(root)
+
+    key = storage.save(b"%PDF-1.4 synthetic")
+
+    assert (root / key).exists()

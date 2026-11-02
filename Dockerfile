@@ -36,7 +36,12 @@ RUN uv sync --locked --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN useradd --create-home --uid 10001 app
+# Private PDF storage (E3): a folder the unprivileged user owns. /app stays root-owned, so the
+# default relative path would fail for the app user. Mount a volume here for persistence.
+RUN useradd --create-home --uid 10001 app \
+    && mkdir -p /app/data/documents \
+    && chown app:app /app/data/documents
+ENV LAB_DOCUMENTS_DIR=/app/data/documents
 USER app
 
 EXPOSE 8000
