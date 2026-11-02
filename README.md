@@ -70,6 +70,29 @@ uv run flask --app medicalbooking.app:create_app run --port 5000
 
 Health probes: `GET /health/live` (no dependencies), `GET /health/ready` (database).
 
+## External knowledge importers
+
+Terminology and evidence come from public sources, imported as **drafts** with their provenance.
+A doctor with `conocimiento.validar` publishes them. Published knowledge is never changed by an
+import.
+
+| Source | Responsibility | Credentials |
+|---|---|---|
+| LOINC | Confirms analyte codes (`codigo_loinc`); terminology only | `LOINC_USERNAME`, `LOINC_PASSWORD` |
+| MedlinePlus Connect | Educational topics in Spanish for each LOINC code (drafts) | none |
+| PubMed (E-utilities) | Evidence identity (PMID, title, journal) linked to rules | none |
+| ICD-11 (WHO) | Hypothesis code for a rule, only when it is a draft | `ICD11_CLIENT_ID`, `ICD11_CLIENT_SECRET` |
+
+```powershell
+uv run python -m medicalbooking.workers.import_knowledge --dry-run   # fetch and report, write nothing
+uv run python -m medicalbooking.workers.import_knowledge             # fetch, then write in one transaction
+```
+
+The configuration is `knowledge/sources.json`. PubMed PMIDs are empty on purpose: choosing the
+literature that supports a rule is a clinical decision. Step 1 fetches every source before any
+write, so one failing source writes nothing. Step 2 writes in a single transaction: an error
+halfway rolls back every earlier write. Re-running is safe; existing codes are never overwritten.
+
 ## Hold expiration worker
 
 Pending appointments release their slot when the hold ends (`APPOINTMENT_HOLD_MINUTES`).

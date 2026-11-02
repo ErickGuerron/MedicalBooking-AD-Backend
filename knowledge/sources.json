@@ -1,0 +1,29 @@
+{
+  "_comment": "Mapping of external terminology and evidence sources. Edited by a clinician or an administrator. The importer only creates drafts; a doctor validates them. PubMed PMIDs are empty on purpose: choosing the literature that supports a rule is a clinical decision.",
+  "analytes": [
+    {
+      "analito_id": "a0000000-0000-4000-8000-00000000b001",
+      "loinc": "718-7",
+      "expected_display": "Hemoglobin",
+      "medlineplus": true
+    },
+    {
+      "analito_id": "a0000000-0000-4000-8000-00000000b002",
+      "loinc": "2339-0",
+      "expected_display": "Glucose",
+      "medlineplus": true
+    }
+  ],
+  "rules": [
+    {
+      "regla_codigo": "HB-BAJA-SINT",
+      "icd_search": "anemia",
+      "pubmed_pmids": []
+    },
+    {
+      "regla_codigo": "GLU-FUERA-SINT",
+      "icd_search": null,
+      "pubmed_pmids": []
+    }
+  ]
+}
