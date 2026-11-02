@@ -21,6 +21,12 @@ EXPECTED_PATHS = {
     "/api/v1/availability",
     "/api/v1/appointments",
     "/api/v1/appointments/{appointment_id}/cancel",
+    "/api/v1/lab/orders",
+    "/api/v1/lab/orders/{order_id}",
+    "/api/v1/lab/orders/{order_id}/results",
+    "/api/v1/lab/orders/{order_id}/review",
+    "/api/v1/lab/orders/{order_id}/documents",
+    "/api/v1/documents/{document_id}/download",
 }
 
 

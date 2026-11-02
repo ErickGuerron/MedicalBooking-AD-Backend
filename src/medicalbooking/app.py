@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, g, jsonify, request
@@ -22,6 +23,11 @@ from medicalbooking.modules.identity.infrastructure.security import (
 )
 from medicalbooking.modules.identity.presentation.openapi import identity_fragment
 from medicalbooking.modules.identity.presentation.routes import identity_bp
+from medicalbooking.modules.laboratory.application.use_cases import LabService
+from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
+from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
+from medicalbooking.modules.laboratory.presentation.openapi import laboratory_fragment
+from medicalbooking.modules.laboratory.presentation.routes import lab_bp
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
@@ -38,16 +44,20 @@ def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or Settings()
     app = Flask("medicalbooking")
     app.extensions["medicalbooking.settings"] = settings
+    # Rejects oversized bodies before Werkzeug spools them to disk (PDF limit is 10 MB).
+    app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
     engine = create_database_engine(settings)
     app.extensions["medicalbooking.engine"] = engine
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
+    app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
 
     app.register_blueprint(health_bp)
     app.register_blueprint(identity_bp)
     app.register_blueprint(scheduling_bp)
+    app.register_blueprint(lab_bp)
     if settings.docs_enabled:
-        register_api_docs(app, [identity_fragment(), scheduling_fragment()])
+        register_api_docs(app, [identity_fragment(), scheduling_fragment(), laboratory_fragment()])
     _register_error_handlers(app)
     _register_correlation_id(app)
     _register_replica_header(app, settings.replica_id)
@@ -70,6 +80,16 @@ def _build_scheduling(settings: Settings, engine: Any) -> SchedulingService:
         store=SqlSchedulingStore(engine),
         clock=lambda: datetime.now(UTC),
         hold_minutes=settings.appointment_hold_minutes,
+    )
+
+
+def _build_laboratory(settings: Settings, engine: Any) -> LabService:
+    """Composition root for laboratory: SQL store plus private local document storage."""
+    return LabService(
+        store=SqlLabStore(engine),
+        storage=LocalDocumentStorage(Path(settings.lab_documents_dir)),
+        clock=lambda: datetime.now(UTC),
+        correlation_id=lambda: g.get("correlation_id"),
     )
 
 

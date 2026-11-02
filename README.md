@@ -34,6 +34,7 @@ Defaults target the local development instance.
 | `JWT_SIGNING_KEY` | none | Required outside `local`/`test`; at least 32 characters |
 | `JWT_ACCESS_TTL_MINUTES` | `15` | Access token lifetime (1 to 60) |
 | `APPOINTMENT_HOLD_MINUTES` | `15` | How long a pending appointment holds its slot (1 to 120) |
+| `LAB_DOCUMENTS_DIR` | `storage/documents` | Private folder for uploaded lab PDFs. Single host only until shared storage exists (E7). Never versioned |
 | `API_DOCS_ENABLED` | unset | Unset: on outside `production`, off in `production`. Set `true` or `false` to override |
 
 ## Database migrations
@@ -94,10 +95,17 @@ Errors use `application/problem+json` with `correlation_id`.
 | `GET /api/v1/availability?desde=&hasta=&medico_id=` | Free slots in a window | ISO-8601 with offset; window at most 31 days; past slots never returned |
 | `POST /api/v1/appointments` | Reserve a slot (status `PENDIENTE_PAGO`) | Requires header `Idempotency-Key` (8 to 100 characters). Same key and body returns the original (200); same key with another body returns 409; a new reservation returns 201 |
 | `POST /api/v1/appointments/{id}/cancel` | Cancel an own appointment and release its slot | Missing and foreign appointments both return 403 |
+| `POST /api/v1/lab/orders` | Order lab tests for a patient (status `SOLICITADA`) | Requires `ordenes.crear` and a doctor profile. Test types must be active |
+| `GET /api/v1/lab/orders/{id}` | Read an order | Only the patient or the ordering doctor; anything else is 403 |
+| `POST /api/v1/lab/orders/{id}/results` | Enter results by hand for one test | Requires `resultados.registrar`. No clinical classification (E5). A test can be recorded once (409 otherwise) |
+| `GET /api/v1/lab/orders/{id}/results` | Read the results | Patient or ordering doctor; each read is audited |
+| `POST /api/v1/lab/orders/{id}/review` | Medical review with conclusion | Only the ordering doctor, once, after every test has results (409 otherwise). Results are never rewritten |
+| `POST /api/v1/lab/orders/{id}/documents` | Upload the PDF report (`multipart`, field `archivo`) | Requires `resultados.registrar`. PDF only, `%PDF-` signature, at most 10 MB, stored privately |
+| `GET /api/v1/documents/{id}/download` | Download a stored PDF | Patient or ordering doctor; the file hash is checked before sending |
 
 Booking is safe under concurrency: the slot is claimed with a conditional update and a
 filtered unique index, so concurrent requests for one slot yield exactly one `201`.
-Pending appointments do not expire yet; the expiration worker belongs to the payment phase.
+Pending appointments release their slot when the hold ends (see the expiration worker below).
 
 Rate limits are enforced by Nginx in front of the API (`deploy/nginx/`), per client address:
 login accepts 5 attempts per minute, and the whole API accepts 20 requests per second (burst 40).
