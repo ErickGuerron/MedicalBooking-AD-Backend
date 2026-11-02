@@ -66,6 +66,13 @@ docker compose -f deploy/vm1/compose.yaml up -d      # VM1
 docker compose -f deploy/vm2/compose.yaml up -d      # VM2
 ```
 
+Schedule the hold expiration worker (E4) on one VM, every few minutes, against the same
+database. It is a one-shot process, not part of the replicas:
+
+```bash
+docker compose -f deploy/vm1/compose.yaml run --rm --entrypoint python migrate -m medicalbooking.workers.expire_holds
+```
+
 Then point the Azure Load Balancer backend pool at both VMs, port 80, with an HTTP
 probe on `/health/live`. HTTPS with a DuckDNS name and Let's Encrypt is a later step
 (E7); it is not configured yet.

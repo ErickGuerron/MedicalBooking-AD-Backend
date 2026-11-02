@@ -69,6 +69,18 @@ uv run flask --app medicalbooking.app:create_app run --port 5000
 
 Health probes: `GET /health/live` (no dependencies), `GET /health/ready` (database).
 
+## Hold expiration worker
+
+Pending appointments release their slot when the hold ends (`APPOINTMENT_HOLD_MINUTES`).
+A separate one-shot process does this; the API replicas never run it:
+
+```powershell
+uv run python -m medicalbooking.workers.expire_holds   # prints expired_holds=N, exit 0 on success
+```
+
+Schedule it every few minutes (cron, Windows Task Scheduler, or an Azure job). Running it
+from several processes at once is safe: each hold is claimed with row locks.
+
 ## Endpoints
 
 All endpoints except login and health require `Authorization: Bearer <token>`.
