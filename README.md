@@ -70,6 +70,20 @@ uv run flask --app medicalbooking.app:create_app run --port 5000
 
 Health probes: `GET /health/live` (no dependencies), `GET /health/ready` (database).
 
+## Documentation
+
+- `docs/backend-status.md`: delivery by phase, what is blocked and by whom, decisions, open advisories.
+- `docs/operations.md`: commands for setup, migrations, running the API and the container, tests,
+  workers and common failures.
+- `docs/knowledge-import.md`: the external sources (LOINC, MedlinePlus, PubMed, ICD-11), how to obtain
+  their credentials, how to run the importers, and their guarantees.
+- `docs/clinical-knowledge.md`: how results are classified, how rules and proposals work, and the
+  medical decision.
+- `docs/deployment.md`: topology of four replicas on two VMs, deployment procedure, and what is still
+  pending.
+- `docs/api/openapi.json`: the OpenAPI document of the running API.
+- `odd/tasks/`: one feature document per phase, with specs, tasks, decisions and evidence.
+
 ## External knowledge importers
 
 Terminology and evidence come from public sources, imported as **drafts** with their provenance.
