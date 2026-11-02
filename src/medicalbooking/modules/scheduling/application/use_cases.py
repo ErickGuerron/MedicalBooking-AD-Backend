@@ -25,6 +25,7 @@ from medicalbooking.modules.scheduling.domain.policies import (
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
 
 MAX_RESULTS = 200
+EXPIRY_BATCH_SIZE = 100
 
 
 @dataclass(frozen=True)
@@ -39,10 +40,25 @@ class SchedulingService:
         store: SchedulingStore,
         clock: Callable[[], datetime],
         hold_minutes: int,
+        expiry_batch_size: int = EXPIRY_BATCH_SIZE,
     ) -> None:
         self._store = store
         self._clock = clock
         self._hold = timedelta(minutes=hold_minutes)
+        self._expiry_batch_size = expiry_batch_size
+
+    def expire_overdue_holds(self) -> int:
+        """System job, not an HTTP action: release holds whose payment window has ended.
+
+        Batches keep each transaction short. Stops when a batch is not full.
+        """
+        now = self._clock()
+        total = 0
+        while True:
+            expired = self._store.expire_overdue_holds(now, self._expiry_batch_size)
+            total += expired
+            if expired < self._expiry_batch_size:
+                return total
 
     def list_availability(
         self,

@@ -302,6 +302,56 @@ class SqlSchedulingStore:
             ),
         )
 
+    def expire_overdue_holds(self, now: datetime, limit: int) -> int:
+        return retry_on_deadlock(lambda: self._expire_once(now, limit))
+
+    def _expire_once(self, now: datetime, limit: int) -> int:
+        """Expire one batch. READPAST skips holds another worker already claims."""
+        moment = _utc_naive(now)
+        with self._engine.begin() as conn:
+            overdue = conn.execute(
+                text(
+                    "SELECT TOP (:limite) c.id, c.horario_id FROM citas c "
+                    "WITH (UPDLOCK, READPAST, ROWLOCK) "
+                    "WHERE c.estado = :pendiente AND c.expiracion_reserva <= :ahora "
+                    "ORDER BY c.expiracion_reserva"
+                ),
+                {"limite": limit, "pendiente": _BOOKED, "ahora": moment},
+            ).all()
+            for row in overdue:
+                appointment_id = _canonical(row.id)
+                expired = conn.execute(
+                    text(
+                        "UPDATE citas SET estado = 'EXPIRADA' "
+                        "WHERE id = :id AND estado = :pendiente AND expiracion_reserva <= :ahora"
+                    ),
+                    {"id": row.id, "pendiente": _BOOKED, "ahora": moment},
+                ).rowcount
+                if expired != 1:
+                    # The row is locked by this transaction, so this cannot happen: fail loudly.
+                    raise RuntimeError("Locked hold changed state during expiration")
+                conn.execute(
+                    text(
+                        "UPDATE horarios_disponibles SET estado = 'DISPONIBLE' "
+                        "WHERE id = :h AND estado = 'RESERVADO'"
+                    ),
+                    {"h": row.horario_id},
+                )
+                _history(conn, appointment_id, None, _BOOKED, "EXPIRADA", moment)
+                _outbox(
+                    conn,
+                    appointment_id,
+                    2,
+                    "cita.expirada",
+                    {
+                        "cita_id": appointment_id,
+                        "horario_id": _canonical(row.horario_id),
+                        "estado": "EXPIRADA",
+                    },
+                    moment,
+                )
+        return len(overdue)
+
 
 _APPOINTMENT_SELECT = (
     "SELECT c.id, c.clave_idempotencia, c.horario_id, c.servicio_id, c.estado, c.motivo, "

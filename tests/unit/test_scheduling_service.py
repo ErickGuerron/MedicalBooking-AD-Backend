@@ -101,6 +101,18 @@ class FakeStore:
         self.taken.discard(cancelled.horario_id)
         return CancelOutcome(CancelStatus.CANCELLED, cancelled)
 
+    def expire_overdue_holds(self, now, limit):
+        overdue = [
+            a
+            for a in self.appointments.values()
+            if a.estado == "PENDIENTE_PAGO" and a.expiracion_reserva <= now
+        ][:limit]
+        for appointment in overdue:
+            expired = Appointment(**{**appointment.__dict__, "estado": "EXPIRADA"})
+            self.appointments[expired.id] = expired
+            self.taken.discard(expired.horario_id)
+        return len(overdue)
+
 
 @pytest.fixture
 def store() -> FakeStore:
@@ -276,3 +288,55 @@ def test_cancelling_twice_conflicts(store, patient) -> None:
 
     with pytest.raises(Conflict):
         service.cancel(patient, booked.id)
+
+
+# ---------- hold expiration (E4) ----------
+
+
+def _expiring_service(store: FakeStore, now: datetime, batch_size: int = 100) -> SchedulingService:
+    return SchedulingService(
+        store=store, clock=lambda: now, hold_minutes=15, expiry_batch_size=batch_size
+    )
+
+
+def test_expired_hold_is_released_and_its_slot_becomes_bookable_again(store, patient) -> None:
+    booked = _book(_service(store), patient, store).appointment
+
+    expired = _expiring_service(store, NOW + timedelta(minutes=16)).expire_overdue_holds()
+
+    assert expired == 1
+    assert store.appointments[booked.id].estado == "EXPIRADA"
+    assert store.slot_id not in store.taken
+
+
+def test_holds_that_are_not_yet_due_are_kept(store, patient) -> None:
+    booked = _book(_service(store), patient, store).appointment
+
+    expired = _expiring_service(store, NOW + timedelta(minutes=14)).expire_overdue_holds()
+
+    assert expired == 0
+    assert store.appointments[booked.id].estado == "PENDIENTE_PAGO"
+
+
+def test_expiration_processes_every_overdue_hold_across_batches(store, patient) -> None:
+    service = _service(store)
+    for index in range(5):
+        extra_slot = _id()
+        store.slots[extra_slot] = FUTURE + timedelta(hours=index)
+        _book(
+            service, patient, store, horario_id=extra_slot, idempotency_key=f"batch-key-{index:04d}"
+        )
+
+    expired = _expiring_service(
+        store, NOW + timedelta(hours=1), batch_size=2
+    ).expire_overdue_holds()
+
+    assert expired == 5
+
+
+def test_running_expiration_twice_is_a_no_op_the_second_time(store, patient) -> None:
+    _book(_service(store), patient, store)
+    later = _expiring_service(store, NOW + timedelta(hours=1))
+
+    assert later.expire_overdue_holds() == 1
+    assert later.expire_overdue_holds() == 0
