@@ -282,4 +282,5 @@ def test_permission_matrix_is_loaded_from_the_database(client, engine) -> None:
         "permissions"
     ]
 
-    assert permissions == ["resultados.registrar"]
+    # E5 (migration 0006) grants laboratory staff read access to validated knowledge.
+    assert set(permissions) == {"resultados.registrar", "conocimiento.leer"}

@@ -107,6 +107,10 @@ Results are not yet measured. These will be recorded in `docs/experiments/`.
 
 ## Not yet implemented
 
+- **Shared document storage (blocks multi-VM deployment).** Uploaded lab PDFs are written to
+  `LAB_DOCUMENTS_DIR` on the local disk of the host that handles the upload. Replicas on
+  VM1 and VM2 do not share that disk, so a PDF uploaded through one VM is not found by a
+  download routed to the other. Move storage to Azure Blob or a shared volume before E7.
 - Publishing the image to a registry from CI.
 - HTTPS, DuckDNS, and Let's Encrypt on the VMs.
 - Azure resources, which are not provisioned from this repository.

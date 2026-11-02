@@ -44,6 +44,8 @@ class Settings(BaseSettings):
 
     # How long a pending appointment holds its slot before payment (payment phase, E4).
     appointment_hold_minutes: int = Field(default=15, ge=1, le=120)
+    # Private PDF storage root (E3). Single-host only until shared storage exists (E7).
+    lab_documents_dir: str = Field(default="storage/documents", min_length=1, max_length=260)
 
     # Serves the OpenAPI document and Scalar page. Unset means on outside production
     # and off in production; set API_DOCS_ENABLED explicitly to override either way.

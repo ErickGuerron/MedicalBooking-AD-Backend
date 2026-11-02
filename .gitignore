@@ -15,6 +15,9 @@ dist/
 .env.*
 !.env.example
 
+# Private clinical PDF storage (E3, local single-host root). Never versioned.
+storage/
+
 # Editor / OS
 .vscode/
 .idea/
