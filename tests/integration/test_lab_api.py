@@ -95,11 +95,19 @@ def _detail(app, order_id: str, headers) -> str:
     return order.get_json()["pruebas"][0]["detalle_id"]
 
 
-def _result_body(detail_id: str, value: float = 13.5) -> dict:
+HB = "a0000000-0000-4000-8000-00000000b001"  # mandatory analyte of the hemogram (seed 0006)
+
+
+def _result_body(detail_id: str, value: float = 13.5, analito: str | None = None) -> dict:
     return {
         "detalle_id": detail_id,
         "resultados": [
-            {"nombre_analito": "Hemoglobina", "valor_numerico": value, "unidad": "g/dL"}
+            {
+                "nombre_analito": "Hemoglobina",
+                "valor_numerico": value,
+                "unidad": "g/dL",
+                **({"analito_id": analito} if analito else {}),
+            }
         ],
     }
 
@@ -115,7 +123,7 @@ def test_order_to_results_to_review_and_patient_reads_them(app, engine) -> None:
 
     recorded = client.post(
         f"/api/v1/lab/orders/{order_id}/results",
-        json=_result_body(detail),
+        json=_result_body(detail, analito=HB),
         headers=lab_headers,
     )
     reviewed = client.post(
@@ -217,7 +225,7 @@ def test_parallel_results_for_one_test_leave_exactly_one_recorded(app, engine) -
             app.test_client()
             .post(
                 f"/api/v1/lab/orders/{order_id}/results",
-                json=_result_body(detail, value=10.0 + index),
+                json=_result_body(detail, value=10.0 + index, analito=HB),
                 headers=lab_headers,
             )
             .status_code
@@ -243,7 +251,7 @@ def test_parallel_reviews_leave_exactly_one_review(app, engine) -> None:
     detail = _detail(app, order_id, doctor_headers)
     app.test_client().post(
         f"/api/v1/lab/orders/{order_id}/results",
-        json=_result_body(detail),
+        json=_result_body(detail, analito=HB),
         headers=_token(app, _user(engine, "LABORATORISTA")),
     )
 

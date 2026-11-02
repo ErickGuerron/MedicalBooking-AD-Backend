@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from flask import Flask
 from pydantic import SecretStr
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
@@ -274,15 +274,61 @@ def test_normal_hemoglobin_is_classified_without_findings(app, engine) -> None:
     assert body["estado"] == "PENDIENTE"
 
 
-def test_a_result_without_an_analyte_gives_sin_evidencia(app, engine) -> None:
-    order_id, _, doctor = _complete(app, engine, value=11.0, analito=None)
+def test_a_value_without_a_reference_for_its_unit_gives_sin_evidencia(app, engine) -> None:
+    order_id, _, _, doctor_headers = _order_for(app, engine)
+    detail = _detail(app, order_id, doctor_headers)
+    app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/results",
+        json={
+            "detalle_id": detail,
+            "resultados": [
+                {
+                    "nombre_analito": "Hemoglobina",
+                    "valor_numerico": 11.0,
+                    "unidad": "mmol/L",
+                    "analito_id": HB_SEEDED,
+                }
+            ],
+        },
+        headers=_token(app, _user(engine, "LABORATORISTA")),
+    )
 
     body = (
-        app.test_client().post(f"/api/v1/lab/orders/{order_id}/evaluate", headers=doctor).get_json()
+        app.test_client()
+        .post(f"/api/v1/lab/orders/{order_id}/evaluate", headers=doctor_headers)
+        .get_json()
     )
 
     assert body["estado"] == "SIN_EVIDENCIA"
     assert body["hallazgos"] == []
+
+
+def test_a_result_without_its_mandatory_analyte_does_not_complete_the_order(app, engine) -> None:
+    order_id, _, _, doctor_headers = _order_for(app, engine)
+    detail = _detail(app, order_id, doctor_headers)
+    app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/results",
+        json={
+            "detalle_id": detail,
+            "resultados": [{"nombre_analito": "Texto libre", "valor_texto": "ok"}],
+        },
+        headers=_token(app, _user(engine, "LABORATORISTA")),
+    )
+
+    response = app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/evaluate", headers=doctor_headers
+    )
+
+    assert response.status_code == 409
+    assert (
+        _count(
+            engine,
+            "SELECT COUNT(*) FROM ordenes_laboratorio_detalle "
+            "WHERE id = :d AND estado = 'EN_PROCESO'",
+            d=detail,
+        )
+        == 1
+    )
 
 
 def test_evaluation_needs_a_complete_order(app, engine) -> None:
@@ -586,3 +632,60 @@ def test_a_numeric_criterion_without_unit_is_rejected(app, engine) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_a_test_completes_only_when_every_mandatory_analyte_is_reported(app, engine) -> None:
+    code = f"PANEL-{uuid.uuid4().hex[:8]}"
+    with engine.begin() as conn:
+        panel = conn.execute(
+            text(
+                "INSERT INTO tipos_prueba_laboratorio (id, codigo, nombre, activo) "
+                "OUTPUT inserted.id VALUES (NEWID(), :c, N'Panel de prueba', 1)"
+            ),
+            {"c": code},
+        ).scalar_one()
+        for analito in (HB_SEEDED, GLU_SEEDED):
+            conn.execute(
+                text(
+                    "INSERT INTO conocimiento_pruebas_analitos (tipo_prueba_id, analito_id, "
+                    "obligatorio, orden_presentacion) VALUES (:t, :a, 1, 1)"
+                ),
+                {"t": panel, "a": analito},
+            )
+    order_id, doctor_headers = _order_with_test(app, engine, code)
+    detail = _detail(app, order_id, doctor_headers)
+    lab = _token(app, _user(engine, "LABORATORISTA"))
+    client = app.test_client()
+
+    def report(analito: str, value: float, unit: str):
+        return client.post(
+            f"/api/v1/lab/orders/{order_id}/results",
+            json={
+                "detalle_id": detail,
+                "resultados": [
+                    {
+                        "nombre_analito": "Analito del panel",
+                        "valor_numerico": value,
+                        "unidad": unit,
+                        "analito_id": analito,
+                    }
+                ],
+            },
+            headers=lab,
+        )
+
+    first = report(HB_SEEDED, 14.0, "g/dL")
+    repeated = report(HB_SEEDED, 15.0, "g/dL")
+    partial_state = _count(
+        engine,
+        "SELECT COUNT(*) FROM ordenes_laboratorio_detalle WHERE id = :d AND estado = 'EN_PROCESO'",
+        d=detail,
+    )
+    second = report(GLU_SEEDED, 90.0, "mg/dL")
+
+    assert first.status_code == 200
+    assert first.get_json()["estado"] == "EN_PROCESO"
+    assert repeated.status_code == 409
+    assert partial_state == 1
+    assert second.status_code == 200
+    assert second.get_json()["estado"] == "COMPLETADA"

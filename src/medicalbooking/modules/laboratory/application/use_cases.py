@@ -155,6 +155,8 @@ class LabService:
             raise NotFound("Order detail not found")
         if status == "DETAIL_ALREADY_COMPLETED":
             raise Conflict("This test already has results")
+        if status == "ANALYTE_ALREADY_REPORTED":
+            raise Conflict("An analyte of this test already has a result")
         self._audit(actor, order.paciente_id, "resultado_laboratorio", str(detail_id), "registrar")
         return self._store.get_order(order_id) or order
 

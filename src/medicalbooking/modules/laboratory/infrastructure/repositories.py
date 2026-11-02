@@ -267,15 +267,33 @@ class SqlLabStore:
             _lock_order(conn, order_id)
             detail = conn.execute(
                 text(
-                    "SELECT estado FROM ordenes_laboratorio_detalle WITH (UPDLOCK, ROWLOCK) "
-                    "WHERE id = :d AND orden_id = :o"
+                    "SELECT estado, tipo_prueba_id FROM ordenes_laboratorio_detalle "
+                    "WITH (UPDLOCK, ROWLOCK) WHERE id = :d AND orden_id = :o"
                 ),
                 {"d": detail_id, "o": order_id},
             ).first()
             if detail is None:
                 return "DETAIL_NOT_FOUND"
-            if detail.estado != "PENDIENTE":
+            if detail.estado == "COMPLETADO":
                 return "DETAIL_ALREADY_COMPLETED"
+            # Analytes already reported for this test: each analyte is reported once.
+            reported = {
+                _canonical(row.analito_id)
+                for row in conn.execute(
+                    text(
+                        "SELECT analito_id FROM resultados_laboratorio "
+                        "WHERE detalle_orden_id = :d AND analito_id IS NOT NULL"
+                    ),
+                    {"d": detail_id},
+                ).all()
+            }
+            incoming = {
+                _canonical(entry.analito_id) for entry in entries if entry.analito_id is not None
+            }
+            if incoming & reported or len(incoming) != sum(
+                1 for entry in entries if entry.analito_id is not None
+            ):
+                return "ANALYTE_ALREADY_REPORTED"
             for entry in entries:
                 conn.execute(
                     text(
@@ -306,12 +324,31 @@ class SqlLabStore:
                         "ahora": moment,
                     },
                 )
+            # A test is complete when every mandatory analyte (obligatorio=1) has a result.
+            # A test with no mandatory analyte is complete with its first submission.
+            required = {
+                _canonical(row.analito_id)
+                for row in conn.execute(
+                    text(
+                        "SELECT analito_id FROM conocimiento_pruebas_analitos "
+                        "WHERE tipo_prueba_id = :t AND obligatorio = 1"
+                    ),
+                    {"t": detail.tipo_prueba_id},
+                ).all()
+            }
+            reported |= incoming
+            complete = not required or required <= reported
             conn.execute(
                 text(
-                    "UPDATE ordenes_laboratorio_detalle SET estado = 'COMPLETADO', "
-                    "fecha_resultado = :ahora WHERE id = :d"
+                    "UPDATE ordenes_laboratorio_detalle SET estado = :estado, "
+                    "fecha_resultado = CASE WHEN :estado = 'COMPLETADO' THEN :ahora "
+                    "ELSE fecha_resultado END WHERE id = :d"
                 ),
-                {"d": detail_id, "ahora": moment},
+                {
+                    "estado": "COMPLETADO" if complete else "EN_PROCESO",
+                    "ahora": moment,
+                    "d": detail_id,
+                },
             )
             pending = conn.execute(
                 text(
