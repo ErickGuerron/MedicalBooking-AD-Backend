@@ -35,6 +35,11 @@ Clients (Flutter, Angular)
 - **Retries never resend a POST that reached a replica.** Nginx `proxy_next_upstream`
   does not include `non_idempotent`, so a timeout cannot duplicate a reservation or
   payment. Idempotency keys still protect the business operations.
+- **Rate limits at the edge.** Nginx limits login to 5 attempts per minute and the API to
+  20 requests per second per client, returning `429` problem+json. The limit lives in Nginx
+  rather than in the app because the four replicas do not share memory. The Azure Load
+  Balancer (standard SKU) keeps the client address, so the limit keys on the real client.
+  The health probe is well below the limit. Nginx configuration is validated in CI.
 - **Least privilege in containers.** Read-only root filesystem, `/tmp` as tmpfs,
   all capabilities dropped, `no-new-privileges`, non-root user.
 - **Replica identity.** `REPLICA_ID` is echoed in `X-Replica-Id` on every response.

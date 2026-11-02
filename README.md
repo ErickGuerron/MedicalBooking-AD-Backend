@@ -87,6 +87,11 @@ Booking is safe under concurrency: the slot is claimed with a conditional update
 filtered unique index, so concurrent requests for one slot yield exactly one `201`.
 Pending appointments do not expire yet; the expiration worker belongs to the payment phase.
 
+Rate limits are enforced by Nginx in front of the API (`deploy/nginx/`), per client address:
+login accepts 5 attempts per minute, and the whole API accepts 20 requests per second (burst 40).
+Rejected requests get `429` with `application/problem+json` and `Retry-After: 60`.
+Each balancer keeps its own counters, so with two VMs the effective limit is per VM.
+
 ### API reference (Scalar)
 
 With `API_DOCS_ENABLED` on (default outside production):
