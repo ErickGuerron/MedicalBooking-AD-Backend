@@ -100,7 +100,13 @@ import.
 ```powershell
 uv run python -m medicalbooking.workers.import_knowledge --dry-run   # fetch and report, write nothing
 uv run python -m medicalbooking.workers.import_knowledge             # fetch, then write in one transaction
+uv run python -m medicalbooking.workers.knowledge_candidates         # candidate report for review (no database write)
+uv run python -m medicalbooking.workers.import_references --dry-run  # validate knowledge/references.csv
+uv run python -m medicalbooking.workers.import_references            # write reviewed ranges as drafts
 ```
+
+The APIs do not provide reference ranges. Ranges are read from studies by a person and recorded in
+`knowledge/references.csv` with their PMID; see `docs/knowledge-import.md`.
 
 The configuration is `knowledge/sources.json`. PubMed PMIDs are empty on purpose: choosing the
 literature that supports a rule is a clinical decision. Step 1 fetches every source before any

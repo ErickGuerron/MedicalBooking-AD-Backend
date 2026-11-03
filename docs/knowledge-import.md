@@ -94,3 +94,64 @@ Run on 2026-11-02 against the local development database, after applying migrati
 | `import aborted before any write: LOINC code_mismatch` | The code is retired or no longer has the expected name | Review the code in `sources.json`; nothing was written |
 | `import aborted before any write: ICD-11: http_401` | Client id or secret is wrong | Regenerate the key in the ICD API portal |
 | `import rolled back, nothing kept: ImportFailed` | A rule named in the plan does not exist | Fix the rule code; nothing was written |
+
+## What each API contributes (verified against the live APIs)
+
+| Source | Fields used | Where it goes |
+|---|---|---|
+| LOINC | Active status, expected name, scale (`Qn` quantitative, `Ord`, `Nom`, `Doc`), specimen (`Bld` blood, `Ser/Plas` serum or plasma, `Urine`), example unit (`g/dL`), class (`HEM/BC`), Spanish name | Code and description of the analyte. Scale and specimen are catalog data. The example unit is **not** the canonical unit of the laboratory; it stays in the report |
+| MedlinePlus Connect | Title, link and an HTML summary (up to 2,000 characters after cleaning) | `conocimiento_contenidos.texto` and `url_referencia`, as drafts |
+| PubMed | PMID, title, journal, year, publication types, MeSH terms, abstract | `conocimiento_fuentes` (one row per PMID) when a reference cites it; the candidate report for review |
+| ICD-11 | Code, title, class (`category`), official page | `codigo_diagnostico` of a draft rule; the candidate report |
+
+None of these sources gives reference ranges. A range is read from a study by a person and recorded
+with the PMID that supports it.
+
+Licence note: MedlinePlus content is published by the U.S. National Library of Medicine and must be
+cited; the stored summary keeps the link to the original page. Confirm the licence before publishing
+the text in a product.
+
+## Candidate report (for review, not knowledge)
+
+```powershell
+uv run python -m medicalbooking.workers.knowledge_candidates
+```
+
+Writes `knowledge/candidates/candidates-<UTC stamp>.json`. It contains, per analyte: the LOINC profile,
+the MedlinePlus topics, the queries run and the PubMed candidates with their publication types, MeSH
+terms and abstracts. It contains, per rule: the ICD-11 entity. It writes nothing to the database. The
+folder is git-ignored because it holds abstracts.
+
+Search quality: free-text queries returned unrelated studies (a GLP-1 trial for hemoglobin, stroke
+burden for glucose). The queries in `knowledge/sources.json` use MeSH terms and `reference interval*`
+in title or abstract, restricted to humans. Results are still mixed (HbA1c, glycated albumin, vitamin
+D), so a reviewer must read each abstract and discard what does not apply.
+
+## Reviewed reference ranges (CSV)
+
+A clinician or the team records each range in `knowledge/references.csv`, citing the PMID of the study
+it was read from. The header is fixed:
+
+```
+analito_id,pmid,unidad,minimo,maximo,sexo,edad_min_dias,edad_max_dias,metodo,tipo_muestra,contexto,fecha_inicio,fecha_fin
+```
+
+Rules enforced before anything is written (every problem is reported with its line number):
+
+- `analito_id` is a UUID of an existing analyte; `pmid` is digits only and must exist in PubMed.
+- `unidad` is required; at least one of `minimo` or `maximo` is required; `minimo` is not greater than
+  `maximo`.
+- Ages are whole numbers of days; `edad_min_dias` is not greater than `edad_max_dias`.
+- `fecha_inicio` is required (YYYY-MM-DD); `fecha_fin`, when present, is not before it.
+
+A file with any problem is refused as a whole. The rows are written as drafts (`estado = 'BORRADOR'`),
+each with its source `PMID-<n>`, in one transaction. A validator then publishes them through the API,
+where the overlap rule applies.
+
+```powershell
+uv run python -m medicalbooking.workers.import_references --dry-run   # validate and check PMIDs; write nothing
+uv run python -m medicalbooking.workers.import_references             # write the drafts in one transaction
+```
+
+The population of a study (for example Southwest China) has no field in the model. Record it in the
+`contexto` column or in the note of the source until the model has a place for it.

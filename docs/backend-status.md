@@ -3,7 +3,7 @@
 This page records what is delivered, what is blocked and why, and the decisions taken, phase by phase
 (spec section 11). It is updated with each phase. Commit hashes refer to `develop`.
 
-Last verified: 305 tests passing, `ruff check` and `ruff format --check` clean.
+Last verified: 329 tests passing, `ruff check` and `ruff format --check` clean.
 
 ## Delivery by phase
 
@@ -28,6 +28,13 @@ Cross-cutting work delivered outside the phase list:
   image provides `/app/data/documents` owned by the application user.
 - **External knowledge importers (`7377cb7`, branch `feature/knowledge-importers`):** LOINC,
   MedlinePlus Connect, PubMed and ICD-11 as drafts, all or nothing. See `knowledge-import.md`.
+- **Candidate report and reviewed ranges (branch `feature/knowledge-importers`):** a JSON report of
+  candidate studies and catalog data for review (no database write), and a CSV import of reference
+  ranges that cite their PMID, refused as a whole when any row is invalid.
+- **Knowledge base content (current state):** the synthetic seed (2 analytes, 2 ranges, 2 rules, all marked
+  `SINTETICO`) plus 4 MedlinePlus drafts with their summaries. There are no clinical reference ranges
+  yet: the project's specification allows synthetic or reviewed data for the prototype, and no reviewed
+  source was provided. Reviewed ranges enter through `knowledge/references.csv` when a source exists.
 
 ## Blocked, and what unblocks each item
 

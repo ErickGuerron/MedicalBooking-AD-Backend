@@ -100,3 +100,13 @@ SELECT codigo, estado FROM conocimiento_reglas;                           -- rul
 | `import aborted before any write: LOINC code_mismatch` | A code no longer matches the expected name | Review the code in `knowledge/sources.json`; nothing was written |
 | `import rolled back, nothing kept: ImportFailed` | A rule named in the plan does not exist | Fix the rule code; nothing was written |
 | `ICD-11: http_401` | Wrong client id or secret | Regenerate the access key in the ICD API portal |
+
+### Candidate report and reviewed ranges (E5)
+
+```powershell
+uv run python -m medicalbooking.workers.knowledge_candidates          # writes knowledge/candidates/*.json, no database write
+uv run python -m medicalbooking.workers.import_references --dry-run   # validate knowledge/references.csv and check its PMIDs
+uv run python -m medicalbooking.workers.import_references             # write the drafts, all or nothing
+```
+
+See `knowledge-import.md` for the file format, the checks and the reviewer's steps.
