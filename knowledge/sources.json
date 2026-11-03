@@ -5,13 +5,19 @@
       "analito_id": "a0000000-0000-4000-8000-00000000b001",
       "loinc": "718-7",
       "expected_display": "Hemoglobin",
-      "medlineplus": true
+      "medlineplus": true,
+      "pubmed_queries": [
+        "(\"Hemoglobins\"[Mesh]) AND (\"reference interval*\"[tiab] OR \"reference value*\"[tiab]) AND \"Humans\"[Mesh]"
+      ]
     },
     {
       "analito_id": "a0000000-0000-4000-8000-00000000b002",
       "loinc": "2339-0",
       "expected_display": "Glucose",
-      "medlineplus": true
+      "medlineplus": true,
+      "pubmed_queries": [
+        "(\"Blood Glucose\"[Mesh]) AND (\"reference interval*\"[tiab] OR \"reference value*\"[tiab]) AND \"Humans\"[Mesh]"
+      ]
     }
   ],
   "rules": [

@@ -38,7 +38,7 @@ class MedlinePlus:
 
 
 class PubMed:
-    def summaries(self, pmids):
+    def details(self, pmids):
         return [
             Article(pmid, "Hemoglobin ranges", "Test J", f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/")
             for pmid in pmids
@@ -47,7 +47,7 @@ class PubMed:
 
 class Icd11:
     def resolve(self, term):
-        return "3A9Z", "Anemia"
+        return "3A9Z", "Anemia", "https://id.who.int/icd/release/11/2024-01/mms/224336967"
 
 
 def _plan(config=CONFIG, **overrides):
@@ -91,3 +91,26 @@ def test_a_source_that_is_not_configured_is_never_called() -> None:
 
     assert plan.diagnoses == ()
     assert plan.sources == ()
+
+
+def test_the_real_clients_implement_the_methods_the_plan_calls() -> None:
+    """Guards against the interface drifting: a renamed method must fail here, not at runtime."""
+    import inspect
+
+    from medicalbooking.modules.clinical.infrastructure.external_sources import (
+        Icd11,
+        Loinc,
+        MedlinePlus,
+        PubMed,
+    )
+
+    expected = {
+        Loinc: ("lookup",),
+        MedlinePlus: ("topics",),
+        PubMed: ("details",),
+        Icd11: ("resolve",),
+    }
+    for cls, methods in expected.items():
+        for name in methods:
+            assert callable(getattr(cls, name, None)), f"{cls.__name__}.{name} is missing"
+    assert len(inspect.signature(Icd11.resolve).parameters) == 2  # self, term

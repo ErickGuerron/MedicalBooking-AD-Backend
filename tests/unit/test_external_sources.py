@@ -96,31 +96,52 @@ def test_medlineplus_returns_titles_and_links_without_tracking_parameters(monkey
     assert topics[0].url == "https://medlineplus.gov/spanish/bloodglucose.html"
 
 
-def test_pubmed_refuses_an_unknown_pmid(monkeypatch) -> None:
-    _replay(monkeypatch, {"result": {"uids": [], "999": {"error": "cannot get document summary"}}})
+PUBMED_XML = b"""<?xml version="1.0"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>42969393</PMID>
+      <Article>
+        <Journal>
+          <Title>Clinical laboratory</Title>
+          <JournalIssue><PubDate><Year>2015</Year></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>Reference <i>intervals</i> for hemoglobin</ArticleTitle>
+        <Abstract><AbstractText>Our study aimed to establish the range.</AbstractText></Abstract>
+        <PublicationTypeList>
+          <PublicationType>Journal Article</PublicationType>
+        </PublicationTypeList>
+      </Article>
+      <MeshHeadingList><MeshHeading><DescriptorName>Adult</DescriptorName></MeshHeading></MeshHeadingList>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>
+"""
 
-    with pytest.raises(ExternalSourceError) as error:
-        PubMed().summaries(["999"])
-    assert error.value.kind == "not_found"
 
-
-def test_pubmed_strips_markup_from_titles(monkeypatch) -> None:
-    _replay(
-        monkeypatch,
-        {
-            "result": {
-                "42969393": {
-                    "title": "Hemoglobin <i>reference</i> ranges",
-                    "fulljournalname": "Journal of Test",
-                }
-            }
-        },
+def test_pubmed_parses_title_year_type_mesh_and_abstract(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sources, "_request", lambda source, url, headers=None, body=None: PUBMED_XML
     )
 
-    article = PubMed().summaries(["42969393"])[0]
+    article = PubMed().details(["42969393"])[0]
 
-    assert article.title == "Hemoglobin reference ranges"
+    assert article.title == "Reference intervals for hemoglobin"
+    assert article.year == "2015"
+    assert article.publication_types == ("Journal Article",)
+    assert article.mesh_terms == ("Adult",)
+    assert "establish the range" in article.abstract
     assert article.url == "https://pubmed.ncbi.nlm.nih.gov/42969393/"
+
+
+def test_pubmed_refuses_a_pmid_it_does_not_return(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sources, "_request", lambda source, url, headers=None, body=None: PUBMED_XML
+    )
+
+    with pytest.raises(ExternalSourceError) as error:
+        PubMed().details(["42969393", "99999999"])
+    assert error.value.kind == "not_found"
 
 
 def test_icd11_returns_the_first_code_with_markup_removed(monkeypatch) -> None:
@@ -135,7 +156,7 @@ def test_icd11_returns_the_first_code_with_markup_removed(monkeypatch) -> None:
         },
     )
 
-    assert client.resolve("anemia") == ("3A9Z", "Anemia, sin especificación")
+    assert client.resolve("anemia") == ("3A9Z", "Anemia, sin especificación", "")
 
 
 def test_icd11_without_token_fails_closed(monkeypatch) -> None:

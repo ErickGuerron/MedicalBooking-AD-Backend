@@ -22,3 +22,6 @@ storage/
 .vscode/
 .idea/
 Thumbs.db
+
+# Candidate reports contain abstracts and are for local review only (E5 knowledge import).
+knowledge/candidates/

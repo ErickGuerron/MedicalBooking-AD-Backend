@@ -28,11 +28,11 @@ class EducationClient(Protocol):
 
 
 class LiteratureClient(Protocol):
-    def summaries(self, pmids: list[str]) -> list[Article]: ...
+    def details(self, pmids: list[str]) -> list[Article]: ...
 
 
 class DiagnosisClient(Protocol):
-    def resolve(self, term: str) -> tuple[str, str]: ...
+    def resolve(self, term: str) -> tuple[str, str, str]: ...
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,7 @@ class ContentDraft:
     loinc: str
     title: str
     url: str
+    summary: str = ""
 
 
 @dataclass(frozen=True)
@@ -99,7 +100,9 @@ def build_plan(
         if item.get("medlineplus"):
             for topic in medlineplus.topics(item["loinc"]):
                 contents.append(
-                    ContentDraft(item["analito_id"], item["loinc"], topic.title, topic.url)
+                    ContentDraft(
+                        item["analito_id"], item["loinc"], topic.title, topic.url, topic.summary
+                    )
                 )
         notes.append(f"LOINC {item['loinc']} confirmed: {display}")
 
@@ -108,7 +111,7 @@ def build_plan(
     diagnoses: list[DiagnosisCode] = []
     for rule in config.get("rules", []):
         pmids = list(rule.get("pubmed_pmids", []))
-        for article in pubmed.summaries(pmids):
+        for article in pubmed.details(pmids):
             sources.append(
                 SourceRow(
                     codigo=f"PMID-{article.pmid}",
@@ -121,7 +124,7 @@ def build_plan(
             rule_sources.append(RuleSource(rule["regla_codigo"], f"PMID-{article.pmid}"))
         term = rule.get("icd_search")
         if term:
-            code, title = icd11.resolve(term)
+            code, title, _entity_id = icd11.resolve(term)
             diagnoses.append(DiagnosisCode(rule["regla_codigo"], code, title))
             notes.append(f"ICD-11 {code} proposed for {rule['regla_codigo']}")
 
