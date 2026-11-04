@@ -15,14 +15,13 @@ from medicalbooking.config import Settings
 pytestmark = pytest.mark.integration
 
 KEY = "integration-signing-key-with-32+chars"
-TEST_PASSWORD = "Password1"
-ROLES = {
-    "paciente1@test.com": "PACIENTE",
-    "paciente2@test.com": "PACIENTE",
-    "laboratorista1@test.com": "LABORATORISTA",
-    "medico1@test.com": "MEDICO",
-    "medico2@test.com": "MEDICO",
-    "admin1@test.com": "ADMINISTRADOR",
+ACCOUNTS = {
+    "paciente1@test.com": ("PACIENTE", "Password1"),
+    "paciente2@test.com": ("PACIENTE", "Password1"),
+    "laboratorista1@test.com": ("LABORATORISTA", "Password1"),
+    "medico1@test.com": ("MEDICO", "Password123"),
+    "medico2@test.com": ("MEDICO", "Password1"),
+    "administrador1@test.com": ("ADMINISTRADOR", "Password123"),
 }
 
 
@@ -31,10 +30,13 @@ def app(migrated_engine: Engine, test_settings: Settings) -> Iterator[Flask]:
     yield create_app(test_settings.model_copy(update={"jwt_signing_key": SecretStr(KEY)}))
 
 
-@pytest.mark.parametrize(("email", "role"), ROLES.items())
-def test_each_account_signs_in_with_its_role(app: Flask, email: str, role: str) -> None:
+@pytest.mark.parametrize(("email", "role_and_password"), ACCOUNTS.items())
+def test_each_account_signs_in_with_its_role(
+    app: Flask, email: str, role_and_password: tuple[str, str]
+) -> None:
+    role, password = role_and_password
     client = app.test_client()
-    token = client.post("/api/v1/auth/login", json={"email": email, "password": TEST_PASSWORD})
+    token = client.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert token.status_code == 200
 
     me = client.get(

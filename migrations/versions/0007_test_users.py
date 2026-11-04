@@ -25,17 +25,18 @@ branch_labels = None
 depends_on = None
 
 # Deliberately public: the accounts are never created in production (see upgrade()).
-TEST_PASSWORD = "Password1"  # noqa: S105
+PATIENT_PASSWORD = "Password1"  # noqa: S105
+STAFF_PASSWORD = "Password123"  # noqa: S105
 EMAIL_DOMAIN = "test.com"
 
-# (local part, role, first name, last name, professional registry for doctors)
+# (local part, role, first name, last name, professional registry for doctors, password)
 ACCOUNTS = (
-    ("paciente1", "PACIENTE", "Paciente", "Uno", None),
-    ("paciente2", "PACIENTE", "Paciente", "Dos", None),
-    ("laboratorista1", "LABORATORISTA", "Laboratorista", "Uno", None),
-    ("medico1", "MEDICO", "Medico", "Uno", "TEST-MED-0001"),
-    ("medico2", "MEDICO", "Medico", "Dos", "TEST-MED-0002"),
-    ("admin1", "ADMINISTRADOR", "Administrador", "Uno", None),
+    ("paciente1", "PACIENTE", "Paciente", "Uno", None, PATIENT_PASSWORD),
+    ("paciente2", "PACIENTE", "Paciente", "Dos", None, PATIENT_PASSWORD),
+    ("laboratorista1", "LABORATORISTA", "Laboratorista", "Uno", None, PATIENT_PASSWORD),
+    ("medico1", "MEDICO", "Medico", "Uno", "TEST-MED-0001", STAFF_PASSWORD),
+    ("medico2", "MEDICO", "Medico", "Dos", "TEST-MED-0002", PATIENT_PASSWORD),
+    ("administrador1", "ADMINISTRADOR", "Administrador", "Uno", None, STAFF_PASSWORD),
 )
 
 
@@ -51,15 +52,16 @@ def upgrade() -> None:
     if Settings().app_env == "production":
         return
     connection = op.get_bind()
-    password_hash = Argon2PasswordHasher().hash(TEST_PASSWORD)
-    for local, role, first, last, registry in ACCOUNTS:
+    hasher = Argon2PasswordHasher()
+    hashes = {password: hasher.hash(password) for password in {a[5] for a in ACCOUNTS}}
+    for local, role, first, last, registry, password in ACCOUNTS:
         email = f"{local}@{EMAIL_DOMAIN}"
         exists = connection.execute(
             text("SELECT 1 FROM usuarios WHERE email = :e"), {"e": email}
         ).first()
         if exists:
             continue
-        _create_account(connection, email, role, first, last, registry, password_hash)
+        _create_account(connection, email, role, first, last, registry, hashes[password])
     _grant_doctor_access(connection, f"medico1@{EMAIL_DOMAIN}", f"paciente1@{EMAIL_DOMAIN}")
 
 

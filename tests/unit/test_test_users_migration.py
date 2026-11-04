@@ -40,5 +40,13 @@ def test_accounts_follow_the_role_number_format() -> None:
         "laboratorista1@test.com",
         "medico1@test.com",
         "medico2@test.com",
-        "admin1@test.com",
+        "administrador1@test.com",
     ]
+
+
+def test_doctor1_and_the_administrator_use_the_staff_password() -> None:
+    migration = _load()
+    passwords = {local: password for local, *_, password in migration.ACCOUNTS}
+
+    assert passwords["medico1"] == passwords["administrador1"] == "Password123"
+    assert passwords["paciente1"] == "Password1"
