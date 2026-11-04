@@ -46,6 +46,21 @@ Schema is managed with Alembic and reviewed T-SQL scripts in `migrations/sql/`.
 uv run alembic upgrade head
 ```
 
+## Test accounts
+
+Migration `0007` creates one shared set of accounts so every developer and both frontends sign in the
+same way. The password of all of them is `Password1`.
+
+| Email | Role |
+|---|---|
+| `paciente1@test.com`, `paciente2@test.com` | PACIENTE |
+| `laboratorista1@test.com` | LABORATORISTA |
+| `medico1@test.com`, `medico2@test.com` | MEDICO (`medico1` can read `paciente1`) |
+| `admin1@test.com` | ADMINISTRADOR |
+
+The migration does nothing when `APP_ENV=production`: a known password must never exist in a real
+environment. If a deployed environment ever ran with another `APP_ENV`, remove the accounts.
+
 ## Tests
 
 ```powershell
