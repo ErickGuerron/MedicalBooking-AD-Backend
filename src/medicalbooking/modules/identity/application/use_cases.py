@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import secrets
 import uuid
 from collections.abc import Callable
@@ -10,6 +12,8 @@ from datetime import UTC, datetime
 
 from medicalbooking.modules.identity.application.ports import (
     AccessProfile,
+    ActivationMailer,
+    MailDeliveryError,
     NewUser,
     PasswordHasher,
     TokenIssuer,
@@ -20,9 +24,20 @@ from medicalbooking.modules.identity.domain.policies import (
     can_read_patient,
     is_locked,
 )
-from medicalbooking.shared.domain.errors import Forbidden, Unauthenticated, ValidationFailed
+from medicalbooking.shared.domain.errors import (
+    Conflict,
+    Forbidden,
+    Unauthenticated,
+    ValidationFailed,
+)
 
 ACTIVE = "ACTIVO"
+INACTIVE = "INACTIVO"
+PATIENT_ROLE = "PACIENTE"
+# Returned for every registration, whether or not the email already exists.
+REGISTRATION_ACCEPTED = "If the address can receive an account, we sent an activation link to it."
+VERIFICATION_FAILED = "The activation link is invalid, already used, or expired."
+_log = logging.getLogger("medicalbooking.identity")
 # Roles that can be assigned through the API in E1. MEDICO needs a professional
 # registration profile, which is out of scope for this slice.
 ASSIGNABLE_ROLES = frozenset({"PACIENTE", "LABORATORISTA", "ADMINISTRADOR"})
@@ -42,14 +57,75 @@ class IdentityService:
         hasher: PasswordHasher,
         tokens: TokenIssuer,
         clock: Callable[[], datetime] | None = None,
+        mailer: ActivationMailer | None = None,
+        public_base_url: str = "http://localhost:5000",
+        verification_hours: int = 24,
     ) -> None:
         self._directory = directory
         self._hasher = hasher
         self._tokens = tokens
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._mailer = mailer
+        self._public_base_url = public_base_url.rstrip("/")
+        self._verification_hours = verification_hours
         # Verified against when the account is unknown, so response time does not
         # reveal whether an email is registered.
         self._dummy_hash = hasher.hash(secrets.token_urlsafe(32))
+
+    def register_patient(
+        self,
+        *,
+        email: str,
+        password: str,
+        first_name: str,
+        last_name: str,
+    ) -> str:
+        """Create an inactive patient and send an activation link.
+
+        Always returns the same message. An existing email produces the same answer
+        and the same work (password hashing), so the response does not reveal which
+        addresses have accounts.
+        """
+        normalized = _normalize_email(email)
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise ValidationFailed(f"Password must have at least {MIN_PASSWORD_LENGTH} characters")
+        password_hash = self._hasher.hash(password)
+        token = secrets.token_urlsafe(32)
+        new_user = NewUser(
+            user_id=str(uuid.uuid4()),
+            email=normalized,
+            first_name=first_name,
+            last_name=last_name,
+            password_hash=password_hash,
+            roles=(PATIENT_ROLE,),
+            status=INACTIVE,
+        )
+        try:
+            self._directory.create_pending_patient(
+                new_user, _token_hash(token), self._verification_hours
+            )
+        except Conflict:
+            return REGISTRATION_ACCEPTED
+        if self._mailer is None:
+            _log.error("Activation email not sent: mail is not configured")
+            return REGISTRATION_ACCEPTED
+        try:
+            self._mailer.send_activation(
+                normalized,
+                first_name,
+                f"{self._public_base_url}/api/v1/auth/verify-email?token={token}",
+            )
+        except MailDeliveryError as error:
+            # The account stays inactive; the message carries no token or address.
+            _log.error("Activation email failed: %s", error)
+        return REGISTRATION_ACCEPTED
+
+    def verify_email(self, token: str) -> None:
+        """Activate the account behind a single-use token, or refuse with one generic message."""
+        if not token or len(token) > 200:
+            raise ValidationFailed(VERIFICATION_FAILED)
+        if not self._directory.consume_verification(_token_hash(token)):
+            raise ValidationFailed(VERIFICATION_FAILED)
 
     def login(self, email: str, password: str) -> IssuedToken:
         record = self._directory.find_credentials_by_email(_normalize_email(email))
@@ -136,3 +212,8 @@ class IdentityService:
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _token_hash(token: str) -> str:
+    """Tokens are stored only as SHA-256 hashes, so a database leak does not expose live links."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

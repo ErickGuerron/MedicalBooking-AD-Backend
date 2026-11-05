@@ -172,13 +172,45 @@ class SqlUserDirectory:
         return found is not None
 
     def create_user(self, new_user: NewUser) -> None:
+        self._create(new_user, verification=None)
+
+    def create_pending_patient(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
+        self._create(new_user, verification=(token_hash, valid_hours))
+
+    def consume_verification(self, token_hash: str) -> bool:
+        """Activate the account behind a valid token, marking the token used atomically."""
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, usuario_id FROM verificaciones_correo WITH (UPDLOCK, ROWLOCK) "
+                    "WHERE token_hash = :hash AND usado_en IS NULL "
+                    "AND expira_en > SYSUTCDATETIME()"
+                ),
+                {"hash": token_hash},
+            ).first()
+            if row is None:
+                return False
+            conn.execute(
+                text("UPDATE verificaciones_correo SET usado_en = SYSUTCDATETIME() WHERE id = :id"),
+                {"id": row.id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE usuarios SET estado = 'ACTIVO', actualizado_en = SYSUTCDATETIME() "
+                    "WHERE id = :u"
+                ),
+                {"u": row.usuario_id},
+            )
+            return True
+
+    def _create(self, new_user: NewUser, verification: tuple[str, int] | None) -> None:
         try:
             with self._engine.begin() as conn:
                 conn.execute(
                     text(
                         "INSERT INTO usuarios "
-                        "(id, email, nombre, apellido, creado_en, actualizado_en) "
-                        "VALUES (:id, :email, :nombre, :apellido, "
+                        "(id, email, nombre, apellido, estado, creado_en, actualizado_en) "
+                        "VALUES (:id, :email, :nombre, :apellido, :estado, "
                         "SYSUTCDATETIME(), SYSUTCDATETIME())"
                     ),
                     {
@@ -186,6 +218,7 @@ class SqlUserDirectory:
                         "email": new_user.email,
                         "nombre": new_user.first_name,
                         "apellido": new_user.last_name,
+                        "estado": new_user.status,
                     },
                 )
                 conn.execute(
@@ -214,6 +247,17 @@ class SqlUserDirectory:
                             ),
                             {"u": new_user.user_id},
                         )
+                if verification is not None:
+                    token_hash, valid_hours = verification
+                    conn.execute(
+                        text(
+                            "INSERT INTO verificaciones_correo "
+                            "(id, usuario_id, token_hash, creado_en, expira_en) "
+                            "VALUES (NEWID(), :u, :hash, SYSUTCDATETIME(), "
+                            "DATEADD(HOUR, :horas, SYSUTCDATETIME()))"
+                        ),
+                        {"u": new_user.user_id, "hash": token_hash, "horas": valid_hours},
+                    )
         except IntegrityError:
             # Unique email, or a concurrent request created the same account first.
             raise Conflict("An account with this email already exists") from None

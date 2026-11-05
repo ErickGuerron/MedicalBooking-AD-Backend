@@ -33,9 +33,31 @@ class NewUser:
     last_name: str
     password_hash: str
     roles: tuple[str, ...]
+    status: str = "ACTIVO"
+
+
+class MailDeliveryError(Exception):
+    """The verification email could not be sent. The message never includes the token."""
+
+
+class ActivationMailer(Protocol):
+    def send_activation(self, to_email: str, first_name: str, link: str) -> None:
+        """Send the account activation link. Raises MailDeliveryError on failure."""
+        ...
 
 
 class UserDirectory(Protocol):
+    def create_pending_patient(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
+        """Create an INACTIVO patient and its verification token in one transaction.
+
+        Raises Conflict when the email is already registered.
+        """
+        ...
+
+    def consume_verification(self, token_hash: str) -> bool:
+        """Activate the account behind a valid, unused, unexpired token. Single use."""
+        ...
+
     def find_credentials_by_email(self, email: str) -> CredentialRecord | None: ...
 
     def load_access(self, user_id: str) -> AccessProfile | None: ...

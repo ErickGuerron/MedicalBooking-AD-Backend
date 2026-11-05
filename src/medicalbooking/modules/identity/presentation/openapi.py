@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from medicalbooking.modules.identity.presentation.routes import CreateUserRequest, LoginRequest
+from medicalbooking.modules.identity.presentation.routes import (
+    CreateUserRequest,
+    LoginRequest,
+    RegisterRequest,
+)
 
 _PROBLEM_CONTENT = {
     "application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}
@@ -87,11 +91,59 @@ def identity_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/auth/register": {
+                "post": {
+                    "tags": ["Identity"],
+                    "operationId": "registerPatient",
+                    "summary": "Register as a patient (public, email verification)",
+                    "description": (
+                        "Always answers 202 with the same message, whether or not the email "
+                        "already has an account. The account stays inactive until the link "
+                        "sent by email is opened."
+                    ),
+                    "requestBody": _json_body("RegisterRequest"),
+                    "responses": {
+                        "202": _json_response("Request accepted", "RegistrationAccepted"),
+                        "422": _problem("Invalid request body or weak password"),
+                    },
+                }
+            },
+            "/api/v1/auth/verify-email": {
+                "get": {
+                    "tags": ["Identity"],
+                    "operationId": "verifyEmail",
+                    "summary": "Activate an account from the email link",
+                    "description": "The token is single use and expires after 24 hours.",
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "in": "query",
+                            "required": True,
+                            "schema": {"type": "string", "maxLength": 200},
+                        }
+                    ],
+                    "responses": {
+                        "200": _json_response("Account activated", "EmailVerified"),
+                        "422": _problem("Link invalid, already used, or expired"),
+                    },
+                }
+            },
         },
         "components": {
             "schemas": {
                 "LoginRequest": LoginRequest.model_json_schema(),
                 "CreateUserRequest": CreateUserRequest.model_json_schema(),
+                "RegisterRequest": RegisterRequest.model_json_schema(),
+                "RegistrationAccepted": {
+                    "type": "object",
+                    "required": ["message"],
+                    "properties": {"message": {"type": "string"}},
+                },
+                "EmailVerified": {
+                    "type": "object",
+                    "required": ["verified"],
+                    "properties": {"verified": {"type": "boolean", "const": True}},
+                },
                 "LoginResponse": {
                     "type": "object",
                     "required": ["access_token", "token_type", "expires_in"],

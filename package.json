@@ -1,0 +1,13 @@
+{
+  "name": "medicalbooking-email-templates",
+  "private": true,
+  "type": "module",
+  "description": "Build step for the MedicalBooking email templates (MJML to HTML). Not used at runtime.",
+  "scripts": {
+    "build:email": "node email-templates/build.mjs",
+    "check:email": "node email-templates/build.mjs --check"
+  },
+  "devDependencies": {
+    "mjml": "5.4.1"
+  }
+}

@@ -36,6 +36,13 @@ Cross-cutting work delivered outside the phase list:
   yet: the project's specification allows synthetic or reviewed data for the prototype, and no reviewed
   source was provided. Reviewed ranges enter through `knowledge/references.csv` when a source exists.
 
+- **Patient self-registration with email verification (migration `0007`):** `POST /api/v1/auth/register`
+  always answers `202` with the same message, and `GET /api/v1/auth/verify-email?token=...` activates the
+  account. Accounts start `INACTIVO`. Tokens are single use, valid 24 hours, and stored only as SHA-256
+  hashes. Mail goes through Brevo (`BREVO_API_KEY`, `MAIL_FROM`, `MAIL_FROM_NAME`). Registration is rate
+  limited at Nginx with login. Unit and integration tests use a fake mailer; Brevo itself was not called
+  in the test suite. If the mail fails, the account stays inactive and no resend endpoint exists yet.
+
 ## Blocked, and what unblocks each item
 
 | Item | Needs | Who provides it |
