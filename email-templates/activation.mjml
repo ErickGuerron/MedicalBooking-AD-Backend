@@ -1,0 +1,54 @@
+<mjml>
+  <mj-head>
+    <mj-title>Verifica tu cuenta de MedicalBooking</mj-title>
+    <mj-preview>Activa tu cuenta de MedicalBooking. El enlace vale 24 horas.</mj-preview>
+    <mj-attributes>
+      <mj-all font-family="Arial, Helvetica, sans-serif" />
+      <mj-text font-size="16px" line-height="24px" color="#222222" />
+    </mj-attributes>
+  </mj-head>
+  <mj-body background-color="#FFFFFF" width="600px">
+    <mj-section background-color="#062F9D" padding="20px">
+      <mj-column>
+        <mj-text color="#FFFFFF" font-size="22px" font-weight="bold" align="center">
+          MedicalBooking
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    <mj-section background-color="#FFF4E8" padding="24px 24px 8px 24px">
+      <mj-column>
+        <mj-text>
+          <p>Hola $first_name,</p>
+          <p>Para activar tu cuenta de MedicalBooking, presiona el botón de abajo. El enlace es válido por 24 horas y solo puede usarse una vez.</p>
+        </mj-text>
+        <mj-button
+          background-color="#DD3C01"
+          color="#FFFFFF"
+          font-size="16px"
+          font-weight="bold"
+          border-radius="6px"
+          href="$link"
+          inner-padding="14px 28px"
+        >
+          Activar mi cuenta
+        </mj-button>
+      </mj-column>
+    </mj-section>
+    <mj-section background-color="#FFFFFF" padding="16px 24px">
+      <mj-column>
+        <mj-text font-size="13px" color="#222222">
+          <p>Si el botón no funciona, copia este enlace en tu navegador:</p>
+          <p><a href="$link" style="color:#062F9D;word-break:break-all;">$link</a></p>
+          <p>Si no creaste esta cuenta, puedes ignorar este correo.</p>
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    <mj-section background-color="#F8BF68" padding="12px 24px">
+      <mj-column>
+        <mj-text font-size="12px" color="#222222" align="center">
+          MedicalBooking · Este es un mensaje automático, no respondas a este correo.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

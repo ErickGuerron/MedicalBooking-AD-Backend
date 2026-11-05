@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # Private PDF storage root (E3). Single-host only until shared storage exists (E7).
     lab_documents_dir: str = Field(default="storage/documents", min_length=1, max_length=260)
 
+    # Transactional email for account verification (Brevo HTTP API). Secrets stay in
+    # environment variables or the git-ignored .env file.
+    brevo_api_key: SecretStr | None = None
+    mail_from: str | None = None
+    mail_from_name: str = Field(default="MedicalBooking", min_length=1, max_length=70)
+    # Public base URL used to build the verification link. The link points to the API
+    # until a front end exists; change APP_PUBLIC_URL when one does.
+    app_public_url: str = Field(default="http://localhost:5000", min_length=8, max_length=500)
+    email_verification_hours: int = Field(default=24, ge=1, le=168)
+
     # Serves the OpenAPI document and Scalar page. Unset means on outside production
     # and off in production; set API_DOCS_ENABLED explicitly to override either way.
     api_docs_enabled: bool | None = None
