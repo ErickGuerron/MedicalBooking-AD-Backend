@@ -1,7 +1,7 @@
 """E8 patient self-registration: email verification tokens.
 
-Revision ID: 0007_email_verification
-Revises: 0006_clinical_knowledge_seed
+Revision ID: 0008_email_verification
+Revises: 0007_test_users
 """
 
 from __future__ import annotations
@@ -12,12 +12,12 @@ from alembic import op
 
 from medicalbooking.shared.infrastructure.tsql import split_batches
 
-revision = "0007_email_verification"
-down_revision = "0006_clinical_knowledge_seed"
+revision = "0008_email_verification"
+down_revision = "0007_test_users"
 branch_labels = None
 depends_on = None
 
-_SQL_FILE = Path(__file__).resolve().parents[1] / "sql" / "0007_email_verification.sql"
+_SQL_FILE = Path(__file__).resolve().parents[1] / "sql" / "0008_email_verification.sql"
 
 
 def upgrade() -> None:
