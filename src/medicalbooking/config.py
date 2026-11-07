@@ -52,10 +52,18 @@ class Settings(BaseSettings):
     brevo_api_key: SecretStr | None = None
     mail_from: str | None = None
     mail_from_name: str = Field(default="MedicalBooking", min_length=1, max_length=70)
+    # Absolute public URL of the email images (for example a public Supabase Storage folder).
+    # Mail clients cannot load relative paths, so the value must start with https://.
+    email_assets_base_url: str = Field(default="", max_length=500)
     # Public base URL used to build the verification link. The link points to the API
     # until a front end exists; change APP_PUBLIC_URL when one does.
     app_public_url: str = Field(default="http://localhost:5000", min_length=8, max_length=500)
     email_verification_hours: int = Field(default=24, ge=1, le=168)
+    # Front-end URLs for links in emails and notifications. Local development defaults:
+    # Flutter patient portal on 8081 (8080 is taken on the development machine), Angular
+    # transactional system on 4200 (the Angular dev server default).
+    flutter_front_url: str = Field(default="http://localhost:8081", min_length=8, max_length=500)
+    angular_front_url: str = Field(default="http://localhost:4200", min_length=8, max_length=500)
 
     # Serves the OpenAPI document and Scalar page. Unset means on outside production
     # and off in production; set API_DOCS_ENABLED explicitly to override either way.
@@ -66,6 +74,12 @@ class Settings(BaseSettings):
         # HS256 needs at least 256 bits of entropy; shorter keys are brute-forceable.
         if self.jwt_signing_key is not None and len(self.jwt_signing_key.get_secret_value()) < 32:
             raise ValueError("JWT_SIGNING_KEY must be at least 32 characters")
+        return self
+
+    @model_validator(mode="after")
+    def _check_email_assets_url(self) -> Settings:
+        if self.email_assets_base_url and not self.email_assets_base_url.startswith("https://"):
+            raise ValueError("EMAIL_ASSETS_BASE_URL must be an absolute https:// URL")
         return self
 
     @model_validator(mode="after")

@@ -17,21 +17,33 @@ from medicalbooking.modules.identity.infrastructure.email import (
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 LINK = "https://api.example.test/api/v1/auth/verify-email?token=abc123&lang=es"
-PHARMATON_PRIMARY = "#DD3C01"
+ASSET_BASE = "https://cdn.example.test/email-assets/email-templates/assets"
+PRIMARY_COLOR = "#FF7A1A"
 
 
 def test_rendered_html_uses_palette_and_fills_placeholders() -> None:
-    rendered = render_activation_email("Ana", LINK)
+    rendered = render_activation_email("Ana", LINK, ASSET_BASE)
 
-    assert PHARMATON_PRIMARY in rendered.html
+    assert PRIMARY_COLOR in rendered.html
     assert "Ana" in rendered.html
     assert "$first_name" not in rendered.html
     assert "$link" not in rendered.html
+    assert "$asset_base_url" not in rendered.html
     assert "Activar mi cuenta" in rendered.html
 
 
+def test_rendered_html_loads_every_image_from_the_configured_asset_base() -> None:
+    rendered = render_activation_email("Ana", LINK, ASSET_BASE + "/")
+
+    assert "../assets/" not in rendered.html
+    assert f"{ASSET_BASE}/brand/logo.png" in rendered.html
+    assert f"{ASSET_BASE}/layout/header.png" in rendered.html
+    assert f"{ASSET_BASE}/illustrations/divisor-pulso.png" in rendered.html
+    assert f"{ASSET_BASE}/icons/icono-citas.png" in rendered.html
+
+
 def test_rendered_html_escapes_user_supplied_name_and_link() -> None:
-    rendered = render_activation_email("<script>alert(1)</script>", LINK)
+    rendered = render_activation_email("<script>alert(1)</script>", LINK, ASSET_BASE)
 
     assert "<script>alert(1)</script>" not in rendered.html
     assert "&lt;script&gt;" in rendered.html
@@ -39,7 +51,7 @@ def test_rendered_html_escapes_user_supplied_name_and_link() -> None:
 
 
 def test_plain_text_contains_name_and_raw_link() -> None:
-    rendered = render_activation_email("Ana", LINK)
+    rendered = render_activation_email("Ana", LINK, ASSET_BASE)
 
     assert "Hola Ana" in rendered.text
     assert LINK in rendered.text
@@ -57,11 +69,12 @@ def test_brevo_payload_carries_the_rendered_templates() -> None:
         api_key="test-key",
         sender_email="sender@example.test",
         sender_name="MedicalBooking",
+        asset_base_url=ASSET_BASE,
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     mailer.send_activation("ana@example.test", "Ana", LINK)
 
-    expected = render_activation_email("Ana", LINK)
+    expected = render_activation_email("Ana", LINK, ASSET_BASE)
     payload = captured["payload"]
     assert isinstance(payload, dict)
     assert payload["htmlContent"] == expected.html

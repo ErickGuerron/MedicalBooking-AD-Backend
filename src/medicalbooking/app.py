@@ -103,6 +103,7 @@ def _build_mailer(settings: Settings) -> BrevoActivationMailer | None:
         api_key=settings.brevo_api_key.get_secret_value(),
         sender_email=settings.mail_from,
         sender_name=settings.mail_from_name,
+        asset_base_url=settings.email_assets_base_url,
     )
 
 
