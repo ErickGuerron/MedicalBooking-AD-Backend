@@ -13,6 +13,10 @@
 --      BORRADOR (draft, version 1). They are not visible to patients until a doctor
 --      with conocimiento.validar publishes them.
 --
+--   4. tipos_prueba_laboratorio + conocimiento_pruebas_analitos: one test type per real analyte
+--      (GLUC-AYUNO, HEMO-HGB), each with its analyte as mandatory. Without this link no result can
+--      be entered for the real analytes and their references would never apply.
+--
 -- Method (reproducible from the CDC public files, see the source row URL):
 --   Weighted 2.5th and 97.5th percentiles of NHANES 08/2021-08/2023 (cycle L).
 --   Glucose: fasting subsample (GLU_L LBXGLU, weight WTSAF2YR), adults >= 18 years,
@@ -208,6 +212,40 @@ IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0
          'F', 4380, 6569, 'sangre total', NULL, NULL, 9.7, 14.7, NULL,
          '2026-11-04', NULL, 'BORRADOR', NULL, NULL
   FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'NHANES';
+GO
+
+-- =====================================================================
+-- 4. Test types for the real analytes
+-- A result must belong to the test it is entered under, so an analyte with no test can never
+-- receive a result and its references would never apply. The real analytes get their own test
+-- types instead of joining the synthetic ones: a test completes only when every mandatory analyte
+-- has a result, and mixing synthetic and real analytes would require both on every order.
+-- =====================================================================
+
+IF NOT EXISTS (SELECT 1 FROM [tipos_prueba_laboratorio] WHERE [codigo] = 'GLUC-AYUNO')
+  INSERT INTO [tipos_prueba_laboratorio] ([id], [codigo], [nombre], [descripcion], [unidad_predeterminada], [activo])
+  VALUES (NEWID(), 'GLUC-AYUNO', N'Glucosa en ayunas', N'Glucosa en plasma, muestra en ayunas.', N'mg/dL', 1);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [tipos_prueba_laboratorio] WHERE [codigo] = 'HEMO-HGB')
+  INSERT INTO [tipos_prueba_laboratorio] ([id], [codigo], [nombre], [descripcion], [unidad_predeterminada], [activo])
+  VALUES (NEWID(), 'HEMO-HGB', N'Hemoglobina', N'Hemoglobina en sangre total.', N'g/dL', 1);
+GO
+
+INSERT INTO [conocimiento_pruebas_analitos] ([tipo_prueba_id], [analito_id], [obligatorio], [orden_presentacion])
+SELECT t.[id], 'a1000000-0000-4000-8000-000000000001', 1, 1
+FROM [tipos_prueba_laboratorio] t
+WHERE t.[codigo] = 'GLUC-AYUNO'
+  AND NOT EXISTS (SELECT 1 FROM [conocimiento_pruebas_analitos] p
+                  WHERE p.[tipo_prueba_id] = t.[id] AND p.[analito_id] = 'a1000000-0000-4000-8000-000000000001');
+GO
+
+INSERT INTO [conocimiento_pruebas_analitos] ([tipo_prueba_id], [analito_id], [obligatorio], [orden_presentacion])
+SELECT t.[id], 'a1000000-0000-4000-8000-000000000002', 1, 1
+FROM [tipos_prueba_laboratorio] t
+WHERE t.[codigo] = 'HEMO-HGB'
+  AND NOT EXISTS (SELECT 1 FROM [conocimiento_pruebas_analitos] p
+                  WHERE p.[tipo_prueba_id] = t.[id] AND p.[analito_id] = 'a1000000-0000-4000-8000-000000000002');
 GO
 
 -- =====================================================================

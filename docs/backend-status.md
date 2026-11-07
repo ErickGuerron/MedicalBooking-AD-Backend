@@ -31,10 +31,18 @@ Cross-cutting work delivered outside the phase list:
 - **Candidate report and reviewed ranges (branch `feature/knowledge-importers`):** a JSON report of
   candidate studies and catalog data for review (no database write), and a CSV import of reference
   ranges that cite their PMID, refused as a whole when any row is invalid.
-- **Knowledge base content (current state):** the synthetic seed (2 analytes, 2 ranges, 2 rules, all marked
-  `SINTETICO`) plus 4 MedlinePlus drafts with their summaries. There are no clinical reference ranges
-  yet: the project's specification allows synthetic or reviewed data for the prototype, and no reviewed
-  source was provided. Reviewed ranges enter through `knowledge/references.csv` when a source exists.
+- **Knowledge base content (current state, 2026-11-04):**
+  - Synthetic seed (migration `0006`): 2 analytes, 2 validated ranges and 2 rules, all marked `SINTETICO`.
+  - 4 MedlinePlus drafts with their summaries (importers).
+  - **7 reference ranges from NHANES 2021-2023 as drafts** (`BORRADOR`) for fasting glucose and
+    hemoglobin, loaded with `knowledge/candidate-sources.sql` together with the candidate sources and
+    one test type per real analyte (`GLUC-AYUNO`, `HEMO-HGB`). They are **not validated**: they apply to
+    no result until a doctor with `conocimiento.validar` publishes them. The clinician's questions are in
+    `knowledge/review-nhanes-reference-drafts.md`.
+  - There are still **no validated clinical reference ranges**. Reviewed ranges that cite a PMID enter
+    through `knowledge/references.csv`, which is empty for now.
+  - Known limits of the drafts: the API does not list drafts (a doctor needs the ids from the review
+    document), and the NHANES rows enter through SQL without a PMID, unlike the CSV path.
 
 - **Patient self-registration with email verification (migration `0007`):** `POST /api/v1/auth/register`
   always answers `202` with the same message, and `GET /api/v1/auth/verify-email?token=...` activates the
