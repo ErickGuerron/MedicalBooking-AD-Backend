@@ -9,9 +9,14 @@
 --   2. conocimiento_analitos: two real analytes (glucose in fasting plasma and blood
 --      hemoglobin). codigo_loinc stays NULL: the synthetic analytes hold the LOINC
 --      codes 2339-0 and 718-7 (unique index), and the codes are not reassigned here.
---   3. conocimiento_referencias: NHANES 2021-2023 (cycle L) reference intervals as
---      BORRADOR (draft, version 1). They are not visible to patients until a doctor
---      with conocimiento.validar publishes them.
+--   3. conocimiento_referencias: two kinds of draft (BORRADOR, version 1), none visible to
+--      patients until a doctor with conocimiento.validar publishes it:
+--      3a. Diagnostic criteria (preferred for classifying a patient result): ADA fasting glucose
+--          (section 3b, contexto AYUNO) and WHO 2011 hemoglobin cut-offs for anaemia (section 3b).
+--      3b. NHANES 2021-2023 (cycle L) population reference intervals (section 3c). Kept as
+--          evidence and cross-check; they describe a population, not a diagnosis.
+--      Rows of the same analyte, sex, age and context overlap. The API accepts only one of
+--      them as VALIDADA (409 on the second), so the clinician chooses which applies.
 --
 --   4. tipos_prueba_laboratorio + conocimiento_pruebas_analitos: one test type per real analyte
 --      (GLUC-AYUNO, HEMO-HGB), each with its analyte as mandatory. Without this link no result can
@@ -28,7 +33,8 @@
 --     hemoglobin adult M 12.5-17.1, adult F 10.6-15.5, 1-5 years 10.8-13.9,
 --     6-11 years 11.4-14.7, 12-17 years M 12.2-16.8 and F 10.4-14.8 g/dL.
 --
--- These are population percentiles of a US sample, not diagnostic thresholds.
+-- Section 3c rows are population percentiles of a US sample, not diagnostic thresholds.
+-- Section 3b rows are guideline criteria (ADA, WHO), also drafts until a clinician validates them.
 -- Clinician validation is required before any of them applies to a patient result.
 -- Age bands are in days: 18 years = 6570, 6 years = 2190, 12 years = 4380.
 
@@ -98,6 +104,19 @@ IF NOT EXISTS (SELECT 1 FROM [conocimiento_fuentes] WHERE [codigo] = 'MSD-LAB-RA
           NULL, '2026-11-04T00:00:00', 1);
 GO
 
+-- WHO-ANEMIA: added after the expert list. It is the diagnostic criterion for anaemia
+-- (hemoglobin cut-offs by age and sex), which population percentiles cannot provide.
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_fuentes] WHERE [codigo] = 'WHO-ANEMIA')
+  INSERT INTO [conocimiento_fuentes] ([id], [codigo], [nombre], [organizacion], [url],
+                                      [identificador_publicacion], [version_publicacion],
+                                      [fecha_publicacion], [fecha_consulta], [vigente])
+  VALUES ('f0000000-0000-4000-8000-000000000008', 'WHO-ANEMIA',
+          N'Haemoglobin concentrations for the diagnosis of anaemia and assessment of severity',
+          N'World Health Organization',
+          N'https://www.who.int/publications/i/item/WHO-NMH-NHD-MNM-11.1',
+          N'WHO/NMH/NHD/MNM/11.1', N'2011', '2011-05-31', '2026-11-07T00:00:00', 1);
+GO
+
 -- PubMed is not inserted here: the importer creates one row per cited article
 -- with codigo 'PMID-<pmid>' (knowledge_import.py), so a generic row would not
 -- follow that convention.
@@ -123,7 +142,119 @@ IF NOT EXISTS (SELECT 1 FROM [conocimiento_analitos] WHERE [id] = 'a1000000-0000
 GO
 
 -- =====================================================================
--- 3. NHANES 2021-2023 reference drafts (BORRADOR, version 1)
+-- 3b. Diagnostic criteria (BORRADOR, version 1). Preferred for classifying a patient result.
+--
+-- Glucose, ADA Standards of Care 2026, section 2 (Diabetes Care 2026;49 Suppl 1:S27-S49,
+-- DOI 10.2337/dc26-S002, PMID 41358893). Table 2.2: IFG = FPG 100-125 mg/dL. Table 2.1: diabetes =
+-- FPG >= 126 mg/dL, fasting = no caloric intake for >= 8 h, and the diagnosis needs two abnormal results
+-- (the same test twice or two tests). A1C is less reliable with anaemia (section 2.4): use plasma glucose.
+-- Glucose, ADA Standards of Care, fasting plasma glucose: normal < 100 mg/dL.
+--   The model stores the normal band only. The guideline gives no lower limit (NULL), and
+--   prediabetes (100-125) and diabetes (>= 126) are not separate rows: any value above 99.999
+--   is returned as ALTO, so 100 mg/dL is flagged (correct: it is prediabetes). Labs report
+--   glucose with at most one decimal, so the gap between 99.999 and 100 is never reported.
+--   Non-fasting values are never classified by this row (contexto AYUNO must be known).
+--   The adult band starts at 18 years (6570 days). Children are not covered by this row.
+--
+-- Hemoglobin, WHO 2011 cut-offs for anaemia (g/dL). Below the limit = BAJO (anaemia).
+--   Age bands in days, approximated from years (6 months = 183, 5 years = 1826, 12 years = 4380,
+--   15 years = 5479). contexto is NULL, so the rule applies without knowing sample context.
+--   Pregnancy is not captured: WHO uses 11.0 g/dL for pregnant women, so the women's row
+--   (12.0) would flag them BAJO when they are not pregnancy-adjusted. The clinician must decide
+--   a pregnancy reference (contexto) before relying on the women's band.
+--   VERIFICATION STATUS: checked against WHO/NMH/NHD/MNM/11.1, Table 1 (non-anaemia limits, g/L):
+--     6-59 months 110 (row 009), 5-11 years 115 (row 010), 12-14 years 120 (row 011),
+--     non-pregnant women 15+ 120 (row 012), men 15+ 130 (row 013). All five match.
+--     Not modelled: pregnant women 110 (no pregnancy context). Rows 012 and 013 with contexto
+--       NULL would also apply to pregnant women, so a pregnant woman with 11.5 g/dL is flagged BAJO
+--       although she is not anaemic by the pregnancy cut-off. Do not validate 012 without a
+--       pregnancy context.
+--     Not modelled: severity bands (mild, moderate, severe) and altitude and smoking adjustments
+--       (Tables 2 and 3). A smoker's measured value is corrected by -3 to -7 g/L before comparing.
+--     Gap: Table 1 starts at 6 months. The document gives no cut-off for 0-5 months.
+--
+-- 3b.1 Glucose, adults, fasting (ADA)
+-- The source row ADA-SOC was seeded without identifiers; fill them once (only when still empty).
+UPDATE [conocimiento_fuentes]
+   SET [identificador_publicacion] = N'10.2337/dc26-S002',
+       [version_publicacion] = N'2026 (Diabetes Care 2026;49 Suppl 1:S27-S49, sec. 2)'
+ WHERE [codigo] = 'ADA-SOC' AND [identificador_publicacion] IS NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000008')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000008', 'a1000000-0000-4000-8000-000000000001', f.[id], 1, 'mg/dL',
+         NULL, 6570, NULL, 'plasma', NULL, 'AYUNO', NULL, 99.999, NULL,
+         '2026-11-07', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'ADA-SOC';
+GO
+
+-- 3b.2 Hemoglobin, WHO anaemia cut-offs (lower limit only; no upper limit)
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000009')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000009', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         NULL, 183, 1825, 'sangre total', NULL, NULL, 11.0, NULL, NULL,
+         '2011-05-31', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000010')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000010', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         NULL, 1826, 4379, 'sangre total', NULL, NULL, 11.5, NULL, NULL,
+         '2011-05-31', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000011')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000011', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         NULL, 4380, 5478, 'sangre total', NULL, NULL, 12.0, NULL, NULL,
+         '2011-05-31', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000012')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000012', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         'F', 5479, NULL, 'sangre total', NULL, NULL, 12.0, NULL, NULL,
+         '2011-05-31', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000013')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000013', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         'M', 5479, NULL, 'sangre total', NULL, NULL, 13.0, NULL, NULL,
+         '2011-05-31', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA';
+GO
+
+-- 3c. NHANES 2021-2023 reference drafts (BORRADOR, version 1): population reference, evidence only
 -- Fuente: NHANES. Vigencia desde 2026-11-04 (fecha de carga); estado BORRADOR.
 -- =====================================================================
 
@@ -246,6 +377,63 @@ FROM [tipos_prueba_laboratorio] t
 WHERE t.[codigo] = 'HEMO-HGB'
   AND NOT EXISTS (SELECT 1 FROM [conocimiento_pruebas_analitos] p
                   WHERE p.[tipo_prueba_id] = t.[id] AND p.[analito_id] = 'a1000000-0000-4000-8000-000000000002');
+GO
+
+-- =====================================================================
+-- 5. Declarative rules for fasting glucose (ADA cut-offs), BORRADOR: not evaluated until a doctor
+-- validates them (the engine reads only VALIDADA rules). Findings are preliminary, never a diagnosis.
+--   GLU-AYUNO-ALTERADA-ADA: fasting glucose >= 100 mg/dL (impaired fasting glucose, ADA).
+--   GLU-AYUNO-DIABETES-ADA: fasting glucose >= 126 mg/dL (ADA criterion; ADA requires confirmation
+--     by a second test or another criterion, which the rule message states).
+-- Known limit: the engine does not read criterion contexto yet, so AYUNO is enforced only because
+-- these rules apply to the fasting analyte, which is entered under test GLUC-AYUNO.
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_reglas] WHERE [id] = 'e1000000-0000-4000-8000-000000000001')
+  INSERT INTO [conocimiento_reglas] ([id], [codigo], [version], [nombre], [descripcion], [tipo],
+                                     [expresion_logica], [mensaje_propuesto], [prioridad], [estado],
+                                     [vigente_desde], [aprobado_por], [aprobado_en], [creado_en])
+  VALUES ('e1000000-0000-4000-8000-000000000001', 'GLU-AYUNO-ALTERADA-ADA', 1,
+          N'Glucosa en ayunas alterada (ADA)',
+          N'Glucosa en ayunas >= 100 mg/dL. Criterio ADA de glucosa alterada en ayunas (prediabetes).',
+          'HALLAZGO', 'TODOS',
+          N'Glucosa en ayunas igual o mayor a 100 mg/dL: corresponde a glucosa alterada en ayunas segun el criterio ADA. Requiere revision medica; no es un diagnostico.',
+          'INFORMATIVA', 'BORRADOR', '2026-11-07', NULL, NULL, SYSUTCDATETIME());
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_reglas] WHERE [id] = 'e1000000-0000-4000-8000-000000000002')
+  INSERT INTO [conocimiento_reglas] ([id], [codigo], [version], [nombre], [descripcion], [tipo],
+                                     [expresion_logica], [mensaje_propuesto], [prioridad], [estado],
+                                     [vigente_desde], [aprobado_por], [aprobado_en], [creado_en])
+  VALUES ('e1000000-0000-4000-8000-000000000002', 'GLU-AYUNO-DIABETES-ADA', 1,
+          N'Glucosa en ayunas en rango de diabetes (ADA)',
+          N'Glucosa en ayunas >= 126 mg/dL. Un criterio ADA de diabetes; requiere confirmacion.',
+          'ALERTA', 'TODOS',
+          N'Glucosa en ayunas igual o mayor a 126 mg/dL: cumple un criterio ADA de diabetes, que debe confirmarse con una segunda medicion u otro criterio diagnostico. Requiere revision medica; no es un diagnostico.',
+          'INFORMATIVA', 'BORRADOR', '2026-11-07', NULL, NULL, SYSUTCDATETIME());
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_reglas_criterios] WHERE [id] = 'b1000000-0000-4000-8000-000000000001')
+  INSERT INTO [conocimiento_reglas_criterios] ([id], [regla_id], [analito_id], [operador],
+                                               [umbral_numerico], [unidad], [contexto], [orden_criterio])
+  VALUES ('b1000000-0000-4000-8000-000000000001', 'e1000000-0000-4000-8000-000000000001',
+          'a1000000-0000-4000-8000-000000000001', 'GE', 100.0, 'mg/dL', 'AYUNO', 1);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_reglas_criterios] WHERE [id] = 'b1000000-0000-4000-8000-000000000002')
+  INSERT INTO [conocimiento_reglas_criterios] ([id], [regla_id], [analito_id], [operador],
+                                               [umbral_numerico], [unidad], [contexto], [orden_criterio])
+  VALUES ('b1000000-0000-4000-8000-000000000002', 'e1000000-0000-4000-8000-000000000002',
+          'a1000000-0000-4000-8000-000000000001', 'GE', 126.0, 'mg/dL', 'AYUNO', 1);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_reglas_fuentes] WHERE [regla_id] = 'e1000000-0000-4000-8000-000000000001')
+  INSERT INTO [conocimiento_reglas_fuentes] ([regla_id], [fuente_id])
+  SELECT 'e1000000-0000-4000-8000-000000000001', f.[id] FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'ADA-SOC';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_reglas_fuentes] WHERE [regla_id] = 'e1000000-0000-4000-8000-000000000002')
+  INSERT INTO [conocimiento_reglas_fuentes] ([regla_id], [fuente_id])
+  SELECT 'e1000000-0000-4000-8000-000000000002', f.[id] FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'ADA-SOC';
 GO
 
 -- =====================================================================
