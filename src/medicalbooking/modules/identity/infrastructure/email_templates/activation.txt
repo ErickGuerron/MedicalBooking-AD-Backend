@@ -1,0 +1,7 @@
+Hola $first_name,
+
+Para activar tu cuenta de Medilo, abre este enlace (válido por 24 horas y de un solo uso):
+
+$link
+
+Si no creaste esta cuenta, ignora este correo.

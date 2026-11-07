@@ -267,6 +267,18 @@
         "title": "CreateUserRequest",
         "type": "object"
       },
+      "EmailVerified": {
+        "properties": {
+          "verified": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verified"
+        ],
+        "type": "object"
+      },
       "IdResponse": {
         "properties": {
           "estado": {
@@ -909,6 +921,54 @@
         "title": "ReferenceRequest",
         "type": "object"
       },
+      "RegisterRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "first_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "First Name",
+            "type": "string"
+          },
+          "last_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Last Name",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "first_name",
+          "last_name"
+        ],
+        "title": "RegisterRequest",
+        "type": "object"
+      },
+      "RegistrationAccepted": {
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
       "ReviewRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1337,6 +1397,91 @@
           }
         },
         "summary": "Sign in with email and password",
+        "tags": [
+          "Identity"
+        ]
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "description": "Always answers 202 with the same message, whether or not the email already has an account. The account stays inactive until the link sent by email is opened.",
+        "operationId": "registerPatient",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationAccepted"
+                }
+              }
+            },
+            "description": "Request accepted"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid request body or weak password"
+          }
+        },
+        "summary": "Register as a patient (public, email verification)",
+        "tags": [
+          "Identity"
+        ]
+      }
+    },
+    "/api/v1/auth/verify-email": {
+      "get": {
+        "description": "The token is single use and expires after 24 hours.",
+        "operationId": "verifyEmail",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerified"
+                }
+              }
+            },
+            "description": "Account activated"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Link invalid, already used, or expired"
+          }
+        },
+        "summary": "Activate an account from the email link",
         "tags": [
           "Identity"
         ]

@@ -1,0 +1,181 @@
+<mjml>
+  <mj-head>
+    <mj-title>Activa tu cuenta de Medilo</mj-title>
+    <mj-preview>Confirma tu correo para activar tus citas, recetas y resultados. El enlace caduca en 24 horas.</mj-preview>
+    <mj-font name="Bricolage Grotesque" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700;12..96,800&display=swap" />
+    <mj-attributes>
+      <mj-all font-family="'Bricolage Grotesque', 'Trebuchet MS', 'Segoe UI', Arial, sans-serif" />
+      <mj-text font-size="16px" line-height="1.6" color="#2B346B" padding="0px" />
+      <mj-image padding="0px" alt="" />
+      <mj-section padding="0px" />
+      <mj-column padding="0px" />
+    </mj-attributes>
+    <mj-style>
+      .btn a { box-shadow:5px 5px 0 #16206B; }
+      @media only screen and (max-width:480px) {
+        .tagline { display:none !important; }
+        .h1 { font-size:36px !important; }
+      }
+    </mj-style>
+  </mj-head>
+  <mj-body background-color="#ECEEF4" width="600px">
+
+    <!-- Marca -->
+    <mj-section padding="32px 0px 18px 0px">
+      <!-- Logo y nombre en el mismo texto: en móvil no se separan al apilar columnas -->
+      <mj-column width="60%">
+        <mj-text font-size="30px" line-height="46px" font-weight="800" letter-spacing="-0.8px" color="#16206B"><img src="$asset_base_url/brand/logo.png" width="46" height="46" alt="Medilo" style="border:0;display:inline-block;vertical-align:middle;margin-right:10px;" />Medilo<span style="color:#FF7A1A;">.</span></mj-text>
+      </mj-column>
+      <mj-column width="230px" css-class="tagline">
+        <mj-text align="right" font-size="13.5px" line-height="1.4" color="#4A5280">Plataforma oficial de gestión médica</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- Tarjeta: borde navy; la banda naranja y la ola van como fondo -->
+    <mj-wrapper
+      border="2px solid #16206B"
+      background-color="#FFFFFF"
+      background-url="$asset_base_url/layout/band.png"
+      background-size="84px 100%"
+      background-repeat="no-repeat"
+      background-position="left top"
+      padding="0px"
+    >
+
+      <!-- Cabecera con la ola -->
+      <mj-section padding="0px">
+        <mj-column>
+          <mj-image src="$asset_base_url/layout/header.png" width="596px" height="132px" fluid-on-mobile="true" />
+        </mj-column>
+      </mj-section>
+
+      <!-- Presentación: título a la izquierda y foto a la derecha. Sin anillo de fondo: en móvil se superpone al título. -->
+      <mj-section padding="0px 0px 0px 84px">
+        <mj-column width="370px" padding="12px 12px 0px 6px">
+          <mj-text color="#16206B">
+            <div class="h1" style="font-size:44px;line-height:1.02;font-weight:800;letter-spacing:-1.5px;color:#16206B;margin-bottom:14px;">Tu salud,<br>organizada.</div>
+            <div style="font-size:17px;line-height:1.5;color:#4A5280;">Acceso seguro e inmediato a citas, recetas y especialistas médicos verificados.</div>
+          </mj-text>
+        </mj-column>
+        <mj-column width="142px" padding="6px 0px 0px 6px">
+          <mj-image src="$asset_base_url/illustrations/foto-circulo.png" width="120px" height="120px" border-radius="60px" alt="Consultorio médico Medilo" align="left" />
+        </mj-column>
+      </mj-section>
+
+      <!-- Saludo -->
+      <mj-section padding="34px 34px 0px 84px">
+        <mj-column>
+          <mj-text>
+            <div style="font-size:22px;line-height:1.25;font-weight:700;color:#16206B;margin-bottom:12px;">Hola $first_name,</div>
+            <p style="margin:0;">Te damos la bienvenida a <strong style="color:#16206B;">Medilo</strong>. Tu cuenta ha sido pre-registrada exitosamente en nuestra red de salud y especialidades médicas.</p>
+            <p style="margin:24px 0 0;font-weight:700;color:#16206B;">Con tu cuenta activa podrás:</p>
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <!-- Beneficios -->
+      <mj-section padding="14px 30px 0px 84px">
+        <mj-column width="150px" padding="0px 12px 0px 0px">
+          <mj-image src="$asset_base_url/icons/icono-citas.png" width="48px" height="48px" align="left" />
+          <mj-text padding="10px 0px 0px 0px">
+            <div style="font-size:16px;line-height:1.3;font-weight:800;color:#16206B;">Citas</div>
+            <div style="margin-top:3px;font-size:13.5px;line-height:1.5;color:#4A5280;">Agenda y revisa tus atenciones.</div>
+          </mj-text>
+        </mj-column>
+        <mj-column width="150px" padding="0px 12px 0px 0px">
+          <mj-image src="$asset_base_url/icons/icono-recetas.png" width="48px" height="48px" align="left" />
+          <mj-text padding="10px 0px 0px 0px">
+            <div style="font-size:16px;line-height:1.3;font-weight:800;color:#16206B;">Recetas</div>
+            <div style="margin-top:3px;font-size:13.5px;line-height:1.5;color:#4A5280;">Consulta tus recetas electrónicas.</div>
+          </mj-text>
+        </mj-column>
+        <mj-column width="150px">
+          <mj-image src="$asset_base_url/icons/icono-resultados.png" width="48px" height="48px" align="left" />
+          <mj-text padding="10px 0px 0px 0px">
+            <div style="font-size:16px;line-height:1.3;font-weight:800;color:#16206B;">Resultados</div>
+            <div style="margin-top:3px;font-size:13.5px;line-height:1.5;color:#4A5280;">Recibe tus resultados clínicos.</div>
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <!-- Llamada a la acción -->
+      <mj-section padding="26px 34px 0px 84px">
+        <mj-column>
+          <mj-text>
+            <p style="margin:0;">Para habilitar tu acceso seguro, confirma tu dirección de correo electrónico con este botón:</p>
+          </mj-text>
+          <mj-button
+            href="$link"
+            align="center"
+            background-color="#FF7A1A"
+            color="#16206B"
+            font-size="18px"
+            font-weight="800"
+            letter-spacing="-0.2px"
+            border="2px solid #16206B"
+            border-radius="0px"
+            inner-padding="17px 38px"
+            padding="34px 0px 0px 0px"
+            css-class="btn"
+          >
+            Activar mi cuenta
+          </mj-button>
+          <mj-text align="center" font-size="14.5px" line-height="1.55" padding="16px 0px 0px 0px">
+            El enlace es de uso único y caduca en <strong style="color:#16206B;">24 horas</strong>.
+          </mj-text>
+          <mj-text padding="34px 0px 0px 0px" line-height="1.6">
+            Atentamente,<br><strong style="color:#16206B;">El equipo de soporte de Medilo</strong>
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <!-- Letra pequeña -->
+      <mj-section padding="26px 34px 26px 84px">
+        <mj-column>
+          <mj-image src="$asset_base_url/illustrations/divisor-pulso.png" width="470px" height="44px" align="left" />
+          <mj-text padding="14px 0px 0px 0px" font-size="13px" line-height="1.6" color="#4A5280">
+            <p style="margin:0 0 8px;">¿El botón no funciona? Copia este enlace en la barra de direcciones de tu navegador:</p>
+            <p style="margin:0 0 16px;font-family:'Courier New', Courier, monospace;font-size:12.5px;line-height:1.55;color:#16206B;word-break:break-all;">$link</p>
+            <p style="margin:0 0 8px;">Si no te has registrado en Medilo ni solicitaste esta cuenta, puedes ignorar este mensaje. Ningún dato clínico ha sido activado ni compartido sin tu confirmación.</p>
+            <p style="margin:0;">Este mensaje se genera de forma automática, por favor no respondas a este correo.</p>
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <!-- Datos de la unidad médica y emergencias -->
+      <mj-section background-color="#FFF1E4" border-top="2px solid #16206B">
+        <mj-column width="62%" padding="22px 14px 22px 28px">
+          <mj-text font-size="15px" line-height="1.3" font-weight="800" color="#16206B">Medilo</mj-text>
+          <mj-text font-size="13.5px" line-height="1.65" color="#2B346B" padding="6px 0px 0px 0px">
+            Av. Los Andes y Mera, Ambato, Tungurahua<br>Atención: lunes a viernes, 8:00 a 17:00<br>Teléfono: (03) 282-4567<br>Permiso de funcionamiento N.º MED-PRUEBA-0001
+          </mj-text>
+        </mj-column>
+        <mj-column width="38%" padding="22px 28px 22px 0px">
+          <mj-text font-size="13.5px" line-height="1.5" color="#2B346B">
+            <div style="border:2px solid #16206B;background:#FFFFFF;padding:12px 14px;"><strong style="color:#16206B;">Emergencias</strong><br>Si tienes una emergencia médica, no esperes este correo: llama al 911.</div>
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+    </mj-wrapper>
+
+    <!-- Pie -->
+    <mj-section padding="26px 8px 0px 8px">
+      <mj-column>
+        <mj-text align="center" font-size="13.5px" line-height="2" color="#16206B">
+          <a href="#" style="display:inline-block;margin:0 6px;color:#16206B;text-decoration:underline;">Centro de ayuda</a>
+          <a href="#" style="display:inline-block;margin:0 6px;color:#16206B;text-decoration:underline;">Privacidad de datos médicos</a>
+          <a href="#" style="display:inline-block;margin:0 6px;color:#16206B;text-decoration:underline;">Términos del servicio</a>
+          <a href="#" style="display:inline-block;margin:0 6px;color:#16206B;text-decoration:underline;">Contacto</a>
+        </mj-text>
+        <mj-text align="center" font-size="12.5px" line-height="1.65" color="#4A5280" padding="10px 20px 0px 20px">
+          Medilo cumple con los estándares internacionales de confidencialidad y protección de información en salud. Mensaje transmitido bajo protocolo seguro cifrado.
+        </mj-text>
+        <mj-text align="center" font-size="12.5px" color="#4A5280" padding="10px 20px 0px 20px">
+          &copy; 2026 Medilo Inc. Todos los derechos reservados.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+  </mj-body>
+</mjml>

@@ -21,6 +21,7 @@ from medicalbooking.modules.clinical.infrastructure.repositories import SqlClini
 from medicalbooking.modules.clinical.presentation.openapi import clinical_fragment
 from medicalbooking.modules.clinical.presentation.routes import clinical_bp
 from medicalbooking.modules.identity.application.use_cases import IdentityService
+from medicalbooking.modules.identity.infrastructure.email import BrevoActivationMailer
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
 from medicalbooking.modules.identity.infrastructure.security import (
     Argon2PasswordHasher,
@@ -88,6 +89,21 @@ def _build_identity(settings: Settings, engine: Any) -> IdentityService:
         directory=SqlUserDirectory(engine),
         hasher=Argon2PasswordHasher(),
         tokens=JwtTokenIssuer(signing_key, settings.jwt_access_ttl_minutes),
+        mailer=_build_mailer(settings),
+        public_base_url=settings.app_public_url,
+        verification_hours=settings.email_verification_hours,
+    )
+
+
+def _build_mailer(settings: Settings) -> BrevoActivationMailer | None:
+    """Brevo is optional: without a key or sender, registration answers but sends nothing."""
+    if settings.brevo_api_key is None or not settings.mail_from:
+        return None
+    return BrevoActivationMailer(
+        api_key=settings.brevo_api_key.get_secret_value(),
+        sender_email=settings.mail_from,
+        sender_name=settings.mail_from_name,
+        asset_base_url=settings.email_assets_base_url,
     )
 
 

@@ -18,6 +18,9 @@ dist/
 # Private clinical PDF storage (E3, local single-host root). Never versioned.
 storage/
 
+# Node build step for email templates (MJML). Runtime does not use Node.
+node_modules/
+
 # Editor / OS
 .vscode/
 .idea/

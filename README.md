@@ -108,6 +108,8 @@ Errors use `application/problem+json` with `correlation_id`.
 | `POST /api/v1/auth/login` | Sign in, returns a bearer token | Same answer for unknown email, wrong password and locked account. Five consecutive failures lock the account for 15 minutes; a success clears the counter |
 | `GET /api/v1/me` | Current user, roles and permissions | |
 | `POST /api/v1/users` | Create a user | Requires `usuarios.administrar` |
+| `POST /api/v1/auth/register` | Patient self-registration, always `202` with the same message | Creates an inactive patient and sends an activation link by Brevo (`BREVO_API_KEY`, `MAIL_FROM`, `MAIL_FROM_NAME`). Same answer and work for registered and new emails. Rate-limited with login at Nginx |
+| `GET /api/v1/auth/verify-email?token=...` | Activate the account from the email link | Single-use token valid 24 hours, stored only as a SHA-256 hash. Invalid, used or expired tokens get one generic `422` |
 | `GET /api/v1/availability?desde=&hasta=&medico_id=` | Free slots in a window | ISO-8601 with offset; window at most 31 days; past slots never returned |
 | `POST /api/v1/appointments` | Reserve a slot (status `PENDIENTE_PAGO`) | Requires header `Idempotency-Key` (8 to 100 characters). Same key and body returns the original (200); same key with another body returns 409; a new reservation returns 201 |
 | `POST /api/v1/appointments/{id}/cancel` | Cancel an own appointment and release its slot | Missing and foreign appointments both return 403 |

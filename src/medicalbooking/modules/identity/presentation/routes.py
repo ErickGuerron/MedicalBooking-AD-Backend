@@ -74,6 +74,35 @@ def login() -> tuple[Response, int]:
     )
 
 
+class RegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=12, max_length=256)
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+
+
+@identity_bp.post("/auth/register")
+def register() -> tuple[Response, int]:
+    """Public patient self-registration. Always answers the same, whatever the email."""
+    body = _parse(RegisterRequest)
+    message = _service().register_patient(
+        email=body.email,
+        password=body.password,
+        first_name=body.first_name,
+        last_name=body.last_name,
+    )
+    return jsonify(message=message), 202
+
+
+@identity_bp.get("/auth/verify-email")
+def verify_email() -> tuple[Response, int]:
+    """Activate the account from the link in the email. The token is single use."""
+    _service().verify_email(request.args.get("token", ""))
+    return jsonify(verified=True), 200
+
+
 @identity_bp.get("/me")
 @authenticated
 def me() -> tuple[Response, int]:
