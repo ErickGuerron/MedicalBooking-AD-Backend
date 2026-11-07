@@ -42,6 +42,13 @@ def test_rendered_html_loads_every_image_from_the_configured_asset_base() -> Non
     assert f"{ASSET_BASE}/icons/icono-citas.png" in rendered.html
 
 
+def test_rendered_html_declares_spanish_language() -> None:
+    rendered = render_activation_email("Ana", LINK, ASSET_BASE)
+
+    assert '<html lang="es"' in rendered.html
+    assert 'lang="und"' not in rendered.html
+
+
 def test_rendered_html_escapes_user_supplied_name_and_link() -> None:
     rendered = render_activation_email("<script>alert(1)</script>", LINK, ASSET_BASE)
 
