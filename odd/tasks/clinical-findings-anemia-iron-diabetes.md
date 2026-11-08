@@ -59,6 +59,8 @@ Status: APPROVED by the user (L5). Implementation in progress, academic project 
 - L23 (user, verbatim): "1" (use LOINC codes to map analytes to clinical roles).
 - L24 (parent): verified LOINC codes: 718-7 Hb; 2276-4 ferritin; 1988-5 CRP; 1558-6 fasting glucose; 4548-4 HbA1c NGSP. Not mapped: 59261-8 (IFCC, mmol/mol); OGTT and random glucose (not verified yet). Pure mapping in domain/loinc_roles.py, tests green.
 - L25 (parent): BLOCKER for the endpoint: conocimiento_analitos has a unique index on codigo_loinc. Synthetic hemoglobin already holds 718-7, so the real hemoglobin analyte cannot take it. Synthetic glucose holds 2339-0 (glucose in blood, not fasting), which must not feed the fasting role. Needs a decision: release the synthetic codes (set NULL) and assign the real analytes; CRP and HbA1c analytes do not exist yet.
+- L26 (user, verbatim): "me parece correcto" (release the synthetic codes and assign the verified ones).
+- L27 (parent): migration 0012 applied in development and in the test database. Synthetic hemoglobin and synthetic glucose codes released. Real hemoglobin 718-7, real fasting glucose 1558-6, ferritin 2276-4, new analytes PCR 1988-5 and HbA1c 4548-4 (NGSP). Full suite: 461 passed, 1 skipped, 1 xfailed.
 - L9 (user, verbatim): "haslo" (proceed with T7).
 - L10 (parent): T7 done. Test-first: RED on missing module, GREEN 13 tests. Diabetes is a pure rule; not yet stored or exposed.
 - L6 (parent): T3 done. Test-first: RED on missing module, GREEN 33 tests. Note: first draft mixed years and months for ages; fixed by using completed months in the domain function (S6).
