@@ -1,0 +1,54 @@
+Objective: clinical findings from laboratory exams entered in the system: anaemia (haemoglobin, WHO 2024), iron deficiency (ferritin with CRP, WHO 2024) and diabetes (FPG, HbA1c, OGTT, ADA 2026). Every finding is a suggestion, never a diagnosis; the physician can confirm, dismiss or modify any finding at any time, with a recorded reason.
+Branch: feature/knowledge-importers (worktree). Delivery: ask-on-risk. Test runner: uv run pytest (integration needs SQL Server localhost,1433). Risk: item 2 (clinical findings and physician-edit permissions) and item 6 (clinical thresholds, no test catches a wrong cut-off).
+Status: APPROVED by the user (L5). Implementation in progress, academic project scope: findings are not claimed clinically valid (see S11).
+
+## Specs
+- S1: User request (L1): the system must produce the three findings (anaemia, iron deficiency, diabetes) based only on exams entered in the system. The physician may edit any finding at any time when the diagnosis is questionable. Phase order per S8.
+- S2: Each finding shows: the observed value and unit, the cut-off applied, its source and version, the reference status (BORRADOR or VALIDADA), and the fixed text "Requiere revision medica; no es un diagnostico".
+- S3: A missing input never produces a finding. The finding is NO_EVALUABLE with an explicit reason: no ferritin, no CRP for ferritin interpretation, pregnancy status unknown, sex unknown, unit missing, or no reference applies.
+- S4 (diabetes): a single abnormal result never yields a diagnosis. A finding needs two abnormal results from different tests, or the same test twice, as ADA 2026 Table 2.1 states; otherwise it is PENDIENTE_CONFIRMACION. When an anaemia finding exists for the same patient, HbA1c is not used for the diabetes finding and the system suggests plasma glucose criteria (ADA 2026 recommendation 2.4).
+- S5 (iron deficiency, WHO 2020 Table 1, approved L13): cut-offs by age group. Apparently healthy (CRP <= 5 mg/L): below 12 ug/L from 0 to 59 months; below 15 ug/L from 5 years onward, both sexes. With inflammation (CRP > 5 mg/L): below 30 ug/L (0 to 59 months) or below 70 ug/L (older), reported as DEFICIENCIA_HIERRO_CON_INFLAMACION or SIN_DEFICIENCIA_CON_INFLAMACION (conditional recommendation, low certainty). Pregnancy: first trimester only (below 15 ug/L); second and third trimester, and inflammation in first trimester, are NO_EVALUABLE. Women from 10 to 59 years must declare pregnancy; men with a pregnancy state are NO_EVALUABLE. Missing ferritin, CRP or age are NO_EVALUABLE with a reason. Source: WHO 2020, ISBN 978-92-4-000012-4, CC BY-NC-SA 3.0 IGO.
+- S6 (anaemia): haemoglobin is compared with the WHO 2024 cut-off for age, sex and pregnancy trimester (Table 2) and the severity band (Table 3). Haemoglobin below 6 months has no cut-off: NO_EVALUABLE.
+- S7 (physician edit): an authorized physician may confirm, dismiss or modify a finding at any time. Each action records: who, when, the action, the previous value, the new value, and a mandatory reason. The original system suggestion stays visible and is never overwritten.
+- S8 (phase order, ASSUMPTION): Phase 1 is anaemia and iron deficiency, whose inputs are direct exams. Phase 2 is diabetes (S4). Smoking adjustment, altitude adjustment, gestational diabetes and paediatric ranges are out of scope for phase 1 (see S12).
+- S9 (findings are snapshots): a finding stores the value, the reference id and version, the rule version and the evidence (result id, observed value, unit) at evaluation time. Findings are not recalculated when read. When a new exam arrives, a new evaluation creates new findings; earlier ones remain with their own snapshot.
+- S10 (corrections do not change knowledge): a physician edit never changes a reference, a rule or the published cut-off. Corrections are audit records. Using them to change a rule is a separate decision with a clinician.
+- S11 (acceptance criteria, academic project, sourced):
+  - A1 Deterministic criteria (anaemia, FPG/OGTT/HbA1c): 100% agreement with the cited table on test cases built from the table boundaries. Sources: WHO 2024 Tables 2 and 3 (https://www.who.int/publications/i/item/9789240088542); ADA 2026 Tables 2.1 and 2.2 (https://doi.org/10.2337/dc26-s002).
+  - A2 Accuracy studies (iron deficiency, diabetes vs reference): report sensitivity and specificity with 95% Wilson intervals on data not used to choose the criteria, following STARD 2015 reporting items (https://doi.org/10.1136/bmj.h5527).
+  - A3 Acceptance: the project is accepted when A1 passes at 100%, the STARD items are reported, and results are stated as observed. No sensitivity or specificity threshold is set for clinical acceptance, and the project makes no clinical validity claim. Rationale: WHO 2024 cut-offs are population 5th-percentile values, not diagnostic accuracy targets (WHO 2024 Table 2 footnote), and ADA 2026 states that FPG and A1C cut points identify groups with incomplete concordance (section 2). Accuracy against one reference is therefore descriptive, not validity.
+  - A4 Physician edits: the rate and the recorded reasons are reported descriptively; no threshold.
+  - Not used: the 70 % target discussed earlier is not a criterion.
+- S12 (out of scope, phase 1): smoking and altitude adjustment (need new patient fields), gestational diabetes (WHO 2013 and ACOG values not yet verified against the primary PDF), paediatric ranges below 6 months, and production deployment.
+- S13 (shadow mode before use): findings are shown to the physician alongside the normal flow and do not change the order, the result or the diagnosis record until the clinical owner approves a live use.
+- S14 (permissions and audit): reading findings and recording physician edits require the existing permissions for knowledge and results (S10 of clinical-knowledge-e5). Every read and edit writes an access audit row, denied ones included.
+- S15 (DoD): endpoints have permission checks, audit, unit and integration tests, error coverage, OpenAPI and documentation updated.
+- S16 (ASSUMPTION): the E3 result endpoint already accepts analito_id, metodo_analitico and tipo_muestra (clinical-knowledge-e5 S13). Pregnancy status and CRP come from exams already entered; if a required input is absent, S3 applies.
+
+## Tasks
+- T1 | S8, S12, S15 | inline | done | specification approved (L5). Commit: pending
+- T2 | S11 | inline | done | acceptance criteria A1 to A4 with sources verified (STARD 2015 DOI, WHO 2024, ADA 2026). Commit: pending
+- T3 | S2, S3, S6 | inline | done | anaemia finding: domain/anemia.py, tests/unit/test_anemia_finding.py. RED observed (module missing), then GREEN: 33 tests; ruff and format clean. Ages in months. Commit: pending
+- T4 | S5 | inline | done | iron deficiency: domain/iron.py, tests/unit/test_iron_finding.py. First version narrowed by L7 (16 tests). Expanded to WHO 2020 Table 1 by L13: RED observed (new categories missing), GREEN 29 tests; unit suite 323 passed, 1 skipped; ruff and format clean. Commit: pending. T9 iron numbers re-run after the expansion and updated in docs/evaluacion-hallazgos-clinicos.md (L15). deficiency finding with CRP handling; RED tests first. Commit: pending
+- T5 | S9, S10 | tbd | pending | findings stored as immutable snapshots with reference and rule version. Commit: pending
+- T6 | S7, S14 | tbd | pending | physician edit endpoint with mandatory reason, audit and no overwrite of the suggestion. Commit: pending
+- T7 | S4 | inline | done | diabetes: domain/diabetes.py, tests/unit/test_diabetes_finding.py. RED observed (module missing), GREEN 13 tests (ADA 2026 Tables 2.1, 2.2, rec. 2.4). Pure domain; persistence and physician edit pending (T5, T6). Full unit suite: 310 passed, 1 skipped. Commit: pending finding with confirmation logic and anaemia-aware HbA1c exclusion (ADA 2026 Table 2.1 and recommendation 2.4). Commit: pending
+- T8 | S13 | tbd | pending | shadow-mode presentation of findings in the order view. Commit: pending
+- T9 | S11 | inline | done | evaluation report docs/evaluacion-hallazgos-clinicos.md. A1 met (62 rule tests). A2 measurable only for diabetes: sens 79.1% and spec 94.7% (2017-18), sens 76.8% and spec 96.1% (2021-23), vs HbA1c. Anaemia and iron deficiency have no independent reference: descriptive only. STARD items listed. Commit: pending report: sensitivity and specificity with Wilson intervals on held-out data, and the physician-edit rate. Commit: pending
+
+## Log
+- L1 (user, verbatim): "debe hacer las 3, todo basado en examenes que se ingresan al sistema , siendo ello que el medico tambien en cualqueir momento si ve que el diagnostic es cuestionable lo peude editar"
+- L2 (user, verbatim): "si" (approval to write this specification document, after the proposed phase order and the question about the three findings).
+- L3 (parent): sources used for S2 to S7: WHO 2024 Tables 2, 3, 4 and 5 (PDF revisado); ADA 2026 Tables 2.1, 2.2 and recommendation 2.4 (texto revisado); WHO 2024 iron deficiency definition (ferritin < 12 ug/L children, < 15 ug/L women, CRP > 5 mg/L exclusion). Source verification: rangos_clinicos_hemoglobina_glucosa.md.
+- L4 (parent): the clinical owner has not been named yet. Superseded by L5 for an academic project: acceptance criteria are sourced (S11) and no clinical owner is required for academic scope. Clinical use would need one.
+- L5 (user, verbatim): "como es un proyecto academico, diria que lo dejes con informacion respaldada por fuentes para los criterios de aceptabilidad y queda aprobado eldocumento arpa ponerlo en marcha"
+- L7 (user, verbatim): "me parece dicha decision para T4 entonces continua" (approval of narrowing S5 to the groups defined by the source).
+- L8 (parent): T4 done. Test-first: RED on missing module, GREEN 16 tests.
+- L11 (user, verbatim): "si" (proceed with T9 before persistence T5 and edit T6).
+- L12 (parent): T9 done. Anaemia and iron deficiency are defined by the same values used as reference, so their accuracy is circular; reported descriptively. Diabetes accuracy measured against HbA1c, matching the earlier analysis (same numbers, now produced by the domain code).
+- L13 (user, verbatim): "aprobado" (approval of expanding S5 to WHO 2020 Table 1, with the inflammation cut-offs as an alternative).
+- L14 (parent): T4 expanded. The narrowing of L7 was based on an incomplete reading of the source; the full WHO 2020 Table 1 covers all ages and both sexes.
+- L15 (user, verbatim): "haslo" (re-run the iron evaluation with the WHO 2020 rule). Done: iron rows in docs/evaluacion-hallazgos-clinicos.md updated.
+- L9 (user, verbatim): "haslo" (proceed with T7).
+- L10 (parent): T7 done. Test-first: RED on missing module, GREEN 13 tests. Diabetes is a pure rule; not yet stored or exposed.
+- L6 (parent): T3 done. Test-first: RED on missing module, GREEN 33 tests. Note: first draft mixed years and months for ages; fixed by using completed months in the domain function (S6).
