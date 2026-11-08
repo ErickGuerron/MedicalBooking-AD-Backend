@@ -49,15 +49,22 @@ def _not_evaluable(motivo: str) -> IronFinding:
     return IronFinding(NO_EVALUABLE, None, motivo)
 
 
+def _pregnancy_applies(sex: str | None, age_months: int) -> bool:
+    return sex == "F" and _MONTHS_PREGNANCY_FROM <= age_months <= _MONTHS_PREGNANCY_TO
+
+
 def _pregnancy_gate(sex: str | None, age_months: int, pregnancy: str | None) -> str | None:
-    """Return a not-evaluable reason, or None when the pregnancy state is usable."""
-    if sex == "M":
+    """Return a not-evaluable reason, or None when the pregnancy state is usable.
+
+    A pregnancy trimester only means something for a woman aged 10 to 59 years. Outside that
+    group a declared trimester is inconsistent, and a woman in that group must declare her state.
+    """
+    if not _pregnancy_applies(sex, age_months):
         if pregnancy in ("T1", "T2", "T3"):
-            return "embarazo no aplicable a hombres"
+            return "embarazo no aplicable a este sexo o edad"
         return None
-    if _MONTHS_PREGNANCY_FROM <= age_months <= _MONTHS_PREGNANCY_TO:
-        if pregnancy is None:
-            return "embarazo desconocido: se requiere estado de embarazo"
+    if pregnancy is None:
+        return "embarazo desconocido: se requiere estado de embarazo"
     return None
 
 
@@ -80,11 +87,10 @@ def iron_finding(
     if gate is not None:
         return _not_evaluable(gate)
 
-    pregnant_first = pregnancy == "T1" and sex == "F"
-    if pregnancy in ("T2", "T3") and sex == "F":
+    if pregnancy in ("T2", "T3"):
         return _not_evaluable("embarazo: solo se define corte para el primer trimestre")
 
-    if pregnant_first:
+    if pregnancy == "T1":
         if crp_mg_l > _CRP_LIMIT_MG_L:
             return _not_evaluable("inflamacion en embarazo: sin corte definido")
         cutoff = _PREGNANT_FIRST_TRIMESTER

@@ -49,6 +49,10 @@ Status: APPROVED by the user (L5). Implementation in progress, academic project 
 - L13 (user, verbatim): "aprobado" (approval of expanding S5 to WHO 2020 Table 1, with the inflammation cut-offs as an alternative).
 - L14 (parent): T4 expanded. The narrowing of L7 was based on an incomplete reading of the source; the full WHO 2020 Table 1 covers all ages and both sexes.
 - L15 (user, verbatim): "haslo" (re-run the iron evaluation with the WHO 2020 rule). Done: iron rows in docs/evaluacion-hallazgos-clinicos.md updated.
+- L16 (user, verbatim): "commitealo y has la prueba correspondie te para ver si se peude subir a la base" (commit the work and test whether the Table 1 rows can be loaded to the knowledge base).
+- L17 (parent): three commits on feature/knowledge-importers: classify by sample context; accept sample context on lab results; findings as pure domain rules. Full suite before commit: 447 passed.
+- L18 (parent): the knowledge-base grid found a real defect: a trimester state applied the pregnancy cut-off to children. Fixed: a trimester only applies to women aged 10 to 59 years; elsewhere it is NO_EVALUABLE. Regression tests added.
+- L19 (parent): loading test (tests/integration/test_ferritin_knowledge_load.py): drafts are accepted and not used until validated; the five rows validate without overlap conflicts; stored references match the domain rule on a grid of 2376 patient-value combinations, except the pinned encoding gap (first-trimester pregnancy with CRP > 5 mg/L), because one context field cannot hold both states. Source row used is the synthetic seed source; a WHO 2020 source row is still needed before any clinical use.
 - L9 (user, verbatim): "haslo" (proceed with T7).
 - L10 (parent): T7 done. Test-first: RED on missing module, GREEN 13 tests. Diabetes is a pure rule; not yet stored or exposed.
 - L6 (parent): T3 done. Test-first: RED on missing module, GREEN 33 tests. Note: first draft mixed years and months for ages; fixed by using completed months in the domain function (S6).

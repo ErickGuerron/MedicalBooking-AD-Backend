@@ -88,6 +88,20 @@ def test_pregnancy_on_a_man_is_not_applicable() -> None:
     assert "embarazo" in finding.motivo
 
 
+def test_pregnancy_state_is_not_applicable_to_a_young_child() -> None:
+    # Regression found by the knowledge-base grid: a first-trimester state on a child must not
+    # switch the child to the pregnancy cut-off.
+    finding = iron_finding(d("10.0"), d("1.0"), "F", 12, "T1")
+    assert finding.categoria == NO_EVALUABLE
+    assert "no aplicable" in finding.motivo
+
+
+def test_pregnancy_state_is_not_applicable_to_an_older_woman() -> None:
+    finding = iron_finding(d("10.0"), d("1.0"), "F", 70 * 12, "T1")
+    assert finding.categoria == NO_EVALUABLE
+    assert "no aplicable" in finding.motivo
+
+
 def test_girl_of_10_must_declare_pregnancy() -> None:
     finding = iron_finding(d("10.0"), d("1.0"), "F", 10 * 12, None)
     assert finding.categoria == NO_EVALUABLE
