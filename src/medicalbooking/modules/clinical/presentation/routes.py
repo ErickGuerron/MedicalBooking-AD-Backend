@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -13,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
 from medicalbooking.modules.clinical.application.ports import FindingView, ProposalView
 from medicalbooking.modules.clinical.application.proposals import ProposalService
+from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
 from medicalbooking.modules.clinical.domain.evaluation import CriterionSpec
 from medicalbooking.modules.clinical.domain.references import Reference
 from medicalbooking.modules.identity.presentation.routes import authenticated
@@ -82,6 +84,21 @@ def _knowledge() -> KnowledgeService:
 
 def _proposals() -> ProposalService:
     return current_app.extensions["medicalbooking.proposals"]
+
+
+def _shadow() -> ShadowFindingsService:
+    return current_app.extensions["medicalbooking.shadow"]
+
+
+def _plain(value: Any) -> Any:
+    """JSON-safe copy: decimals become numbers, dataclass dicts stay as they are."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    return value
 
 
 def _parse(model: type[BaseModel]) -> Any:
@@ -266,6 +283,14 @@ def evaluate(order_id: uuid.UUID) -> tuple[Response, int]:
 def get_proposal(order_id: uuid.UUID) -> tuple[Response, int]:
     proposal = _proposals().get_proposal(g.actor, str(order_id))
     return jsonify(_proposal_json(proposal)), 200
+
+
+@clinical_bp.get("/lab/orders/<uuid:order_id>/sombra")
+@authenticated
+def get_shadow(order_id: uuid.UUID) -> tuple[Response, int]:
+    """Shadow findings (S13): read-only, nothing stored, the decision is not modified."""
+    report = _shadow().get(g.actor, str(order_id))
+    return jsonify(_plain(asdict(report))), 200
 
 
 @clinical_bp.post("/clinical/proposals/<uuid:proposal_id>/reviews")

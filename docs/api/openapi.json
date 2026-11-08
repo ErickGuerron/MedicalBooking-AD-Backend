@@ -662,6 +662,19 @@
                 "default": null,
                 "title": "Analito Id"
               },
+              "contexto_muestra": {
+                "anyOf": [
+                  {
+                    "maxLength": 100,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Contexto Muestra"
+              },
               "metodo_analitico": {
                 "anyOf": [
                   {
@@ -2846,6 +2859,101 @@
         "summary": "Register the medical review once, after all results exist",
         "tags": [
           "Laboratory"
+        ]
+      }
+    },
+    "/api/v1/lab/orders/{order_id}/sombra": {
+      "get": {
+        "description": "Read-only. Nothing is stored and the decision is not modified (modo SOMBRA, modifica_decision is always false).",
+        "operationId": "getShadowFindings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "anemia": {
+                      "type": "object"
+                    },
+                    "diabetes": {
+                      "type": "object"
+                    },
+                    "hierro": {
+                      "type": "object"
+                    },
+                    "modifica_decision": {
+                      "enum": [
+                        false
+                      ],
+                      "type": "boolean"
+                    },
+                    "modo": {
+                      "enum": [
+                        "SOMBRA"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "modo",
+                    "modifica_decision"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Shadow findings for anemia, iron and diabetes"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Order inputs cannot be interpreted"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read the shadow findings of an order (ordering doctor)",
+        "tags": [
+          "Clinical proposals"
         ]
       }
     },

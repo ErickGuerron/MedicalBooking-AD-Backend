@@ -359,6 +359,36 @@ class SqlClinicalStore:
             ),
         )
 
+    def loinc_results_for_order(self, order_id: str) -> list[tuple[str, str | None, Decimal]]:
+        """Numeric results of one order whose analyte carries a LOINC code (shadow mode, S13)."""
+        guid = _as_guid(order_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT a.codigo_loinc, r.unidad, r.valor_numerico "
+                    "FROM resultados_laboratorio r "
+                    "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                    "JOIN conocimiento_analitos a ON a.id = r.analito_id "
+                    "WHERE d.orden_id = :o AND a.codigo_loinc IS NOT NULL "
+                    "AND r.valor_numerico IS NOT NULL ORDER BY r.id"
+                ),
+                {"o": guid},
+            ).all()
+        return [(row.codigo_loinc, row.unidad, Decimal(row.valor_numerico)) for row in rows]
+
+    def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]:
+        guid = _as_guid(paciente_id)
+        if guid is None:
+            return None, None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT sexo_registrado, fecha_nacimiento FROM pacientes WHERE id = :p"),
+                {"p": guid},
+            ).first()
+        return (None, None) if row is None else (row.sexo_registrado, row.fecha_nacimiento)
+
     def validated_rules(self, now: datetime) -> list[RuleSpec]:
         moment = _naive(now)
         with self._engine.connect() as conn:

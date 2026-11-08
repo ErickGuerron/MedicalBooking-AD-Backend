@@ -22,17 +22,29 @@ ROLE_BY_LOINC = {
     "1558-6": "glucosa_ayuno",
     "4548-4": "hba1c",
 }
+UNIT_BY_ROLE = {
+    "hemoglobina": "g/dL",
+    "ferritina": "ug/L",
+    "pcr": "mg/L",
+    "glucosa_ayuno": "mg/dL",
+    "hba1c": "%",
+}
 
 
 class AmbiguousResult(ValueError):
     """Two results map to the same clinical role; the caller must ask a person which one counts."""
 
 
-def roles_from_loinc(results: Iterable[tuple[str, Decimal]]) -> dict[str, Decimal]:
+def roles_from_loinc(results: Iterable[tuple[str, str | None, Decimal]]) -> dict[str, Decimal]:
+    """Map (loinc, unit, value) triples to clinical roles.
+
+    A result in a unit other than the one the role's thresholds use is not used: a silent unit
+    error would classify the patient wrongly.
+    """
     roles: dict[str, Decimal] = {}
-    for loinc, value in results:
+    for loinc, unit, value in results:
         role = ROLE_BY_LOINC.get(loinc)
-        if role is None:
+        if role is None or unit != UNIT_BY_ROLE[role]:
             continue
         if role in roles:
             raise AmbiguousResult(f"two results for {role} ({loinc})")
