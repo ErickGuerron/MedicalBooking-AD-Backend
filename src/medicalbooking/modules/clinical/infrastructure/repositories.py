@@ -332,7 +332,8 @@ class SqlClinicalStore:
                 return None
             rows = conn.execute(
                 text(
-                    "SELECT r.id, r.analito_id, r.valor_numerico, r.unidad, r.interpretacion "
+                    "SELECT r.id, r.analito_id, r.valor_numerico, r.unidad, r.interpretacion, "
+                    "r.contexto_muestra "
                     "FROM resultados_laboratorio r "
                     "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
                     "WHERE d.orden_id = :o ORDER BY r.id"
@@ -352,6 +353,7 @@ class SqlClinicalStore:
                     valor=None if row.valor_numerico is None else Decimal(row.valor_numerico),
                     unidad=row.unidad,
                     interpretacion=row.interpretacion,
+                    contexto_muestra=row.contexto_muestra,
                 )
                 for row in rows
             ),
@@ -373,7 +375,7 @@ class SqlClinicalStore:
             for rule in rules:
                 criteria = conn.execute(
                     text(
-                        "SELECT analito_id, operador, umbral_numerico, unidad "
+                        "SELECT analito_id, operador, umbral_numerico, unidad, contexto "
                         "FROM conocimiento_reglas_criterios WHERE regla_id = :r "
                         "ORDER BY orden_criterio"
                     ),
@@ -393,6 +395,7 @@ class SqlClinicalStore:
                                 operador=c.operador,
                                 umbral=c.umbral_numerico,
                                 unidad=c.unidad,
+                                contexto=c.contexto,
                             )
                             for c in criteria
                         ),
