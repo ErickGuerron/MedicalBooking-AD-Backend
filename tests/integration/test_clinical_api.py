@@ -555,6 +555,7 @@ def test_glucose_outside_the_range_fires_the_seeded_fuera_rule(app, engine) -> N
                     "valor_numerico": 120.0,
                     "unidad": "mg/dL",
                     "analito_id": GLU_SEEDED,
+                    "contexto_muestra": "AYUNO",
                 }
             ],
         },
@@ -568,6 +569,34 @@ def test_glucose_outside_the_range_fires_the_seeded_fuera_rule(app, engine) -> N
     )
 
     assert "GLU-FUERA-SINT" in [f["regla_codigo"] for f in body["hallazgos"]]
+
+
+def test_glucose_without_known_fasting_context_does_not_fire_the_fasting_rule(app, engine) -> None:
+    order_id, doctor_headers = _order_with_test(app, engine, "GLUC-SINT")
+    detail = _detail(app, order_id, doctor_headers)
+    app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/results",
+        json={
+            "detalle_id": detail,
+            "resultados": [
+                {
+                    "nombre_analito": "Glucosa",
+                    "valor_numerico": 120.0,
+                    "unidad": "mg/dL",
+                    "analito_id": GLU_SEEDED,
+                }
+            ],
+        },
+        headers=_token(app, _user(engine, "LABORATORISTA")),
+    )
+
+    body = (
+        app.test_client()
+        .post(f"/api/v1/lab/orders/{order_id}/evaluate", headers=doctor_headers)
+        .get_json()
+    )
+
+    assert "GLU-FUERA-SINT" not in [f["regla_codigo"] for f in body["hallazgos"]]
 
 
 def test_unknown_analyte_in_a_lab_result_is_422_and_stores_nothing(app, engine) -> None:

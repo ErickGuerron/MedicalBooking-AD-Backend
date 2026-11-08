@@ -50,6 +50,7 @@ class ResultEntry:
     analito_id: str | None = None
     metodo_analitico: str | None = None
     tipo_muestra: str | None = None
+    contexto_muestra: str | None = None
     interpretacion: str | None = None
     referencia_id: str | None = None
     referencia_version: int | None = None

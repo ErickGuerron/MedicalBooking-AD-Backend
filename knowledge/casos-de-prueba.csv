@@ -12,6 +12,6 @@ HB-10,hemoglobina,a0000000-0000-4000-8000-00000000b001,14.0,g/dL,,,,sangre total
 GLU-01,glucosa,a0000000-0000-4000-8000-00000000b002,92,mg/dL,M,50,,plasma,AYUNO,DENTRO_REFERENCIA,verificado,glucosa en ayunas dentro del rango,sintetico
 GLU-02,glucosa,a0000000-0000-4000-8000-00000000b002,69.9,mg/dL,F,28,,plasma,AYUNO,BAJO,verificado,justo por debajo del limite inferior,sintetico
 GLU-03,glucosa,a0000000-0000-4000-8000-00000000b002,99.1,mg/dL,F,28,,plasma,AYUNO,ALTO,verificado,justo por encima del limite superior,sintetico
-GLU-04,glucosa,a0000000-0000-4000-8000-00000000b002,135,mg/dL,M,58,,plasma,,NO_EVALUABLE,brecha,muestra sin contexto de ayuno: no hay referencia para no ayunas; el sistema usa la de ayuno y responde ALTO,sintetico
+GLU-04,glucosa,a0000000-0000-4000-8000-00000000b002,135,mg/dL,M,58,,plasma,,NO_EVALUABLE,verificado,muestra sin contexto de ayuno: la referencia de ayuno no se aplica y no hay referencia para no ayunas,sintetico
 GLU-05,glucosa,a0000000-0000-4000-8000-00000000b002,5.1,mmol/L,M,58,,plasma,AYUNO,NO_EVALUABLE,verificado,unidad distinta de la referencia,sintetico
 CHOL-01,colesterol total,a0000000-0000-4000-8000-00000000c001,210,mg/dL,F,47,,suero,AYUNO,NO_EVALUABLE,verificado,analito sin ninguna referencia en la base: el sistema no inventa categoria,sintetico

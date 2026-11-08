@@ -299,11 +299,12 @@ class SqlLabStore:
                     text(
                         "INSERT INTO resultados_laboratorio (id, detalle_orden_id, analito_id, "
                         "nombre_analito, valor_texto, valor_numerico, unidad, metodo_analitico, "
-                        "tipo_muestra, interpretacion, referencia_aplicada_id, referencia_version, "
-                        "referencia_min, referencia_max, validado_por, validado_en) "
+                        "tipo_muestra, contexto_muestra, interpretacion, referencia_aplicada_id, "
+                        "referencia_version, referencia_min, referencia_max, validado_por, "
+                        "validado_en) "
                         "VALUES (:id, :d, :analito, :nombre, :texto, :numero, :unidad, :metodo, "
-                        ":muestra, :interpretacion, :referencia, :referencia_version, :minimo, "
-                        ":maximo, :validador, :ahora)"
+                        ":muestra, :contexto, :interpretacion, :referencia, :referencia_version, "
+                        ":minimo, :maximo, :validador, :ahora)"
                     ),
                     {
                         "id": str(uuid.uuid4()),
@@ -315,6 +316,7 @@ class SqlLabStore:
                         "unidad": entry.unidad,
                         "metodo": entry.metodo_analitico,
                         "muestra": entry.tipo_muestra,
+                        "contexto": entry.contexto_muestra,
                         "interpretacion": entry.interpretacion,
                         "referencia": entry.referencia_id,
                         "referencia_version": entry.referencia_version,

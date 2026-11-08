@@ -6,6 +6,23 @@
 --   1. conocimiento_fuentes: provenance rows for the candidate sources. The six
 --      sources approved by the expert are active (vigente = 1); MSD-LAB-RANGES is
 --      included because the expert approved the whole data set.
+--      VERIFICATION STATUS (audit of the knowledge base, not a change of vigente):
+--        ADA-SOC          verified: Standards of Care 2026, section 2 (DOI 10.2337/dc26-S002).
+--        WHO-ANEMIA       superseded by WHO-ANEMIA-2024; its rows are RETIRADA.
+--        WHO-ANEMIA-2024  verified against Table 2 (9 of 9 values match).
+--        NHANES           real population data (CDC files); population percentiles, not criteria.
+--        MIMIC-IV         test data only (open demo or credentialed); not a source of criteria.
+--        MSD-LAB-RANGES   NOT verified and NOT used by any reference or rule.
+--        ABIM-LAB-2026    NOT verified (PDF text not extracted) and NOT used.
+--        HL7-FHIR-R4-OBS  import format, not a source of values; NOT used.
+--        FUENTE-SINTETICA-E5 synthetic, applies only to synthetic analytes.
+--      Decision (user): MSD, ABIM and HL7 are set to vigente = 0 because their ranges are not
+--      verified. They are kept as history; no reference depends on them. Validation of a reference
+--      requires vigente = 1 on its source, so these sources cannot back a validated reference.
+UPDATE [conocimiento_fuentes]
+   SET [vigente] = 0
+ WHERE [codigo] IN ('MSD-LAB-RANGES', 'ABIM-LAB-2026', 'HL7-FHIR-R4-OBS') AND [vigente] = 1;
+GO
 --   2. conocimiento_analitos: two real analytes (glucose in fasting plasma and blood
 --      hemoglobin). codigo_loinc stays NULL: the synthetic analytes hold the LOINC
 --      codes 2339-0 and 718-7 (unique index), and the codes are not reassigned here.
@@ -115,6 +132,19 @@ IF NOT EXISTS (SELECT 1 FROM [conocimiento_fuentes] WHERE [codigo] = 'WHO-ANEMIA
           N'World Health Organization',
           N'https://www.who.int/publications/i/item/WHO-NMH-NHD-MNM-11.1',
           N'WHO/NMH/NHD/MNM/11.1', N'2011', '2011-05-31', '2026-11-07T00:00:00', 1);
+GO
+
+-- WHO-ANEMIA-2024: current WHO guideline (5 March 2024, ISBN 978-92-4-008854-2, PMID 38530913).
+-- It supersedes the 2011 cut-offs for children 6-23 and 24-59 months and adds pregnancy by trimester.
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_fuentes] WHERE [codigo] = 'WHO-ANEMIA-2024')
+  INSERT INTO [conocimiento_fuentes] ([id], [codigo], [nombre], [organizacion], [url],
+                                      [identificador_publicacion], [version_publicacion],
+                                      [fecha_publicacion], [fecha_consulta], [vigente])
+  VALUES ('f0000000-0000-4000-8000-000000000009', 'WHO-ANEMIA-2024',
+          N'Guideline on haemoglobin cutoffs to define anaemia in individuals and populations',
+          N'World Health Organization',
+          N'https://www.who.int/publications/i/item/9789240088542',
+          N'ISBN 978-92-4-008854-2', N'2024', '2024-03-05', '2026-11-07T00:00:00', 1);
 GO
 
 -- PubMed is not inserted here: the importer creates one row per cited article
@@ -346,6 +376,145 @@ IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0
 GO
 
 -- =====================================================================
+-- 3d. WHO 2024 haemoglobin cut-offs (BORRADOR, version 1). Supersede the 2011 drafts 3b.2,
+-- which are set to RETIRADA below (kept as history, never validated).
+-- Source: WHO 2024, Table 2 (5th percentile), converted from g/L to g/dL. No adjustment applied.
+-- Age bands in days, approximated from years: 6 months = 183, 24 months = 730, 5 years = 1826,
+--   12 years = 4380, 15 years = 5479, 65 years = 23743.
+-- Adults over 65 are outside the guideline: the bands stop at 65 years, so they are NO_EVALUABLE.
+-- Pregnancy rows use contexto EMBARAZO-T1/T2/T3; the laboratory must supply the trimester.
+-- PREGNANCY DESIGN: the non-pregnant women row (018) uses contexto NO-EMBARAZO, not NULL. A NULL
+--   context is a wildcard and would overlap the trimester rows. With NO-EMBARAZO, a woman whose
+--   pregnancy status is unknown gets NO_EVALUABLE (no false classification), a non-pregnant woman
+--   is classified by 018, and a pregnant woman with a trimester is classified by 020-022 only.
+--   Men and children keep contexto NULL.
+-- NOT MODELLED: severity bands (WHO Table 3) and smoking and altitude adjustments (Tables 4 and 5).
+--   Infants under 6 months have no cut-off in this guideline (research gap).
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000014')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000014', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         NULL, 183, 729, 'sangre total', NULL, NULL, 10.5, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000015')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000015', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         NULL, 730, 1825, 'sangre total', NULL, NULL, 11.0, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000016')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000016', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         NULL, 1826, 4379, 'sangre total', NULL, NULL, 11.5, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000017')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000017', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         NULL, 4380, 5478, 'sangre total', NULL, NULL, 12.0, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000018')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000018', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         'F', 5479, 23743, 'sangre total', NULL, 'NO-EMBARAZO', 12.0, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+-- Existing databases loaded the row with contexto NULL: set NO-EMBARAZO on drafts only.
+UPDATE [conocimiento_referencias]
+   SET [contexto] = 'NO-EMBARAZO'
+ WHERE [id] = 'c1000000-0000-4000-8000-000000000018' AND [estado] = 'BORRADOR' AND [contexto] IS NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000019')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000019', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         'M', 5479, 23743, 'sangre total', NULL, NULL, 13.0, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000020')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000020', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         'F', 5479, 23743, 'sangre total', NULL, 'EMBARAZO-T1', 11.0, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000021')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000021', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         'F', 5479, 23743, 'sangre total', NULL, 'EMBARAZO-T2', 10.5, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+IF NOT EXISTS (SELECT 1 FROM [conocimiento_referencias] WHERE [id] = 'c1000000-0000-4000-8000-000000000022')
+  INSERT INTO [conocimiento_referencias] ([id], [analito_id], [fuente_id], [version], [unidad],
+                                          [sexo_aplicable], [edad_min_dias], [edad_max_dias],
+                                          [tipo_muestra], [metodo_analitico], [contexto],
+                                          [referencia_min], [referencia_max], [valor_texto_esperado],
+                                          [fecha_inicio], [fecha_fin], [estado], [validado_por], [validado_en])
+  SELECT 'c1000000-0000-4000-8000-000000000022', 'a1000000-0000-4000-8000-000000000002', f.[id], 1, 'g/dL',
+         'F', 5479, 23743, 'sangre total', NULL, 'EMBARAZO-T3', 11.0, NULL, NULL,
+         '2024-03-05', NULL, 'BORRADOR', NULL, NULL
+  FROM [conocimiento_fuentes] f WHERE f.[codigo] = 'WHO-ANEMIA-2024';
+GO
+
+-- The 2011 drafts (3b.2) are superseded by the rows above. Retire them (never validated; kept as history).
+UPDATE [conocimiento_referencias]
+   SET [estado] = 'RETIRADA'
+ WHERE [id] IN ('c1000000-0000-4000-8000-000000000009', 'c1000000-0000-4000-8000-000000000010',
+                'c1000000-0000-4000-8000-000000000011', 'c1000000-0000-4000-8000-000000000012',
+                'c1000000-0000-4000-8000-000000000013')
+   AND [estado] = 'BORRADOR';
+GO
+
+-- =====================================================================
 -- 4. Test types for the real analytes
 -- A result must belong to the test it is entered under, so an analyte with no test can never
 -- receive a result and its references would never apply. The real analytes get their own test
@@ -385,8 +554,7 @@ GO
 --   GLU-AYUNO-ALTERADA-ADA: fasting glucose >= 100 mg/dL (impaired fasting glucose, ADA).
 --   GLU-AYUNO-DIABETES-ADA: fasting glucose >= 126 mg/dL (ADA criterion; ADA requires confirmation
 --     by a second test or another criterion, which the rule message states).
--- Known limit: the engine does not read criterion contexto yet, so AYUNO is enforced only because
--- these rules apply to the fasting analyte, which is entered under test GLUC-AYUNO.
+-- The criteria carry contexto AYUNO: a result without a known fasting context never satisfies them.
 
 IF NOT EXISTS (SELECT 1 FROM [conocimiento_reglas] WHERE [id] = 'e1000000-0000-4000-8000-000000000001')
   INSERT INTO [conocimiento_reglas] ([id], [codigo], [version], [nombre], [descripcion], [tipo],

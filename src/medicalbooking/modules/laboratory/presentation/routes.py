@@ -42,6 +42,8 @@ class ResultItem(BaseModel):
     analito_id: uuid.UUID | None = None
     metodo_analitico: str | None = Field(default=None, max_length=150)
     tipo_muestra: str | None = Field(default=None, max_length=80)
+    # Optional (E5.1): e.g. "AYUNO". Unknown (absent) context never satisfies a context-bound rule.
+    contexto_muestra: str | None = Field(default=None, max_length=100)
 
 
 class RecordResultsRequest(BaseModel):
@@ -142,6 +144,7 @@ def record_results(order_id: uuid.UUID) -> tuple[Response, int]:
             analito_id=None if item.analito_id is None else str(item.analito_id),
             metodo_analitico=item.metodo_analitico,
             tipo_muestra=item.tipo_muestra,
+            contexto_muestra=item.contexto_muestra,
         )
         for item in body.resultados
     ]
