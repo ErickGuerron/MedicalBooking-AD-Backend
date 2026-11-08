@@ -56,6 +56,9 @@ Status: APPROVED by the user (L5). Implementation in progress, academic project 
 - L20 (user, verbatim): "si" (load the WHO 2020 Table 1 rows into the development database as drafts). Done: migration 0011 adds source WHO-FERRITIN-2020 (ISBN 978-92-4-000012-4); five drafts created in the development database for analyte "Ferritina serica (WHO 2020)" (BORRADOR, unit ug/L, contexto per row). Not validated: no physician has reviewed them. Load script kept outside the repository.
 - L21 (user, verbatim): "meparece mejor el modo sombra" (prefer shadow mode to physician review of the loaded rows).
 - L22 (parent): T8 domain part done. The read-only endpoint waits for the analyte-to-role mapping decision: LOINC codes or a mapping table.
+- L23 (user, verbatim): "1" (use LOINC codes to map analytes to clinical roles).
+- L24 (parent): verified LOINC codes: 718-7 Hb; 2276-4 ferritin; 1988-5 CRP; 1558-6 fasting glucose; 4548-4 HbA1c NGSP. Not mapped: 59261-8 (IFCC, mmol/mol); OGTT and random glucose (not verified yet). Pure mapping in domain/loinc_roles.py, tests green.
+- L25 (parent): BLOCKER for the endpoint: conocimiento_analitos has a unique index on codigo_loinc. Synthetic hemoglobin already holds 718-7, so the real hemoglobin analyte cannot take it. Synthetic glucose holds 2339-0 (glucose in blood, not fasting), which must not feed the fasting role. Needs a decision: release the synthetic codes (set NULL) and assign the real analytes; CRP and HbA1c analytes do not exist yet.
 - L9 (user, verbatim): "haslo" (proceed with T7).
 - L10 (parent): T7 done. Test-first: RED on missing module, GREEN 13 tests. Diabetes is a pure rule; not yet stored or exposed.
 - L6 (parent): T3 done. Test-first: RED on missing module, GREEN 33 tests. Note: first draft mixed years and months for ages; fixed by using completed months in the domain function (S6).
