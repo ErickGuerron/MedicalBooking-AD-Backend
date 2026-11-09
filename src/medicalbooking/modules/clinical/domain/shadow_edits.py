@@ -8,6 +8,8 @@ Every action needs a non-blank reason. The suggestion itself is never overwritte
 
 from __future__ import annotations
 
+import unicodedata
+
 from medicalbooking.shared.domain.errors import ValidationFailed
 
 CONFIRMAR = "CONFIRMAR"
@@ -32,6 +34,16 @@ CATEGORIAS_PERMITIDAS: dict[str, frozenset[str]] = {
 }
 
 
+def _es_vacio(texto: str) -> bool:
+    """Blank for a reason: only whitespace or invisible format characters (zero-width, BOM)."""
+    return all(ch.isspace() or unicodedata.category(ch) == "Cf" for ch in texto)
+
+
+def _longitud_sql(texto: str) -> int:
+    """Length as nvarchar counts it: UTF-16 code units, so an emoji counts as two."""
+    return len(texto.encode("utf-16-le")) // 2
+
+
 def resolver_edicion(
     hallazgo: str,
     accion: str,
@@ -42,9 +54,9 @@ def resolver_edicion(
     """Return the category to store for this edit, or raise ValidationFailed."""
     if hallazgo not in CATEGORIAS_PERMITIDAS:
         raise ValidationFailed("Unknown finding")
-    if not (motivo or "").strip():
+    if motivo is None or _es_vacio(motivo):
         raise ValidationFailed("A physician edit needs a reason")
-    if len(motivo or "") > MAX_MOTIVO:
+    if _longitud_sql(motivo) > MAX_MOTIVO:
         raise ValidationFailed("Reason is too long")
 
     if accion == CONFIRMAR:

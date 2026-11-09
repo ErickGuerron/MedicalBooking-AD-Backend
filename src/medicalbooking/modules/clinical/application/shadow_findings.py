@@ -117,7 +117,7 @@ class ShadowFindingsService:
         accion: str,
         categoria_nueva: str | None,
         motivo: str | None,
-    ) -> str:
+    ) -> tuple[str, str]:
         """A physician confirms, discards or modifies one finding of a snapshot (S7, S14, T6).
 
         Requires revisiones.registrar and ownership of the order. The snapshot is never changed:
@@ -153,7 +153,7 @@ class ShadowFindingsService:
             self._clock(),
         )
         self._audit(actor, order.paciente_id, entidad, snapshot_id, "revisar", "OK")
-        return edit_id
+        return edit_id, nueva
 
     # ---------- helpers ----------
 

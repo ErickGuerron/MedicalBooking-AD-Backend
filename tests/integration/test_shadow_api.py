@@ -587,3 +587,42 @@ def test_edit_rows_cannot_be_updated_or_deleted(app, engine, hemoglobin_analyte)
     with pytest.raises(DBAPIError, match="immutable"):
         with engine.begin() as conn:
             conn.execute(text("DELETE FROM hallazgos_sombra_ediciones"))
+
+
+def test_a_reason_longer_than_the_column_in_utf16_units_is_refused_not_a_server_error(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, headers, snapshot = _snapshot_with_anemia(app, engine, hemoglobin_analyte)
+
+    response = _edit(
+        app,
+        order_id,
+        snapshot["id"],
+        "ANEMIA",
+        headers,
+        {"accion": "CONFIRMAR", "motivo": "\U0001f600" * 300},
+    )
+
+    assert response.status_code == 422
+
+
+def test_confirming_returns_the_stored_category_and_writes_one_row(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, headers, snapshot = _snapshot_with_anemia(app, engine, hemoglobin_analyte)
+    suggested = snapshot["items"][0]["categoria"]
+
+    response = _edit(
+        app, order_id, snapshot["id"], "ANEMIA", headers, {"accion": "CONFIRMAR", "motivo": "ok"}
+    )
+
+    assert response.status_code == 201, response.get_json()
+    assert response.get_json()["categoria_guardada"] == suggested
+    assert (
+        _count(
+            engine,
+            "SELECT COUNT(*) FROM hallazgos_sombra_ediciones WHERE snapshot_id = :s",
+            s=snapshot["id"],
+        )
+        == 1
+    )

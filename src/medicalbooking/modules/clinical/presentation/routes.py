@@ -366,7 +366,7 @@ def edit_shadow_finding(
 ) -> tuple[Response, int]:
     """Physician edit of one finding of a snapshot (S7, S14). Appends a row; never overwrites."""
     body = _parse(ShadowEditRequest)
-    edit_id = _shadow().edit_finding(
+    edit_id, categoria_guardada = _shadow().edit_finding(
         g.actor,
         str(order_id),
         str(snapshot_id),
@@ -381,8 +381,7 @@ def edit_shadow_finding(
             snapshot_id=str(snapshot_id),
             hallazgo=hallazgo,
             accion=body.accion,
-            categoria_nueva=body.categoria_nueva,
-            motivo=body.motivo,
+            categoria_guardada=categoria_guardada,
         ),
         201,
     )
