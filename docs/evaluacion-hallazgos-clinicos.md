@@ -36,7 +36,7 @@ Categorías de salida: 2017-2018 con PREDIABETES 1 208, SIN_EVIDENCIA 917 y PEND
 
 ## 4. Anemia y deficiencia de hierro: distribución de salidas
 
-**Advertencia de versión.** La tabla de esta sección se generó antes de S17 y S18. Muestra el comportamiento de la regla OMS 2020 para hierro en la muestra sana, no la regla v2 actual. Conviene volver a ejecutarla con la regla vigente.
+**Versión.** Esta tabla usa la regla vigente: anemia OMS 2024 y, para hierro, la regla v2 (ferritina < 45 µg/L en adultos con anemia, OMS 2020 en el resto), con el estado de embarazo tomado de `RIDEXPRG` (S18). Se re-ejecutó con `%TEMP%\eval_t9_v2.py`, que replica el flujo de `domain/shadow.py`.
 
 **Por qué no hay exactitud directa:** la anemia se define por hemoglobina, y la deficiencia de hierro por ferritina. Compararlas con esos mismos valores daría una exactitud de 100 % por construcción. Por eso la exactitud de estos dos hallazgos solo se estima contra referencias independientes (sección 4b).
 
@@ -46,17 +46,20 @@ Categorías de salida: 2017-2018 con PREDIABETES 1 208, SIN_EVIDENCIA 917 y PEND
 |---|---|---|
 | Anemia | 2017-2018 (n = 5 192) | Sin anemia 3 066; leve 125; moderada 53; grave 6; no evaluable 1 942 |
 | Anemia | 2021-2022 (L) (n = 1 506) | Sin anemia 938; leve 97; moderada 52; grave 2; no evaluable 417 |
-| Deficiencia de hierro (OMS 2020, Tabla 1) | 2017-2018 (n = 5 192) | Sin deficiencia 4 096; deficiencia 223; no evaluable 873 |
-| Deficiencia de hierro (OMS 2020, Tabla 1) | 2021-2022 (L) (n = 1 506) | Sin deficiencia 832; deficiencia 115; no evaluable 559 |
+| Deficiencia de hierro (regla v2) | 2017-2018 (n = 5 192) | Sin deficiencia 4 056; deficiencia 241; no evaluable 895 |
+| Deficiencia de hierro (regla v2) | 2021-2022 (L) (n = 1 506) | Sin deficiencia 796; deficiencia 129; no evaluable 581 |
+
+Cambio frente a la versión anterior de esta sección (que usaba solo OMS 2020 y tenía a 22 mujeres embarazadas evaluadas como no embarazadas): hierro pasa de 223 a 241 deficiencias en 2017-2018 y de 115 a 129 en 2021-2022, por la regla v2 aplicada a adultos con anemia.
 
 **Motivos de "no evaluable":**
-- Hierro, 2017-2018 y 2021-2022: casi todos por **embarazo desconocido** (873 y 559). Esto es un problema del script, que no pasa el campo de embarazo de NHANES; la regla lo trata como no evaluable, como exige S3. Hay que corregirlo antes de reportar cobertura.
-- Anemia: mujeres sin estado de embarazo (966 y 417) y mayores de 65 años (976 en 2017-2018), fuera de la tabla OMS 2024.
+- **Embarazada sin trimestre** (`RIDEXPRG = 1`): 22 mujeres en cada ciclo. NHANES no registra el trimestre, así que la regla no puede aplicarse. Antes se evaluaban como no embarazadas por error del script.
+- **Embarazo desconocido** en hierro: 873 (2017-2018) y 559 (2021-2022). La regla exige declarar el estado en mujeres de 10 a 59 años. NHANES solo pregunta `RIDEXPRG` a mujeres de 20 a 44 años, así que las mujeres de 10 a 19 y de 45 a 59 llegan sin código; además hay 17 y 14 con código 3 (no determinable). El script no separa exactamente la parte de 10 a 59 años del resto, pero la mayoría de estos casos viene de esa falta de pregunta. **Esto es una limitación de los datos, no un fallo del script.** No se imputa el embarazo.
+- **Anemia:** mayores de 65 años (976 en 2017-2018), fuera de la tabla OMS 2024; y embarazo desconocido (944 y 395), más las 22 embarazadas sin trimestre de cada ciclo.
 - La muestra excluye PCR > 5 mg/L, así que las categorías con inflamación no aparecen.
 
-**Concordancia descriptiva (anemia y deficiencia de hierro, ambos evaluables):**
-- 2017-2018: anémicos con deficiencia 83, anémicos sin deficiencia 81, no anémicos con deficiencia 109, no anémicos sin deficiencia 2 809.
-- 2021-2022 (L): anémicos con deficiencia 61, anémicos sin deficiencia 54, no anémicos con deficiencia 44, no anémicos sin deficiencia 766.
+**Concordancia descriptiva (anemia y deficiencia de hierro, ambos evaluables, regla v2):**
+- 2017-2018: anémicos con deficiencia 109, anémicos sin deficiencia 55, no anémicos con deficiencia 109, no anémicos sin deficiencia 2 809.
+- 2021-2022 (L): anémicos con deficiencia 85, anémicos sin deficiencia 30, no anémicos con deficiencia 44, no anémicos sin deficiencia 766.
 
 Es un dato de concordancia, no de exactitud.
 
