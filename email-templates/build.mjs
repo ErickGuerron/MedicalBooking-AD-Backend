@@ -15,7 +15,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const outputDir = path.join(root, "src", "medicalbooking", "modules", "identity", "infrastructure", "email_templates");
 
-const templates = [{ source: path.join(here, "activation.mjml"), output: path.join(outputDir, "activation.html") }];
+const templates = [{ source: path.join(here, "activation", "activation.mjml"), output: path.join(outputDir, "activation.html") }];
 
 const check = process.argv.includes("--check");
 let stale = false;
