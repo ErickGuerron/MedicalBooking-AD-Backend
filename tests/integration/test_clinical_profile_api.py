@@ -63,13 +63,41 @@ def test_the_patient_saves_their_own_altitude_and_smoking(app, engine) -> None:
     assert (row.altitud_residencia_m, row.fumador, row.cigarrillos_dia) == (2400, True, 12)
 
 
-def test_a_smoker_of_unknown_quantity_is_accepted(app, engine) -> None:
+def test_a_smoker_must_declare_the_cigarettes_per_day(app, engine) -> None:
     patient = _user(engine, "PACIENTE")
 
     response = _put(app, _token(app, patient), {"altitud_residencia_m": 0, "fumador": True})
 
+    assert response.status_code == 422
+    assert _stored(engine, patient).fumador is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"fumador": False},  # altitude missing
+        {"altitud_residencia_m": 100},  # smoking missing
+        {"altitud_residencia_m": None, "fumador": False},  # explicit unknown altitude
+        {"altitud_residencia_m": 100, "fumador": None},  # explicit unknown smoking
+    ],
+)
+def test_altitude_and_smoking_are_both_mandatory(app, engine, body: dict) -> None:
+    patient = _user(engine, "PACIENTE")
+
+    response = _put(app, _token(app, patient), body)
+
+    assert response.status_code == 422
+    assert _stored(engine, patient).altitud_residencia_m is None
+
+
+def test_a_complete_non_smoker_profile_is_accepted(app, engine) -> None:
+    patient = _user(engine, "PACIENTE")
+
+    response = _put(app, _token(app, patient), {"altitud_residencia_m": 0, "fumador": False})
+
     assert response.status_code == 200, response.get_json()
-    assert _stored(engine, patient).cigarrillos_dia is None
+    row = _stored(engine, patient)
+    assert (row.altitud_residencia_m, row.fumador, row.cigarrillos_dia) == (0, False, None)
 
 
 def test_a_non_smoker_cannot_declare_cigarettes(app, engine) -> None:

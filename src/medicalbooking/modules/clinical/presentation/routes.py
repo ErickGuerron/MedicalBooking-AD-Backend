@@ -79,12 +79,15 @@ class RuleRequest(BaseModel):
 
 
 class ClinicalProfileRequest(BaseModel):
-    """Self-reported altitude of residence and smoking (WHO 2024 Tables 4, 5). Null is unknown."""
+    """Self-reported altitude of residence and smoking (WHO 2024 Tables 4, 5), both mandatory (S19).
+
+    A smoker declares cigarettes per day; a non-smoker omits it.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    altitud_residencia_m: int | None = Field(default=None, ge=0, le=8848)
-    fumador: bool | None = None
+    altitud_residencia_m: int = Field(ge=0, le=8848)
+    fumador: bool
     cigarrillos_dia: int | None = Field(default=None, ge=0, le=200)
 
 

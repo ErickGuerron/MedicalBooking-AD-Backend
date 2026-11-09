@@ -229,8 +229,9 @@ def clinical_fragment() -> dict[str, Any]:
                     "operationId": "saveClinicalProfile",
                     "summary": "Declare own altitude of residence and smoking (patient)",
                     "description": (
-                        "Self-reported data for the WHO 2024 haemoglobin adjustments. Null means "
-                        "unknown. A cigarette count needs fumador true. Only the patient writes it."
+                        "Self-reported data for the WHO 2024 haemoglobin adjustments. Altitude and "
+                        "smoking are mandatory; a smoker declares cigarettes per day. Only the "
+                        "patient writes it."
                     ),
                     "security": _BEARER,
                     "requestBody": {
@@ -240,13 +241,14 @@ def clinical_fragment() -> dict[str, Any]:
                                 "schema": {
                                     "type": "object",
                                     "additionalProperties": False,
+                                    "required": ["altitud_residencia_m", "fumador"],
                                     "properties": {
                                         "altitud_residencia_m": {
-                                            "type": ["integer", "null"],
+                                            "type": "integer",
                                             "minimum": 0,
                                             "maximum": 8848,
                                         },
-                                        "fumador": {"type": ["boolean", "null"]},
+                                        "fumador": {"type": "boolean"},
                                         "cigarrillos_dia": {
                                             "type": ["integer", "null"],
                                             "minimum": 0,
