@@ -439,3 +439,151 @@ def test_an_invalid_pregnancy_state_is_rejected(app, engine, hemoglobin_analyte)
         headers=_token(app, _user(engine, "LABORATORISTA")),
     )
     assert response.status_code == 422
+
+
+# ---------- physician edit of a shadow finding (feature doc S7, S14, T6) ----------
+
+
+def _edit(app, order_id: str, snapshot_id: str, hallazgo: str, headers, body: dict):
+    return app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/hallazgos/{hallazgo}"
+        "/ediciones",
+        json=body,
+        headers=headers,
+    )
+
+
+def _snapshot_with_anemia(app, engine, hemoglobin_analyte):
+    order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 10.0)
+    _woman_profile(engine, order_id)
+    snapshot = _snapshot(app, order_id, headers).get_json()
+    return order_id, headers, snapshot
+
+
+def test_the_physician_modifies_a_finding_and_the_suggestion_stays(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, headers, snapshot = _snapshot_with_anemia(app, engine, hemoglobin_analyte)
+    suggested = snapshot["items"][0]["categoria"]
+
+    response = _edit(
+        app,
+        order_id,
+        snapshot["id"],
+        "ANEMIA",
+        headers,
+        {"accion": "MODIFICAR", "categoria_nueva": "SIN_ANEMIA", "motivo": "altitud registrada"},
+    )
+
+    assert response.status_code == 201, response.get_json()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT accion, categoria_anterior, categoria_nueva, motivo "
+                "FROM hallazgos_sombra_ediciones WHERE snapshot_id = :s"
+            ),
+            {"s": snapshot["id"]},
+        ).one()
+        still = conn.execute(
+            text(
+                "SELECT categoria FROM hallazgos_sombra_items "
+                "WHERE snapshot_id = :s AND hallazgo = 'ANEMIA'"
+            ),
+            {"s": snapshot["id"]},
+        ).scalar_one()
+    assert (row.accion, row.categoria_anterior, row.categoria_nueva) == (
+        "MODIFICAR",
+        suggested,
+        "SIN_ANEMIA",
+    )
+    assert row.motivo == "altitud registrada"
+    assert still == suggested
+
+
+def test_an_edit_without_reason_is_refused(app, engine, hemoglobin_analyte) -> None:
+    order_id, headers, snapshot = _snapshot_with_anemia(app, engine, hemoglobin_analyte)
+
+    response = _edit(app, order_id, snapshot["id"], "ANEMIA", headers, {"accion": "CONFIRMAR"})
+
+    assert response.status_code == 422
+
+
+def test_another_doctor_cannot_edit_and_the_denial_is_audited(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, _, snapshot = _snapshot_with_anemia(app, engine, hemoglobin_analyte)
+    other = _token(app, _user(engine, "MEDICO"))
+
+    response = _edit(
+        app,
+        order_id,
+        snapshot["id"],
+        "ANEMIA",
+        other,
+        {"accion": "CONFIRMAR", "motivo": "no es mi paciente"},
+    )
+
+    assert response.status_code == 403
+    assert (
+        _count(
+            engine,
+            "SELECT COUNT(*) FROM auditoria_accesos WHERE entidad = 'hallazgo_sombra_edicion' "
+            "AND resultado = 'DENEGADO'",
+        )
+        >= 1
+    )
+
+
+def test_a_patient_cannot_edit_a_finding(app, engine, hemoglobin_analyte) -> None:
+    order_id, headers, snapshot = _snapshot_with_anemia(app, engine, hemoglobin_analyte)
+    patient = _token(app, _user(engine, "PACIENTE"))
+
+    response = _edit(
+        app,
+        order_id,
+        snapshot["id"],
+        "ANEMIA",
+        patient,
+        {"accion": "CONFIRMAR", "motivo": "x"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_an_edit_of_another_orders_snapshot_or_unknown_finding_is_not_found(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, headers, snapshot = _snapshot_with_anemia(app, engine, hemoglobin_analyte)
+    other_order, _, other_headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 13.0)
+
+    wrong_order = _edit(
+        app,
+        other_order,
+        snapshot["id"],
+        "ANEMIA",
+        other_headers,
+        {"accion": "CONFIRMAR", "motivo": "x"},
+    )
+    unknown = _edit(
+        app,
+        order_id,
+        snapshot["id"],
+        "TIROIDES",
+        headers,
+        {"accion": "CONFIRMAR", "motivo": "x"},
+    )
+
+    assert wrong_order.status_code == 404
+    assert unknown.status_code == 404
+
+
+def test_edit_rows_cannot_be_updated_or_deleted(app, engine, hemoglobin_analyte) -> None:
+    order_id, headers, snapshot = _snapshot_with_anemia(app, engine, hemoglobin_analyte)
+    _edit(app, order_id, snapshot["id"], "ANEMIA", headers, {"accion": "CONFIRMAR", "motivo": "ok"})
+
+    with pytest.raises(DBAPIError, match="immutable"):
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE hallazgos_sombra_ediciones SET motivo = 'otro'"))
+    with pytest.raises(DBAPIError, match="immutable"):
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM hallazgos_sombra_ediciones"))

@@ -266,6 +266,49 @@ def clinical_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            (
+                "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/"
+                "hallazgos/{hallazgo}/ediciones"
+            ): {
+                "post": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "editShadowFinding",
+                    "summary": "Physician confirms, discards or modifies a shadow finding",
+                    "description": (
+                        "Appends one physician action on one finding of an immutable snapshot "
+                        "(CONFIRMAR, DESCARTAR or MODIFICAR). A reason is mandatory. The snapshot "
+                        "and the suggestion are never changed. Requires revisiones.registrar and "
+                        "ownership of the order."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["accion", "motivo"],
+                                    "properties": {
+                                        "accion": {
+                                            "type": "string",
+                                            "enum": ["CONFIRMAR", "DESCARTAR", "MODIFICAR"],
+                                        },
+                                        "categoria_nueva": {"type": ["string", "null"]},
+                                        "motivo": {"type": "string", "maxLength": 500},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": {"description": "Edit recorded"},
+                        **_AUTH_ERRORS,
+                        "404": _problem("Snapshot or finding not found for this order"),
+                        "422": _problem("Invalid action, category or missing reason"),
+                    },
+                }
+            },
             "/api/v1/lab/orders/{order_id}/sombra/snapshots": {
                 "post": {
                     "tags": ["Clinical proposals"],

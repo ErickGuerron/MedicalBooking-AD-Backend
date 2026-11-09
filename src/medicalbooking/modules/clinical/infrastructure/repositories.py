@@ -527,6 +527,54 @@ class SqlClinicalStore:
                     )
         return snapshot_id
 
+    def shadow_item_category(self, order_id: str, snapshot_id: str, hallazgo: str) -> str | None:
+        o_guid, s_guid = _as_guid(order_id), _as_guid(snapshot_id)
+        if o_guid is None or s_guid is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT i.categoria FROM hallazgos_sombra_items i "
+                    "JOIN hallazgos_sombra_snapshots s ON s.id = i.snapshot_id "
+                    "WHERE s.id = :s AND s.orden_id = :o AND i.hallazgo = :h"
+                ),
+                {"s": s_guid, "o": o_guid, "h": hallazgo},
+            ).first()
+        return None if row is None else row.categoria
+
+    def record_shadow_edit(
+        self,
+        snapshot_id: str,
+        hallazgo: str,
+        accion: str,
+        categoria_anterior: str,
+        categoria_nueva: str,
+        motivo: str,
+        medico_user_id: str,
+        now: datetime,
+    ) -> str:
+        edit_id = str(uuid.uuid4())
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO hallazgos_sombra_ediciones (id, snapshot_id, hallazgo, accion, "
+                    "categoria_anterior, categoria_nueva, motivo, medico_user_id, creado_en) "
+                    "VALUES (:id, :s, :h, :a, :ant, :nueva, :motivo, :m, :ahora)"
+                ),
+                {
+                    "id": edit_id,
+                    "s": _as_guid(snapshot_id),
+                    "h": hallazgo,
+                    "a": accion,
+                    "ant": categoria_anterior,
+                    "nueva": categoria_nueva,
+                    "motivo": motivo,
+                    "m": _as_guid(medico_user_id),
+                    "ahora": _naive(now),
+                },
+            )
+        return edit_id
+
     def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]:
         guid = _as_guid(paciente_id)
         if guid is None:

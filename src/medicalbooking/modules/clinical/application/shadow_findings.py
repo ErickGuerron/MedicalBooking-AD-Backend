@@ -30,6 +30,7 @@ from medicalbooking.modules.clinical.domain.loinc_roles import (
 )
 from medicalbooking.modules.clinical.domain.pregnancy import estado_embarazo_del_pedido
 from medicalbooking.modules.clinical.domain.shadow import ShadowInputs, ShadowReport, shadow_report
+from medicalbooking.modules.clinical.domain.shadow_edits import resolver_edicion
 from medicalbooking.modules.clinical.domain.snapshot import (
     ROLES_BY_FINDING,
     RULE_VERSION,
@@ -37,9 +38,11 @@ from medicalbooking.modules.clinical.domain.snapshot import (
 )
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
-from medicalbooking.shared.domain.errors import Conflict, Forbidden
+from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound
 
 PERM_READ = "resultados.leer_con_acceso"
+PERM_REVIEW = "revisiones.registrar"
+_ENTIDAD_EDICION = "hallazgo_sombra_edicion"
 _FORBIDDEN = "Access to this resource is not allowed"
 _SEXES = {"M", "F"}
 _ENTIDAD_LECTURA = "modo_sombra"
@@ -103,6 +106,54 @@ class ShadowFindingsService:
             creado_en=now,
             items=items,
         )
+
+    def edit_finding(
+        self,
+        actor: AccessProfile,
+        order_id: str,
+        snapshot_id: str,
+        hallazgo: str,
+        *,
+        accion: str,
+        categoria_nueva: str | None,
+        motivo: str | None,
+    ) -> str:
+        """A physician confirms, discards or modifies one finding of a snapshot (S7, S14, T6).
+
+        Requires revisiones.registrar and ownership of the order. The snapshot is never changed:
+        the edit is an appended row. Every denial is audited.
+        """
+        entidad = _ENTIDAD_EDICION
+        if PERM_REVIEW not in actor.permissions:
+            self._audit(actor, None, entidad, snapshot_id, "revisar", "DENEGADO")
+            raise Forbidden(_FORBIDDEN)
+        order = self._store.load_order_for_evaluation(order_id)
+        if order is None or order.medico_user_id != actor.user_id:
+            self._audit(
+                actor,
+                order.paciente_id if order else None,
+                entidad,
+                snapshot_id,
+                "revisar",
+                "DENEGADO",
+            )
+            raise Forbidden(_FORBIDDEN)
+        actual = self._store.shadow_item_category(order_id, snapshot_id, hallazgo)
+        if actual is None:
+            raise NotFound("Finding not found in this snapshot of this order")
+        nueva = resolver_edicion(hallazgo, accion, actual, categoria_nueva, motivo)
+        edit_id = self._store.record_shadow_edit(
+            snapshot_id,
+            hallazgo,
+            accion,
+            actual,
+            nueva,
+            motivo or "",
+            actor.user_id,
+            self._clock(),
+        )
+        self._audit(actor, order.paciente_id, entidad, snapshot_id, "revisar", "OK")
+        return edit_id
 
     # ---------- helpers ----------
 

@@ -78,6 +78,16 @@ class RuleRequest(BaseModel):
     criterios: list[CriterionRequest] = Field(min_length=1, max_length=10)
 
 
+class ShadowEditRequest(BaseModel):
+    """A physician's action on one shadow finding (S7): CONFIRMAR, DESCARTAR or MODIFICAR."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accion: str = Field(max_length=20)
+    categoria_nueva: str | None = Field(default=None, max_length=60)
+    motivo: str | None = Field(default=None, max_length=600)
+
+
 class ClinicalProfileRequest(BaseModel):
     """Self-reported altitude of residence and smoking (WHO 2024 Tables 4, 5), both mandatory (S19).
 
@@ -345,6 +355,37 @@ def record_shadow_snapshot(order_id: uuid.UUID) -> tuple[Response, int]:
     """Explicit snapshot of the shadow findings (S9): a new immutable record on every call."""
     snapshot = _shadow().record_snapshot(g.actor, str(order_id))
     return jsonify(_snapshot_json(snapshot)), 201
+
+
+@clinical_bp.post(
+    "/lab/orders/<uuid:order_id>/sombra/snapshots/<uuid:snapshot_id>/hallazgos/<hallazgo>/ediciones"
+)
+@authenticated
+def edit_shadow_finding(
+    order_id: uuid.UUID, snapshot_id: uuid.UUID, hallazgo: str
+) -> tuple[Response, int]:
+    """Physician edit of one finding of a snapshot (S7, S14). Appends a row; never overwrites."""
+    body = _parse(ShadowEditRequest)
+    edit_id = _shadow().edit_finding(
+        g.actor,
+        str(order_id),
+        str(snapshot_id),
+        hallazgo,
+        accion=body.accion,
+        categoria_nueva=body.categoria_nueva,
+        motivo=body.motivo,
+    )
+    return (
+        jsonify(
+            id=edit_id,
+            snapshot_id=str(snapshot_id),
+            hallazgo=hallazgo,
+            accion=body.accion,
+            categoria_nueva=body.categoria_nueva,
+            motivo=body.motivo,
+        ),
+        201,
+    )
 
 
 def _snapshot_json(snapshot: ShadowSnapshotRecord) -> dict[str, Any]:

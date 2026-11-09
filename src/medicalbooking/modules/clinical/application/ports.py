@@ -188,6 +188,24 @@ class ClinicalStore(Protocol):
         """Insert one immutable snapshot with its items and evidence; return its id."""
         ...
 
+    def shadow_item_category(self, order_id: str, snapshot_id: str, hallazgo: str) -> str | None:
+        """The suggested category of one finding of one snapshot of this order; None if absent."""
+        ...
+
+    def record_shadow_edit(
+        self,
+        snapshot_id: str,
+        hallazgo: str,
+        accion: str,
+        categoria_anterior: str,
+        categoria_nueva: str,
+        motivo: str,
+        medico_user_id: str,
+        now: datetime,
+    ) -> str:
+        """Append one physician edit; return its id. Edits are never updated or deleted (S7)."""
+        ...
+
     def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]: ...
 
     def validated_rules(self, now: datetime) -> list[RuleSpec]: ...
