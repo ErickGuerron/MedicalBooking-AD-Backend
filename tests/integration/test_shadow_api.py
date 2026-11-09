@@ -216,7 +216,7 @@ def test_the_ordering_doctor_stores_a_snapshot_of_the_three_findings(
     body = response.get_json()
     assert body["modo"] == "SOMBRA"
     assert body["modifica_decision"] is False
-    assert body["version_regla"] == "sombra-hallazgos-1"
+    assert body["version_regla"] == "sombra-hallazgos-2"
     assert [item["hallazgo"] for item in body["items"]] == ["ANEMIA", "HIERRO", "DIABETES"]
     evidence = body["items"][0]["evidencia"]
     assert [(e["rol"], e["valor"], e["unidad"]) for e in evidence] == [

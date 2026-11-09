@@ -13,7 +13,7 @@ from decimal import Decimal
 from medicalbooking.modules.clinical.domain.shadow import ShadowReport
 
 # Version of the code-defined rules behind the cut-offs. Changing a cut-off changes this version.
-RULE_VERSION = "sombra-hallazgos-1"
+RULE_VERSION = "sombra-hallazgos-2"
 
 ROLES_BY_FINDING: dict[str, tuple[str, ...]] = {
     "ANEMIA": ("hemoglobina",),
@@ -56,7 +56,7 @@ def snapshot_items(report: ShadowReport) -> tuple[SnapshotItem, ...]:
             categoria=hierro.categoria,
             corte_valor=hierro.corte_ug_l,
             corte_unidad=None if hierro.corte_ug_l is None else "ug/L",
-            fuente=FUENTE_BY_FINDING["HIERRO"],
+            fuente=hierro.fuente,
             motivo=hierro.motivo,
         ),
         SnapshotItem(

@@ -12,6 +12,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from medicalbooking.modules.clinical.domain.anemia import (
+    ANEMIA_GRAVE,
+    ANEMIA_LEVE,
+    ANEMIA_MODERADA,
     NO_EVALUABLE,
     SIN_ANEMIA,
     AnemiaFinding,
@@ -21,6 +24,7 @@ from medicalbooking.modules.clinical.domain.diabetes import DiabetesFinding, dia
 from medicalbooking.modules.clinical.domain.iron import IronFinding, iron_finding
 
 MODO_SOMBRA = "SOMBRA"
+ANEMIA_CATEGORIES = frozenset({ANEMIA_LEVE, ANEMIA_MODERADA, ANEMIA_GRAVE})
 
 
 @dataclass(frozen=True)
@@ -66,7 +70,12 @@ def shadow_report(inputs: ShadowInputs) -> ShadowReport:
         )
         anemia = AnemiaFinding(NO_EVALUABLE, None, reason)
     hierro = iron_finding(
-        inputs.ferritin_ug_l, inputs.crp_mg_l, inputs.sex, inputs.age_months, inputs.pregnancy
+        inputs.ferritin_ug_l,
+        inputs.crp_mg_l,
+        inputs.sex,
+        inputs.age_months,
+        inputs.pregnancy,
+        anemia_presente=anemia.categoria in ANEMIA_CATEGORIES,
     )
     diabetes = diabetes_finding(
         inputs.fasting_mg_dl,

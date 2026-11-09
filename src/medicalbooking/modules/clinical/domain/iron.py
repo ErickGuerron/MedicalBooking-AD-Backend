@@ -38,11 +38,18 @@ _FIVE_AND_OLDER = _Cutoffs(Decimal("15"), Decimal("70"))
 _PREGNANT_FIRST_TRIMESTER = Decimal("15")
 
 
+FUENTE_WHO = "WHO 2020, Tabla 1"
+FUENTE_AGA = "AGA 2020, recomendacion 1"
+_MONTHS_ADULT = 18 * 12
+_AGA_ANEMIA_CUTOFF = Decimal("45")
+
+
 @dataclass(frozen=True)
 class IronFinding:
     categoria: str
     corte_ug_l: Decimal | None
     motivo: str | None = None
+    fuente: str = FUENTE_WHO
 
 
 def _not_evaluable(motivo: str) -> IronFinding:
@@ -74,8 +81,13 @@ def iron_finding(
     sex: str | None,
     age_months: int | None,
     pregnancy: str | None,
+    anemia_presente: bool = False,
 ) -> IronFinding:
-    """Classify ferritin (ug/L) with CRP (mg/L) using WHO 2020 Table 1 by age group."""
+    """Classify ferritin (ug/L) with CRP (mg/L) using WHO 2020 Table 1 by age group.
+
+    An adult (18 years or older) with anaemia, not pregnant and without inflammation uses the
+    AGA 2020 cut-off of 45 ug/L instead (clinical findings S17).
+    """
     if ferritin_ug_l is None:
         return _not_evaluable("sin ferritina")
     if crp_mg_l is None:
@@ -104,6 +116,10 @@ def iron_finding(
         if ferritin_ug_l < cutoff:
             return IronFinding(DEFICIENCIA_HIERRO_CON_INFLAMACION, cutoff)
         return IronFinding(SIN_DEFICIENCIA_CON_INFLAMACION, cutoff)
+    if anemia_presente and age_months >= _MONTHS_ADULT:
+        if ferritin_ug_l < _AGA_ANEMIA_CUTOFF:
+            return IronFinding(DEFICIENCIA_HIERRO, _AGA_ANEMIA_CUTOFF, None, FUENTE_AGA)
+        return IronFinding(SIN_DEFICIENCIA, _AGA_ANEMIA_CUTOFF, None, FUENTE_AGA)
     cutoff = groups.healthy
     if ferritin_ug_l < cutoff:
         return IronFinding(DEFICIENCIA_HIERRO, cutoff)

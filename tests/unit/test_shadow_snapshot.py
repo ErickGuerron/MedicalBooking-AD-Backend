@@ -67,7 +67,7 @@ def test_missing_input_keeps_an_explicit_reason_instead_of_a_finding() -> None:
 
 
 def test_rule_version_identifies_the_shadow_rules() -> None:
-    assert RULE_VERSION == "sombra-hallazgos-1"
+    assert RULE_VERSION == "sombra-hallazgos-2"
 
 
 def test_roles_by_finding_name_exactly_the_results_each_finding_reads() -> None:
