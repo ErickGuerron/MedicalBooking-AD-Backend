@@ -401,6 +401,53 @@ class SqlClinicalStore:
             for row in rows
         ]
 
+    def patient_clinical_profile(
+        self, paciente_id: str
+    ) -> tuple[int | None, bool | None, int | None]:
+        guid = _as_guid(paciente_id)
+        if guid is None:
+            return None, None, None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT altitud_residencia_m, fumador, cigarrillos_dia "
+                    "FROM pacientes WHERE id = :p"
+                ),
+                {"p": guid},
+            ).first()
+        if row is None:
+            return None, None, None
+        fumador = None if row.fumador is None else bool(row.fumador)
+        return row.altitud_residencia_m, fumador, row.cigarrillos_dia
+
+    def save_patient_clinical_profile(
+        self,
+        usuario_id: str,
+        altitud_residencia_m: int | None,
+        fumador: bool | None,
+        cigarrillos_dia: int | None,
+    ) -> str | None:
+        guid = _as_guid(usuario_id)
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT id FROM pacientes WHERE usuario_id = :u"), {"u": guid}
+            ).first()
+            if row is None:
+                return None
+            conn.execute(
+                text(
+                    "UPDATE pacientes SET altitud_residencia_m = :alt, fumador = :fum, "
+                    "cigarrillos_dia = :cig WHERE id = :p"
+                ),
+                {
+                    "alt": altitud_residencia_m,
+                    "fum": None if fumador is None else int(fumador),
+                    "cig": cigarrillos_dia,
+                    "p": row.id,
+                },
+            )
+        return _canonical(row.id)
+
     def record_shadow_snapshot(
         self,
         order_id: str,

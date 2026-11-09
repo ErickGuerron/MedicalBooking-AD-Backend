@@ -22,6 +22,7 @@ from medicalbooking.modules.clinical.application.ports import (
     ShadowItemRecord,
     ShadowSnapshotRecord,
 )
+from medicalbooking.modules.clinical.domain.hb_adjustments import total_adjustment
 from medicalbooking.modules.clinical.domain.loinc_roles import (
     AmbiguousResult,
     evidence_by_role,
@@ -126,8 +127,10 @@ class ShadowFindingsService:
 
     def _report(self, paciente_id: str, roles: dict[str, Decimal]) -> ShadowReport:
         sex, birth = self._store.patient_sex_birth(paciente_id)
+        altitude, smoker, cigarettes = self._store.patient_clinical_profile(paciente_id)
+        ajuste = total_adjustment(altitude, smoker, cigarettes)
         today = self._clock().date()
-        return shadow_report(_inputs(roles, sex, birth, today))
+        return shadow_report(_inputs(roles, sex, birth, today, ajuste))
 
     def _audit(
         self,
@@ -159,7 +162,11 @@ def _age_months(birth: date | None, today: date) -> int | None:
 
 
 def _inputs(
-    roles: dict[str, Decimal], sex: str | None, birth: date | None, today: date
+    roles: dict[str, Decimal],
+    sex: str | None,
+    birth: date | None,
+    today: date,
+    ajuste_g_l: int | None,
 ) -> ShadowInputs:
     fasting = roles.get("glucosa_ayuno")
     hba1c = roles.get("hba1c")
@@ -175,4 +182,5 @@ def _inputs(
         ogtt_2h_mg_dl=[],
         random_mg_dl=None,
         symptoms=None,
+        ajuste_g_l=ajuste_g_l,
     )

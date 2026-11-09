@@ -223,6 +223,47 @@ def clinical_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/me/perfil-clinico": {
+                "put": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "saveClinicalProfile",
+                    "summary": "Declare own altitude of residence and smoking (patient)",
+                    "description": (
+                        "Self-reported data for the WHO 2024 haemoglobin adjustments. Null means "
+                        "unknown. A cigarette count needs fumador true. Only the patient writes it."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "altitud_residencia_m": {
+                                            "type": ["integer", "null"],
+                                            "minimum": 0,
+                                            "maximum": 8848,
+                                        },
+                                        "fumador": {"type": ["boolean", "null"]},
+                                        "cigarrillos_dia": {
+                                            "type": ["integer", "null"],
+                                            "minimum": 0,
+                                            "maximum": 200,
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {"description": "Profile saved"},
+                        **_AUTH_ERRORS,
+                        "422": _problem("Invalid altitude, smoking or cigarette count"),
+                    },
+                }
+            },
             "/api/v1/lab/orders/{order_id}/sombra/snapshots": {
                 "post": {
                     "tags": ["Clinical proposals"],

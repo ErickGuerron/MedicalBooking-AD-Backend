@@ -157,6 +157,22 @@ class ClinicalStore(Protocol):
         """(result id, loinc, unit, value) of the numeric LOINC results of one order (S9)."""
         ...
 
+    def patient_clinical_profile(
+        self, paciente_id: str
+    ) -> tuple[int | None, bool | None, int | None]:
+        """(altitud_residencia_m, fumador, cigarrillos_dia) of a patient; None means unknown."""
+        ...
+
+    def save_patient_clinical_profile(
+        self,
+        usuario_id: str,
+        altitud_residencia_m: int | None,
+        fumador: bool | None,
+        cigarrillos_dia: int | None,
+    ) -> str | None:
+        """Store the patient's own profile; return the patient id, or None without a patient."""
+        ...
+
     def record_shadow_snapshot(
         self,
         order_id: str,

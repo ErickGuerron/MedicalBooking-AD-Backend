@@ -3093,6 +3093,91 @@
         ]
       }
     },
+    "/api/v1/me/perfil-clinico": {
+      "put": {
+        "description": "Self-reported data for the WHO 2024 haemoglobin adjustments. Null means unknown. A cigarette count needs fumador true. Only the patient writes it.",
+        "operationId": "saveClinicalProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "altitud_residencia_m": {
+                    "maximum": 8848,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "cigarrillos_dia": {
+                    "maximum": 200,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "fumador": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Profile saved"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid altitude, smoking or cigarette count"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Declare own altitude of residence and smoking (patient)",
+        "tags": [
+          "Clinical proposals"
+        ]
+      }
+    },
     "/api/v1/users": {
       "post": {
         "description": "Requires the usuarios.administrar permission.",

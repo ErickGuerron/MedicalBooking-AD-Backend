@@ -11,6 +11,10 @@ from typing import Any
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from medicalbooking.modules.clinical.application.clinical_profile import (
+    ClinicalProfile,
+    PatientProfileService,
+)
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
 from medicalbooking.modules.clinical.application.ports import (
     FindingView,
@@ -74,6 +78,16 @@ class RuleRequest(BaseModel):
     criterios: list[CriterionRequest] = Field(min_length=1, max_length=10)
 
 
+class ClinicalProfileRequest(BaseModel):
+    """Self-reported altitude of residence and smoking (WHO 2024 Tables 4, 5). Null is unknown."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    altitud_residencia_m: int | None = Field(default=None, ge=0, le=8848)
+    fumador: bool | None = None
+    cigarrillos_dia: int | None = Field(default=None, ge=0, le=200)
+
+
 class ProposalReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -92,6 +106,10 @@ def _proposals() -> ProposalService:
 
 def _shadow() -> ShadowFindingsService:
     return current_app.extensions["medicalbooking.shadow"]
+
+
+def _patient_profile() -> PatientProfileService:
+    return current_app.extensions["medicalbooking.patient_profile"]
 
 
 def _plain(value: Any) -> Any:
@@ -295,6 +313,27 @@ def get_shadow(order_id: uuid.UUID) -> tuple[Response, int]:
     """Shadow findings (S13): read-only, nothing stored, the decision is not modified."""
     report = _shadow().get(g.actor, str(order_id))
     return jsonify(_plain(asdict(report))), 200
+
+
+@clinical_bp.put("/me/perfil-clinico")
+@authenticated
+def save_clinical_profile() -> tuple[Response, int]:
+    """The patient's own altitude and smoking, for the WHO 2024 adjustments (S12)."""
+    body = _parse(ClinicalProfileRequest)
+    profile = ClinicalProfile(
+        altitud_residencia_m=body.altitud_residencia_m,
+        fumador=body.fumador,
+        cigarrillos_dia=body.cigarrillos_dia,
+    )
+    _patient_profile().save(g.actor, profile)
+    return (
+        jsonify(
+            altitud_residencia_m=body.altitud_residencia_m,
+            fumador=body.fumador,
+            cigarrillos_dia=body.cigarrillos_dia,
+        ),
+        200,
+    )
 
 
 @clinical_bp.post("/lab/orders/<uuid:order_id>/sombra/snapshots")

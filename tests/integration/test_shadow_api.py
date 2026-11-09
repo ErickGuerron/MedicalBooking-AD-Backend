@@ -111,10 +111,24 @@ def _shadow(app, order_id: str, headers):
     return app.test_client().get(f"/api/v1/lab/orders/{order_id}/sombra", headers=headers)
 
 
+def _with_profile(engine: Engine, order_id: str) -> None:
+    """Declare altitude and smoking for the order's patient, so the anaemia reason is about the
+    hemoglobin and not the missing adjustment (feature doc S12)."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE pacientes SET altitud_residencia_m = 0, fumador = 0 WHERE id = "
+                "(SELECT paciente_id FROM ordenes_laboratorio WHERE id = :o)"
+            ),
+            {"o": order_id},
+        )
+
+
 def test_the_ordering_doctor_reads_shadow_findings_marked_as_not_decisive(
     app, engine, hemoglobin_analyte
 ) -> None:
     order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 10.0)
+    _with_profile(engine, order_id)
 
     response = _shadow(app, order_id, headers)
 
@@ -132,6 +146,7 @@ def test_a_result_in_another_unit_is_not_read(app, engine, hemoglobin_analyte) -
     order_id, _, headers = _order_with_hemoglobin(
         app, engine, hemoglobin_analyte, 100.0, unit="g/L"
     )
+    _with_profile(engine, order_id)
 
     body = _shadow(app, order_id, headers).get_json()
 
@@ -302,3 +317,51 @@ def test_storing_a_snapshot_writes_no_clinical_proposal(app, engine, hemoglobin_
         _count(engine, "SELECT COUNT(*) FROM propuestas_clinicas WHERE orden_id = :o", o=order_id)
         == before
     )
+
+
+# ---------- WHO 2024 adjustment wired to the patient profile (feature doc S12) ----------
+
+
+def _set_patient(engine: Engine, order_id: str, **values) -> None:
+    assignments = ", ".join(f"{column} = :{column}" for column in values)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"UPDATE pacientes SET {assignments} WHERE id = "
+                "(SELECT paciente_id FROM ordenes_laboratorio WHERE id = :o)"
+            ),
+            {**values, "o": order_id},
+        )
+
+
+def test_without_a_profile_the_anaemia_finding_is_not_evaluable_not_assumed(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 13.0)
+
+    body = _shadow(app, order_id, headers).get_json()
+
+    assert body["anemia"]["categoria"] == "NO_EVALUABLE"
+    assert "altitud" in body["anemia"]["motivo"]
+
+
+def test_the_altitude_adjustment_changes_the_anaemia_reading(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 13.0)
+    _set_patient(
+        engine,
+        order_id,
+        sexo_registrado="M",
+        fecha_nacimiento="1990-01-01",
+        altitud_residencia_m=0,
+        fumador=0,
+    )
+    at_sea_level = _shadow(app, order_id, headers).get_json()["anemia"]["categoria"]
+
+    _set_patient(engine, order_id, altitud_residencia_m=2000)
+    at_2000_m = _shadow(app, order_id, headers).get_json()["anemia"]["categoria"]
+
+    # 13.0 g/dL is 130 g/L: no anaemia for a man. WHO Table 4 subtracts 14 g/L at 2000 m (116 g/L).
+    assert at_sea_level == "SIN_ANEMIA"
+    assert at_2000_m == "ANEMIA_LEVE"

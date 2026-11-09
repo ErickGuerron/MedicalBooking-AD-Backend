@@ -88,10 +88,13 @@ def anemia_finding(
     sex: str | None,
     age_months: int | None,
     pregnancy: str | None,
+    ajuste_g_l: int = 0,
 ) -> AnemiaFinding:
     """Classify haemoglobin (g/dL) against the WHO 2024 cut-off for the patient.
 
     age_months is the age in completed months (the WHO table mixes months and years).
+    ajuste_g_l is the WHO 2024 altitude plus smoking adjustment, subtracted from the observed value
+    (Tables 4 and 5). The caller decides whether it is known; 0 means no adjustment applies.
     """
     if hemoglobin_g_dl is None:
         return _not_evaluable("sin valor de hemoglobina")
@@ -100,7 +103,7 @@ def anemia_finding(
     band = _band_for(age_months, sex, pregnancy)
     if isinstance(band, AnemiaFinding):
         return band
-    value_g_l = hemoglobin_g_dl * 10
+    value_g_l = hemoglobin_g_dl * 10 - ajuste_g_l
     if value_g_l >= band.cutoff:
         categoria = SIN_ANEMIA
     elif value_g_l >= band.mild_from:
