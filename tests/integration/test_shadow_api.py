@@ -338,6 +338,8 @@ def test_without_a_profile_the_anaemia_finding_is_not_evaluable_not_assumed(
     app, engine, hemoglobin_analyte
 ) -> None:
     order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 13.0)
+    # Sex and birth date are known, so the only missing input left is the adjustment.
+    _set_patient(engine, order_id, sexo_registrado="M", fecha_nacimiento="1990-01-01")
 
     body = _shadow(app, order_id, headers).get_json()
 

@@ -51,18 +51,20 @@ class ShadowReport:
 
 
 def shadow_report(inputs: ShadowInputs) -> ShadowReport:
-    if inputs.ajuste_g_l is None:
-        anemia = AnemiaFinding(
-            NO_EVALUABLE, None, "falta altitud o tabaquismo para ajustar la hemoglobina"
+    # Other missing inputs keep their own reason first; then the unknown adjustment is reported.
+    anemia = anemia_finding(
+        inputs.hemoglobin_g_dl,
+        inputs.sex,
+        inputs.age_months,
+        inputs.pregnancy,
+        ajuste_g_l=0 if inputs.ajuste_g_l is None else inputs.ajuste_g_l,
+    )
+    if inputs.ajuste_g_l is None and anemia.categoria != NO_EVALUABLE:
+        reason = (
+            "ajuste de hemoglobina no evaluable: altitud o tabaquismo "
+            "sin dato o fuera de la tabla OMS"
         )
-    else:
-        anemia = anemia_finding(
-            inputs.hemoglobin_g_dl,
-            inputs.sex,
-            inputs.age_months,
-            inputs.pregnancy,
-            ajuste_g_l=inputs.ajuste_g_l,
-        )
+        anemia = AnemiaFinding(NO_EVALUABLE, None, reason)
     hierro = iron_finding(
         inputs.ferritin_ug_l, inputs.crp_mg_l, inputs.sex, inputs.age_months, inputs.pregnancy
     )

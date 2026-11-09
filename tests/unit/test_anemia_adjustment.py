@@ -64,3 +64,30 @@ def test_unknown_adjustment_in_the_shadow_report_is_not_evaluable_not_zero() -> 
 
     assert report.anemia.categoria == "NO_EVALUABLE"
     assert "altitud" in report.anemia.motivo
+
+
+def _shadow_anemia(hemoglobin: str | None, ajuste: int | None, sex: str = "F"):
+    return shadow_report(
+        ShadowInputs(
+            sex=sex,
+            age_months=34 * 12,
+            pregnancy=NOT_PREGNANT,
+            hemoglobin_g_dl=None if hemoglobin is None else hb(hemoglobin),
+            ferritin_ug_l=None,
+            crp_mg_l=None,
+            ajuste_g_l=ajuste,
+        )
+    ).anemia
+
+
+def test_an_unknown_adjustment_reason_says_altitude_or_smoking_is_not_usable() -> None:
+    # Exactly 20 cigarettes a day, or altitude above 4999 m, leave the adjustment unknown.
+    # The reason must say the value is outside the table, not claim the data is missing.
+    motivo = _shadow_anemia("12.0", None).motivo
+
+    assert "ajuste" in motivo
+    assert "fuera de la tabla" in motivo
+
+
+def test_a_missing_haemoglobin_is_reported_before_the_unknown_adjustment() -> None:
+    assert _shadow_anemia(None, None).motivo == "sin valor de hemoglobina"
