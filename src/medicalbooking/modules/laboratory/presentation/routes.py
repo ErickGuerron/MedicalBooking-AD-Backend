@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -44,6 +44,8 @@ class ResultItem(BaseModel):
     tipo_muestra: str | None = Field(default=None, max_length=80)
     # Optional (E5.1): e.g. "AYUNO". Unknown (absent) context never satisfies a context-bound rule.
     contexto_muestra: str | None = Field(default=None, max_length=100)
+    # Optional (S18): pregnancy state at sample time. Absent means unknown.
+    estado_embarazo: Literal["NO", "T1", "T2", "T3"] | None = None
 
 
 class RecordResultsRequest(BaseModel):
@@ -145,6 +147,7 @@ def record_results(order_id: uuid.UUID) -> tuple[Response, int]:
             metodo_analitico=item.metodo_analitico,
             tipo_muestra=item.tipo_muestra,
             contexto_muestra=item.contexto_muestra,
+            estado_embarazo=item.estado_embarazo,
         )
         for item in body.resultados
     ]

@@ -153,6 +153,10 @@ class ClinicalStore(Protocol):
 
     def loinc_results_for_order(self, order_id: str) -> list[tuple[str, str | None, Decimal]]: ...
 
+    def pregnancy_states_for_order(self, order_id: str) -> list[str | None]:
+        """The pregnancy state recorded on each result of one order (S18); None when unknown."""
+        ...
+
     def loinc_evidence_for_order(self, order_id: str) -> list[tuple[str, str, str | None, Decimal]]:
         """(result id, loinc, unit, value) of the numeric LOINC results of one order (S9)."""
         ...

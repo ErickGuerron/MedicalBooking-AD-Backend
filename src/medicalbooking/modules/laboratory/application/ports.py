@@ -51,6 +51,8 @@ class ResultEntry:
     metodo_analitico: str | None = None
     tipo_muestra: str | None = None
     contexto_muestra: str | None = None
+    # Pregnancy state at sample time (S18): NO, T1, T2, T3. None means unknown.
+    estado_embarazo: str | None = None
     interpretacion: str | None = None
     referencia_id: str | None = None
     referencia_version: int | None = None

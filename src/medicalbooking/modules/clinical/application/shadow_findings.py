@@ -5,8 +5,8 @@ next to the normal flow; every read and every denial is audited. Storing a snaps
 action of the same doctor: it writes one immutable snapshot with the evidence of each finding, and
 never changes the order, the result or the diagnosis record.
 Inputs come from the order's results, mapped by verified LOINC code (domain/loinc_roles.py).
-Pregnancy is not in the patient profile yet, so women of reproductive age are not evaluable for
-anaemia and iron deficiency until that field exists.
+Pregnancy is read from the results of the order (S18); when no result declares it, women of
+reproductive age are not evaluable for anaemia and iron deficiency.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from medicalbooking.modules.clinical.domain.loinc_roles import (
     evidence_by_role,
     roles_from_loinc,
 )
+from medicalbooking.modules.clinical.domain.pregnancy import estado_embarazo_del_pedido
 from medicalbooking.modules.clinical.domain.shadow import ShadowInputs, ShadowReport, shadow_report
 from medicalbooking.modules.clinical.domain.snapshot import (
     ROLES_BY_FINDING,
@@ -56,7 +57,7 @@ class ShadowFindingsService:
             roles = roles_from_loinc(self._store.loinc_results_for_order(order_id))
         except AmbiguousResult as error:
             raise Conflict(str(error)) from error
-        report = self._report(order.paciente_id, roles)
+        report = self._report(order.paciente_id, roles, self._pregnancy(order_id))
         self._audit(actor, order.paciente_id, _ENTIDAD_LECTURA, order_id, "consultar", "OK")
         return report
 
@@ -67,7 +68,7 @@ class ShadowFindingsService:
         except AmbiguousResult as error:
             raise Conflict(str(error)) from error
         roles = {role: item.valor for role, item in evidence.items()}
-        report = self._report(order.paciente_id, roles)
+        report = self._report(order.paciente_id, roles, self._pregnancy(order_id))
 
         items = tuple(
             ShadowItemRecord(
@@ -125,12 +126,17 @@ class ShadowFindingsService:
             raise Forbidden(_FORBIDDEN)
         return order
 
-    def _report(self, paciente_id: str, roles: dict[str, Decimal]) -> ShadowReport:
+    def _pregnancy(self, order_id: str) -> str | None:
+        return estado_embarazo_del_pedido(self._store.pregnancy_states_for_order(order_id))
+
+    def _report(
+        self, paciente_id: str, roles: dict[str, Decimal], pregnancy: str | None
+    ) -> ShadowReport:
         sex, birth = self._store.patient_sex_birth(paciente_id)
         altitude, smoker, cigarettes = self._store.patient_clinical_profile(paciente_id)
         ajuste = total_adjustment(altitude, smoker, cigarettes)
         today = self._clock().date()
-        return shadow_report(_inputs(roles, sex, birth, today, ajuste))
+        return shadow_report(_inputs(roles, sex, birth, today, ajuste, pregnancy))
 
     def _audit(
         self,
@@ -167,13 +173,14 @@ def _inputs(
     birth: date | None,
     today: date,
     ajuste_g_l: int | None,
+    pregnancy: str | None,
 ) -> ShadowInputs:
     fasting = roles.get("glucosa_ayuno")
     hba1c = roles.get("hba1c")
     return ShadowInputs(
         sex=sex if sex in _SEXES else None,
         age_months=_age_months(birth, today),
-        pregnancy=None,
+        pregnancy=pregnancy,
         hemoglobin_g_dl=roles.get("hemoglobina"),
         ferritin_ug_l=roles.get("ferritina"),
         crp_mg_l=roles.get("pcr"),

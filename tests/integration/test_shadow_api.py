@@ -85,22 +85,22 @@ def hemoglobin_analyte(app: Flask, engine: Engine) -> Iterator[str]:
                 )
 
 
-def _order_with_hemoglobin(app, engine, analito: str, value: float, unit: str = "g/dL"):
+def _order_with_hemoglobin(
+    app, engine, analito: str, value: float, unit: str = "g/dL", estado_embarazo=None
+):
     order_id, patient, doctor, doctor_headers = _order_for(app, engine)
     detail = _detail(app, order_id, doctor_headers)
+    result = {
+        "nombre_analito": "Hemoglobina",
+        "valor_numerico": value,
+        "unidad": unit,
+        "analito_id": analito,
+    }
+    if estado_embarazo is not None:
+        result["estado_embarazo"] = estado_embarazo
     response = app.test_client().post(
         f"/api/v1/lab/orders/{order_id}/results",
-        json={
-            "detalle_id": detail,
-            "resultados": [
-                {
-                    "nombre_analito": "Hemoglobina",
-                    "valor_numerico": value,
-                    "unidad": unit,
-                    "analito_id": analito,
-                }
-            ],
-        },
+        json={"detalle_id": detail, "resultados": [result]},
         headers=_token(app, _user(engine, "LABORATORISTA")),
     )
     assert response.status_code == 200, response.get_json()
@@ -367,3 +367,75 @@ def test_the_altitude_adjustment_changes_the_anaemia_reading(
     # 13.0 g/dL is 130 g/L: no anaemia for a man. WHO Table 4 subtracts 14 g/L at 2000 m (116 g/L).
     assert at_sea_level == "SIN_ANEMIA"
     assert at_2000_m == "ANEMIA_LEVE"
+
+
+# ---------- pregnancy state on the lab result (feature doc S18) ----------
+
+
+def _woman_profile(engine: Engine, order_id: str) -> None:
+    _set_patient(
+        engine,
+        order_id,
+        sexo_registrado="F",
+        fecha_nacimiento="1990-01-01",
+        altitud_residencia_m=0,
+        fumador=0,
+    )
+
+
+def test_a_declared_pregnancy_state_reaches_the_anaemia_finding_and_is_stored(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, _, headers = _order_with_hemoglobin(
+        app, engine, hemoglobin_analyte, 13.0, estado_embarazo="NO"
+    )
+    _woman_profile(engine, order_id)
+
+    body = _shadow(app, order_id, headers).get_json()
+
+    # 13.0 g/dL is above the WHO 2024 cut-off for a non-pregnant woman (12.0 g/dL).
+    assert body["anemia"]["categoria"] == "SIN_ANEMIA"
+    with engine.connect() as conn:
+        stored = conn.execute(
+            text(
+                "SELECT estado_embarazo FROM resultados_laboratorio r "
+                "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                "WHERE d.orden_id = :o"
+            ),
+            {"o": order_id},
+        ).scalar_one()
+    assert stored == "NO"
+
+
+def test_without_a_declared_pregnancy_state_a_woman_anaemia_is_not_evaluable(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 13.0)
+    _woman_profile(engine, order_id)
+
+    body = _shadow(app, order_id, headers).get_json()
+
+    assert body["anemia"]["categoria"] == "NO_EVALUABLE"
+    assert "embarazo" in body["anemia"]["motivo"]
+
+
+def test_an_invalid_pregnancy_state_is_rejected(app, engine, hemoglobin_analyte) -> None:
+    order_id, patient, doctor, doctor_headers = _order_for(app, engine)
+    detail = _detail(app, order_id, doctor_headers)
+    response = app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/results",
+        json={
+            "detalle_id": detail,
+            "resultados": [
+                {
+                    "nombre_analito": "Hemoglobina",
+                    "valor_numerico": 13.0,
+                    "unidad": "g/dL",
+                    "analito_id": hemoglobin_analyte,
+                    "estado_embarazo": "EMBARAZADA",
+                }
+            ],
+        },
+        headers=_token(app, _user(engine, "LABORATORISTA")),
+    )
+    assert response.status_code == 422

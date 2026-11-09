@@ -360,6 +360,23 @@ class SqlClinicalStore:
             ),
         )
 
+    def pregnancy_states_for_order(self, order_id: str) -> list[str | None]:
+        """Pregnancy state of each result of one order (S18)."""
+        guid = _as_guid(order_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT r.estado_embarazo "
+                    "FROM resultados_laboratorio r "
+                    "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                    "WHERE d.orden_id = :o"
+                ),
+                {"o": guid},
+            ).all()
+        return [row.estado_embarazo for row in rows]
+
     def loinc_results_for_order(self, order_id: str) -> list[tuple[str, str | None, Decimal]]:
         """Numeric results of one order whose analyte carries a LOINC code (shadow mode, S13)."""
         guid = _as_guid(order_id)
