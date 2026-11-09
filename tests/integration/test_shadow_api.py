@@ -249,7 +249,18 @@ def test_snapshot_rows_cannot_be_updated_or_deleted(app, engine, hemoglobin_anal
                 ),
                 {"o": order_id},
             )
-    # Items are referenced by their evidence: the foreign key refuses the delete as well.
+    # The diabetes item has no evidence in this order, so the items trigger refuses its delete.
+    with pytest.raises(DBAPIError, match="immutable"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "DELETE FROM hallazgos_sombra_items WHERE hallazgo = 'DIABETES' "
+                    "AND snapshot_id IN "
+                    "(SELECT id FROM hallazgos_sombra_snapshots WHERE orden_id = :o)"
+                ),
+                {"o": order_id},
+            )
+    # The anaemia item is referenced by its evidence: the foreign key refuses the delete.
     with pytest.raises(DBAPIError):
         with engine.begin() as conn:
             conn.execute(
