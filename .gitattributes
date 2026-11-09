@@ -1,0 +1,15 @@
+# Store text files with LF in the repository and check them out with LF,
+# whatever core.autocrlf says on each machine. Keeps generated outputs (MJML -> HTML)
+# byte-identical across Windows, macOS and Linux.
+* text=auto eol=lf
+
+# Binary assets: never normalize or diff as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.docx binary
+*.xlsx binary
+*.pdf binary
+*.xpt binary
