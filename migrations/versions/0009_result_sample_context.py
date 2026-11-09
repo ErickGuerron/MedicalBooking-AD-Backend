@@ -1,7 +1,7 @@
 ﻿"""E5.1 sample context for laboratory results (fasting status). Adds one nullable column.
 
 Revision ID: 0009_result_sample_context
-Revises: 0007_email_verification
+Revises: 0008_email_verification
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from alembic import op
 from medicalbooking.shared.infrastructure.tsql import split_batches
 
 revision = "0009_result_sample_context"
-down_revision = "0007_email_verification"
+down_revision = "0008_email_verification"
 branch_labels = None
 depends_on = None
 
