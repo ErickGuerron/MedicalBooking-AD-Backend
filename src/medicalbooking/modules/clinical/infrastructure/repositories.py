@@ -22,6 +22,7 @@ from medicalbooking.modules.clinical.application.ports import (
     NewRule,
     OrderForEvaluation,
     ProposalView,
+    ShadowItemRecord,
 )
 from medicalbooking.modules.clinical.domain import (
     CriterionSpec,
@@ -377,6 +378,90 @@ class SqlClinicalStore:
                 {"o": guid},
             ).all()
         return [(row.codigo_loinc, row.unidad, Decimal(row.valor_numerico)) for row in rows]
+
+    def loinc_evidence_for_order(self, order_id: str) -> list[tuple[str, str, str | None, Decimal]]:
+        """Like loinc_results_for_order, with the result id kept as evidence (S9)."""
+        guid = _as_guid(order_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT r.id, a.codigo_loinc, r.unidad, r.valor_numerico "
+                    "FROM resultados_laboratorio r "
+                    "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                    "JOIN conocimiento_analitos a ON a.id = r.analito_id "
+                    "WHERE d.orden_id = :o AND a.codigo_loinc IS NOT NULL "
+                    "AND r.valor_numerico IS NOT NULL ORDER BY r.id"
+                ),
+                {"o": guid},
+            ).all()
+        return [
+            (_canonical(row.id), row.codigo_loinc, row.unidad, Decimal(row.valor_numerico))
+            for row in rows
+        ]
+
+    def record_shadow_snapshot(
+        self,
+        order_id: str,
+        version_regla: str,
+        items: tuple[ShadowItemRecord, ...],
+        actor_user_id: str,
+        now: datetime,
+    ) -> str:
+        """One transaction: the snapshot, its items and their evidence. Never updated afterwards."""
+        guid = _as_guid(order_id)
+        snapshot_id = str(uuid.uuid4())
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO hallazgos_sombra_snapshots (id, orden_id, version_regla, modo, "
+                    "modifica_decision, creado_por, creado_en) "
+                    "VALUES (:id, :o, :version, 'SOMBRA', 0, :u, :ahora)"
+                ),
+                {
+                    "id": snapshot_id,
+                    "o": guid,
+                    "version": version_regla,
+                    "u": actor_user_id,
+                    "ahora": _naive(now),
+                },
+            )
+            for item in items:
+                item_id = str(uuid.uuid4())
+                conn.execute(
+                    text(
+                        "INSERT INTO hallazgos_sombra_items (id, snapshot_id, hallazgo, categoria, "
+                        "corte_valor, corte_unidad, fuente, motivo) "
+                        "VALUES (:id, :s, :hallazgo, :categoria, :corte, :unidad, :fuente, :motivo)"
+                    ),
+                    {
+                        "id": item_id,
+                        "s": snapshot_id,
+                        "hallazgo": item.hallazgo,
+                        "categoria": item.categoria,
+                        "corte": item.corte_valor,
+                        "unidad": item.corte_unidad,
+                        "fuente": item.fuente,
+                        "motivo": item.motivo,
+                    },
+                )
+                for evidence in item.evidencia:
+                    conn.execute(
+                        text(
+                            "INSERT INTO hallazgos_sombra_evidencias (item_id, resultado_id, rol, "
+                            "valor_observado, unidad_observada) "
+                            "VALUES (:i, :r, :rol, :valor, :unidad)"
+                        ),
+                        {
+                            "i": item_id,
+                            "r": evidence.resultado_id,
+                            "rol": evidence.rol,
+                            "valor": evidence.valor,
+                            "unidad": evidence.unidad,
+                        },
+                    )
+        return snapshot_id
 
     def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]:
         guid = _as_guid(paciente_id)

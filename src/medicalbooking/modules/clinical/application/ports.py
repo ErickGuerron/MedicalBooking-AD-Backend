@@ -18,6 +18,34 @@ from medicalbooking.modules.laboratory.application.ports import AuditEvent
 
 
 @dataclass(frozen=True)
+class ShadowEvidenceRecord:
+    rol: str
+    resultado_id: str
+    valor: Decimal
+    unidad: str
+
+
+@dataclass(frozen=True)
+class ShadowItemRecord:
+    hallazgo: str
+    categoria: str
+    corte_valor: Decimal | None
+    corte_unidad: str | None
+    fuente: str
+    motivo: str | None
+    evidencia: tuple[ShadowEvidenceRecord, ...]
+
+
+@dataclass(frozen=True)
+class ShadowSnapshotRecord:
+    id: str
+    orden_id: str
+    version_regla: str
+    creado_en: datetime
+    items: tuple[ShadowItemRecord, ...]
+
+
+@dataclass(frozen=True)
 class AnalyteView:
     id: str
     nombre: str
@@ -124,6 +152,21 @@ class ClinicalStore(Protocol):
     def load_order_for_evaluation(self, order_id: str) -> OrderForEvaluation | None: ...
 
     def loinc_results_for_order(self, order_id: str) -> list[tuple[str, str | None, Decimal]]: ...
+
+    def loinc_evidence_for_order(self, order_id: str) -> list[tuple[str, str, str | None, Decimal]]:
+        """(result id, loinc, unit, value) of the numeric LOINC results of one order (S9)."""
+        ...
+
+    def record_shadow_snapshot(
+        self,
+        order_id: str,
+        version_regla: str,
+        items: tuple[ShadowItemRecord, ...],
+        actor_user_id: str,
+        now: datetime,
+    ) -> str:
+        """Insert one immutable snapshot with its items and evidence; return its id."""
+        ...
 
     def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]: ...
 

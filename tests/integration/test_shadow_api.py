@@ -13,6 +13,7 @@ import pytest
 from flask import Flask
 from pydantic import SecretStr
 from sqlalchemy import Engine, text
+from sqlalchemy.exc import DBAPIError
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
@@ -177,4 +178,116 @@ def test_a_read_is_audited_and_writes_no_clinical_decision(app, engine, hemoglob
     assert (
         _count(engine, "SELECT COUNT(*) FROM propuestas_clinicas WHERE orden_id = :o", o=order_id)
         == proposals_before
+    )
+
+
+# ---------- immutable snapshots (feature doc S9) ----------
+
+
+def _snapshot(app, order_id: str, headers):
+    return app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/sombra/snapshots", headers=headers
+    )
+
+
+def test_the_ordering_doctor_stores_a_snapshot_of_the_three_findings(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 10.0)
+
+    response = _snapshot(app, order_id, headers)
+
+    assert response.status_code == 201, response.get_json()
+    body = response.get_json()
+    assert body["modo"] == "SOMBRA"
+    assert body["modifica_decision"] is False
+    assert body["version_regla"] == "sombra-hallazgos-1"
+    assert [item["hallazgo"] for item in body["items"]] == ["ANEMIA", "HIERRO", "DIABETES"]
+    evidence = body["items"][0]["evidencia"]
+    assert [(e["rol"], e["valor"], e["unidad"]) for e in evidence] == [
+        ("hemoglobina", 10.0, "g/dL")
+    ]
+    assert evidence[0]["resultado_id"]
+
+
+def test_a_new_snapshot_keeps_the_earlier_one(app, engine, hemoglobin_analyte) -> None:
+    order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 10.0)
+
+    first = _snapshot(app, order_id, headers).get_json()
+    second = _snapshot(app, order_id, headers).get_json()
+
+    assert first["id"] != second["id"]
+    assert (
+        _count(
+            engine,
+            "SELECT COUNT(*) FROM hallazgos_sombra_snapshots WHERE orden_id = :o",
+            o=order_id,
+        )
+        == 2
+    )
+
+
+def test_snapshot_rows_cannot_be_updated_or_deleted(app, engine, hemoglobin_analyte) -> None:
+    order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 10.0)
+    _snapshot(app, order_id, headers)
+
+    with pytest.raises(DBAPIError, match="immutable"):
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE hallazgos_sombra_snapshots SET modo = 'SOMBRA' WHERE orden_id = :o"),
+                {"o": order_id},
+            )
+    # Evidence has no children, so the immutability trigger itself is what refuses this delete.
+    with pytest.raises(DBAPIError, match="immutable"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "DELETE FROM hallazgos_sombra_evidencias WHERE item_id IN "
+                    "(SELECT i.id FROM hallazgos_sombra_items i "
+                    "JOIN hallazgos_sombra_snapshots s ON s.id = i.snapshot_id "
+                    "WHERE s.orden_id = :o)"
+                ),
+                {"o": order_id},
+            )
+    # Items are referenced by their evidence: the foreign key refuses the delete as well.
+    with pytest.raises(DBAPIError):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "DELETE FROM hallazgos_sombra_items WHERE snapshot_id IN "
+                    "(SELECT id FROM hallazgos_sombra_snapshots WHERE orden_id = :o)"
+                ),
+                {"o": order_id},
+            )
+
+
+def test_another_doctor_cannot_store_a_snapshot_and_the_denial_is_audited(
+    app, engine, hemoglobin_analyte
+) -> None:
+    order_id, _, _ = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 10.0)
+    stranger = _token(app, _user(engine, "PACIENTE"))
+
+    assert _snapshot(app, order_id, stranger).status_code == 403
+    assert (
+        _count(
+            engine,
+            "SELECT COUNT(*) FROM auditoria_accesos WHERE entidad = 'hallazgos_sombra' "
+            "AND entidad_id = :o AND resultado = 'DENEGADO'",
+            o=order_id,
+        )
+        >= 1
+    )
+
+
+def test_storing_a_snapshot_writes_no_clinical_proposal(app, engine, hemoglobin_analyte) -> None:
+    order_id, _, headers = _order_with_hemoglobin(app, engine, hemoglobin_analyte, 10.0)
+    before = _count(
+        engine, "SELECT COUNT(*) FROM propuestas_clinicas WHERE orden_id = :o", o=order_id
+    )
+
+    assert _snapshot(app, order_id, headers).status_code == 201
+
+    assert (
+        _count(engine, "SELECT COUNT(*) FROM propuestas_clinicas WHERE orden_id = :o", o=order_id)
+        == before
     )

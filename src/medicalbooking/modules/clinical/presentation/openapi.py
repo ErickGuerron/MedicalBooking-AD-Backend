@@ -223,6 +223,45 @@ def clinical_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/lab/orders/{order_id}/sombra/snapshots": {
+                "post": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "recordShadowSnapshot",
+                    "summary": "Store an immutable snapshot of the shadow findings",
+                    "description": (
+                        "Explicit action of the ordering doctor. Each call creates a new snapshot "
+                        "with the evidence (result id, value, unit) of each finding. Snapshots "
+                        "are never updated or deleted. The decision is not modified."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path("order_id")],
+                    "responses": {
+                        "201": {
+                            "description": "Snapshot created",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": _UUID,
+                                            "modo": {"type": "string", "enum": ["SOMBRA"]},
+                                            "modifica_decision": {
+                                                "type": "boolean",
+                                                "enum": [False],
+                                            },
+                                            "version_regla": {"type": "string"},
+                                            "items": {"type": "array", "items": {"type": "object"}},
+                                        },
+                                        "required": ["id", "modo", "modifica_decision"],
+                                    }
+                                }
+                            },
+                        },
+                        **_AUTH_ERRORS,
+                        "409": _problem("Order inputs cannot be interpreted"),
+                    },
+                }
+            },
             "/api/v1/clinical/proposals/{proposal_id}/reviews": {
                 "post": {
                     "tags": ["Clinical proposals"],

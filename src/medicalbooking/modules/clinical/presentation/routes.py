@@ -12,7 +12,11 @@ from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
-from medicalbooking.modules.clinical.application.ports import FindingView, ProposalView
+from medicalbooking.modules.clinical.application.ports import (
+    FindingView,
+    ProposalView,
+    ShadowSnapshotRecord,
+)
 from medicalbooking.modules.clinical.application.proposals import ProposalService
 from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
 from medicalbooking.modules.clinical.domain.evaluation import CriterionSpec
@@ -291,6 +295,45 @@ def get_shadow(order_id: uuid.UUID) -> tuple[Response, int]:
     """Shadow findings (S13): read-only, nothing stored, the decision is not modified."""
     report = _shadow().get(g.actor, str(order_id))
     return jsonify(_plain(asdict(report))), 200
+
+
+@clinical_bp.post("/lab/orders/<uuid:order_id>/sombra/snapshots")
+@authenticated
+def record_shadow_snapshot(order_id: uuid.UUID) -> tuple[Response, int]:
+    """Explicit snapshot of the shadow findings (S9): a new immutable record on every call."""
+    snapshot = _shadow().record_snapshot(g.actor, str(order_id))
+    return jsonify(_snapshot_json(snapshot)), 201
+
+
+def _snapshot_json(snapshot: ShadowSnapshotRecord) -> dict[str, Any]:
+    return {
+        "id": snapshot.id,
+        "orden_id": snapshot.orden_id,
+        "version_regla": snapshot.version_regla,
+        "modo": "SOMBRA",
+        "modifica_decision": False,
+        "creado_en": snapshot.creado_en.isoformat(),
+        "items": [
+            {
+                "hallazgo": item.hallazgo,
+                "categoria": item.categoria,
+                "corte_valor": None if item.corte_valor is None else float(item.corte_valor),
+                "corte_unidad": item.corte_unidad,
+                "fuente": item.fuente,
+                "motivo": item.motivo,
+                "evidencia": [
+                    {
+                        "rol": evidence.rol,
+                        "resultado_id": evidence.resultado_id,
+                        "valor": float(evidence.valor),
+                        "unidad": evidence.unidad,
+                    }
+                    for evidence in item.evidencia
+                ],
+            }
+            for item in snapshot.items
+        ],
+    }
 
 
 @clinical_bp.post("/clinical/proposals/<uuid:proposal_id>/reviews")
