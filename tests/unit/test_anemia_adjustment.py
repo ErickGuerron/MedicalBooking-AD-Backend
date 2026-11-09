@@ -81,8 +81,8 @@ def _shadow_anemia(hemoglobin: str | None, ajuste: int | None, sex: str = "F"):
 
 
 def test_an_unknown_adjustment_reason_says_altitude_or_smoking_is_not_usable() -> None:
-    # Exactly 20 cigarettes a day, or altitude above 4999 m, leave the adjustment unknown.
-    # The reason must say the value is outside the table, not claim the data is missing.
+    # Altitude above 4999 m leaves the adjustment unknown (outside WHO Table 4).
+    # The reason must say the value is outside the table or has no data.
     motivo = _shadow_anemia("12.0", None).motivo
 
     assert "ajuste" in motivo

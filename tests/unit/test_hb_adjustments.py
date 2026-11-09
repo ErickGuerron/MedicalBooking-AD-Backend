@@ -65,8 +65,10 @@ def test_smoking_adjustment_follows_who_table_5(
     assert smoking_adjustment(smoker, cigarettes) == expected
 
 
-def test_exactly_twenty_cigarettes_is_not_assigned_to_a_band() -> None:
-    assert smoking_adjustment(True, 20) is None
+def test_exactly_twenty_cigarettes_takes_the_top_band_value_from_the_who_formula() -> None:
+    # The categorical table labels the top band ">20", but WHO Table 5 note b gives the formula
+    # 0.4565 x n - 0.0078 x n^2, which is 6.01 at n = 20: the same value as the top band.
+    assert smoking_adjustment(True, 20) == 6
 
 
 def test_unknown_smoking_status_is_not_evaluable() -> None:
@@ -79,4 +81,5 @@ def test_total_adds_altitude_and_smoking() -> None:
 
 def test_total_is_not_evaluable_when_one_input_is_missing() -> None:
     assert total_adjustment(altitude_m=None, smoker=False, cigarettes=None) is None
-    assert total_adjustment(altitude_m=0, smoker=True, cigarettes=20) is None
+    assert total_adjustment(altitude_m=None, smoker=True, cigarettes=12) is None
+    assert total_adjustment(altitude_m=0, smoker=None, cigarettes=None) is None

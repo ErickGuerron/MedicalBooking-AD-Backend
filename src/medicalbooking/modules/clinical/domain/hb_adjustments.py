@@ -38,8 +38,8 @@ def altitude_adjustment(metres: int | None) -> int | None:
 def smoking_adjustment(smoker: bool | None, cigarettes_per_day: int | None) -> int | None:
     """WHO 2024 Table 5. A non-smoker needs no adjustment. A smoker of unknown quantity is 3.
 
-    Exactly 20 cigarettes a day is not assigned by the WHO table (it labels the top band ">20"),
-    so it is None rather than a guess.
+    Exactly 20 cigarettes a day is not in the categorical table (its top band is ">20"). WHO Table 5
+    note b gives the formula 0.4565 x n - 0.0078 x n^2, which is 6.01 at n = 20: the top band value.
     """
     if smoker is None:
         return None
@@ -53,9 +53,7 @@ def smoking_adjustment(smoker: bool | None, cigarettes_per_day: int | None) -> i
         return 3
     if cigarettes_per_day <= 19:
         return 5
-    if cigarettes_per_day > 20:
-        return 6
-    return None
+    return 6
 
 
 def total_adjustment(
