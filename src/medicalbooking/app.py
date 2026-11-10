@@ -36,6 +36,10 @@ from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLab
 from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
 from medicalbooking.modules.laboratory.presentation.openapi import laboratory_fragment
 from medicalbooking.modules.laboratory.presentation.routes import lab_bp
+from medicalbooking.modules.payments.application.webhook_service import StripeWebhookService
+from medicalbooking.modules.payments.infrastructure.repositories import SqlPaymentsStore
+from medicalbooking.modules.payments.presentation.openapi import payments_fragment
+from medicalbooking.modules.payments.presentation.routes import payments_bp
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
@@ -64,8 +68,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.proposals"] = proposals
     app.extensions["medicalbooking.shadow"] = shadow
     app.extensions["medicalbooking.patient_profile"] = patient_profile
+    app.extensions["medicalbooking.payments_webhook"] = _build_payments_webhook(settings, engine)
 
     app.register_blueprint(health_bp)
+    app.register_blueprint(payments_bp)
     app.register_blueprint(identity_bp)
     app.register_blueprint(scheduling_bp)
     app.register_blueprint(lab_bp)
@@ -78,6 +84,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 scheduling_fragment(),
                 laboratory_fragment(),
                 clinical_fragment(),
+                payments_fragment(),
             ],
         )
     _register_error_handlers(app)
@@ -127,6 +134,20 @@ def _build_laboratory(settings: Settings, engine: Any) -> LabService:
         storage=LocalDocumentStorage(Path(settings.lab_documents_dir)),
         clock=lambda: datetime.now(UTC),
         correlation_id=lambda: g.get("correlation_id"),
+    )
+
+
+def _build_payments_webhook(settings: Settings, engine: Any) -> StripeWebhookService:
+    """Composition root for the Stripe webhook (E4). The secret stays inside the service."""
+    secret = (
+        settings.stripe_webhook_secret.get_secret_value()
+        if settings.stripe_webhook_secret
+        else None
+    )
+    return StripeWebhookService(
+        store=SqlPaymentsStore(engine, clock=lambda: datetime.now(UTC)),
+        secret=secret,
+        clock=lambda: int(datetime.now(UTC).timestamp()),
     )
 
 

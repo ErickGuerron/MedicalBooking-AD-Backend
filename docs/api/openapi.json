@@ -675,6 +675,24 @@
                 "default": null,
                 "title": "Contexto Muestra"
               },
+              "estado_embarazo": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "NO",
+                      "T1",
+                      "T2",
+                      "T3"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Estado Embarazo"
+              },
               "metodo_analitico": {
                 "anyOf": [
                   {
@@ -3057,6 +3075,101 @@
         ]
       }
     },
+    "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/hallazgos/{hallazgo}/ediciones": {
+      "post": {
+        "description": "Appends one physician action on one finding of an immutable snapshot (CONFIRMAR, DESCARTAR or MODIFICAR). A reason is mandatory. The snapshot and the suggestion are never changed. Requires revisiones.registrar and ownership of the order.",
+        "operationId": "editShadowFinding",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "accion": {
+                    "enum": [
+                      "CONFIRMAR",
+                      "DESCARTAR",
+                      "MODIFICAR"
+                    ],
+                    "type": "string"
+                  },
+                  "categoria_nueva": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "motivo": {
+                    "maxLength": 500,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "accion",
+                  "motivo"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Edit recorded"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks the permission or is not the owner"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Snapshot or finding not found for this order"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid action, category or missing reason"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Physician confirms, discards or modifies a shadow finding",
+        "tags": [
+          "Clinical proposals"
+        ]
+      }
+    },
     "/api/v1/me": {
       "get": {
         "operationId": "getCurrentUser",
@@ -3095,7 +3208,7 @@
     },
     "/api/v1/me/perfil-clinico": {
       "put": {
-        "description": "Self-reported data for the WHO 2024 haemoglobin adjustments. Null means unknown. A cigarette count needs fumador true. Only the patient writes it.",
+        "description": "Self-reported data for the WHO 2024 haemoglobin adjustments. Altitude and smoking are mandatory; a smoker declares cigarettes per day. Only the patient writes it.",
         "operationId": "saveClinicalProfile",
         "requestBody": {
           "content": {
@@ -3106,10 +3219,7 @@
                   "altitud_residencia_m": {
                     "maximum": 8848,
                     "minimum": 0,
-                    "type": [
-                      "integer",
-                      "null"
-                    ]
+                    "type": "integer"
                   },
                   "cigarrillos_dia": {
                     "maximum": 200,
@@ -3120,12 +3230,13 @@
                     ]
                   },
                   "fumador": {
-                    "type": [
-                      "boolean",
-                      "null"
-                    ]
+                    "type": "boolean"
                   }
                 },
+                "required": [
+                  "altitud_residencia_m",
+                  "fumador"
+                ],
                 "type": "object"
               }
             }
@@ -3175,6 +3286,83 @@
         "summary": "Declare own altitude of residence and smoking (patient)",
         "tags": [
           "Clinical proposals"
+        ]
+      }
+    },
+    "/api/v1/payments/webhook": {
+      "post": {
+        "description": "Verifies the Stripe-Signature header over the raw body (HMAC-SHA256, v1, 5 minute tolerance), records the event once and confirms, rejects or cancels the matching checkout payment. Payments are never confirmed by a browser redirect.",
+        "operationId": "stripeWebhook",
+        "parameters": [
+          {
+            "description": "Signature header sent by Stripe",
+            "in": "header",
+            "name": "Stripe-Signature",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "recibido": {
+                      "type": "boolean"
+                    },
+                    "resultado": {
+                      "enum": [
+                        "PROCESADO",
+                        "DUPLICADO",
+                        "IGNORADO",
+                        "FALLIDO"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Event accepted (processed, duplicate or ignored)"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, stale or invalid signature, or a malformed event"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Webhook secret not configured; the endpoint fails closed"
+          }
+        },
+        "summary": "Receive a signed Stripe event",
+        "tags": [
+          "Payments"
         ]
       }
     },
