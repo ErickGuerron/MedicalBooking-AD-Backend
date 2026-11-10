@@ -41,6 +41,7 @@ EXPECTED_PATHS = {
     "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/hallazgos/{hallazgo}/ediciones",
     "/api/v1/me/perfil-clinico",
     "/api/v1/clinical/proposals/{proposal_id}/reviews",
+    "/api/v1/payments/webhook",
 }
 
 
