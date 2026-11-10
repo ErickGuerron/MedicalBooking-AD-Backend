@@ -323,3 +323,34 @@ def test_short_idempotency_key_is_rejected():
         _service(store, FakeGateway()).start_checkout(
             _patient(owner), factura_id=invoice.id, idempotency_key="short"
         )
+
+
+def test_replay_does_not_open_a_session_for_a_paid_invoice():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    gateway = FakeGateway()
+    service = _service(store, gateway)
+    service.start_checkout(_patient(owner), factura_id=invoice.id, idempotency_key=KEY)
+    service.start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0002"
+    )
+    store.invoices[invoice.id] = InvoiceRecord(
+        id=invoice.id, paciente_user_id=owner, estado="PAGADA", total=invoice.total, moneda="USD"
+    )
+    calls = len(gateway.requests)
+    with pytest.raises(Conflict):
+        service.start_checkout(_patient(owner), factura_id=invoice.id, idempotency_key=KEY)
+    assert len(gateway.requests) == calls
+
+
+def test_replay_without_provider_creates_nothing_and_keeps_the_attempt_pending():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    _service(store, FakeGateway()).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key=KEY
+    )
+    with pytest.raises(ServiceUnavailable):
+        _service(store, FakeGateway(configured=False)).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
+        )
+    assert store.rejected == set()

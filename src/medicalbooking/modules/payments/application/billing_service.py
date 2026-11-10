@@ -182,14 +182,16 @@ class BillingService:
         if invoice is None or invoice.paciente_user_id != actor.user_id:
             raise Forbidden("Access to this resource is not allowed")
 
-        existing = self._store.find_payment_by_key(idempotency_key)
-        if existing is not None:
-            return self._replay(existing, invoice, factura_id, idempotency_key)
-
+        # Replays run the same guards as a first request: a key can never outlive the invoice
+        # state or the provider configuration that authorized it.
         if invoice.estado != FACTURA_PENDIENTE:
             raise Conflict("The invoice is not pending payment")
         if not self._gateway.is_configured():
             raise ServiceUnavailable("Payment provider is not configured")
+
+        existing = self._store.find_payment_by_key(idempotency_key)
+        if existing is not None:
+            return self._replay(existing, invoice, factura_id, idempotency_key)
 
         reservation = self._store.reserve_payment(
             NewPayment(

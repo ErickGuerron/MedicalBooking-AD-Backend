@@ -87,3 +87,11 @@ def test_unconfigured_gateway_is_not_configured_and_never_calls_the_provider():
     with pytest.raises(ProviderUnavailable):
         gateway.create_session(REQUEST)
     assert calls == []
+
+
+def test_a_non_json_success_body_is_unavailable_not_a_crash():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>maintenance</html>")
+
+    with pytest.raises(ProviderUnavailable):
+        _gateway(handler).create_session(REQUEST)

@@ -60,7 +60,12 @@ class StripeCheckoutGateway:
             raise ProviderUnavailable("Stripe is unreachable") from error
         if response.status_code >= 400:
             raise ProviderUnavailable(f"Stripe answered {response.status_code}")
-        body = response.json()
+        try:
+            body = response.json()
+        except ValueError as error:
+            raise ProviderUnavailable("Stripe answered a body that is not JSON") from error
+        if not isinstance(body, dict):
+            raise ProviderUnavailable("Stripe answered without a checkout session")
         session_id = body.get("id")
         url = body.get("url")
         if not isinstance(session_id, str) or not isinstance(url, str):
