@@ -6,6 +6,7 @@ Only codes verified in the LOINC catalogue are mapped:
   1988-5  C reactive protein [Mass/volume] in Serum or Plasma
   1558-6  Fasting glucose [Mass/volume] in Serum or Plasma
   4548-4  Hemoglobin A1c/Hemoglobin.total in Blood (NGSP, percent)
+  787-2   MCV [Entitic volume] by Automated count (fL), supporting signal only (S20)
 Not mapped on purpose: 59261-8 (IFCC HbA1c, mmol/mol) and any code not verified here.
 Two results for one role in the same order are ambiguous and are refused, never silently chosen.
 """
@@ -22,6 +23,7 @@ ROLE_BY_LOINC = {
     "1988-5": "pcr",
     "1558-6": "glucosa_ayuno",
     "4548-4": "hba1c",
+    "787-2": "vcm",
 }
 UNIT_BY_ROLE = {
     "hemoglobina": "g/dL",
@@ -29,6 +31,7 @@ UNIT_BY_ROLE = {
     "pcr": "mg/L",
     "glucosa_ayuno": "mg/dL",
     "hba1c": "%",
+    "vcm": "fL",
 }
 
 

@@ -28,6 +28,7 @@ from medicalbooking.modules.clinical.domain.loinc_roles import (
     evidence_by_role,
     roles_from_loinc,
 )
+from medicalbooking.modules.clinical.domain.microcitosis import limite_inferior_vcm
 from medicalbooking.modules.clinical.domain.pregnancy import estado_embarazo_del_pedido
 from medicalbooking.modules.clinical.domain.shadow import ShadowInputs, ShadowReport, shadow_report
 from medicalbooking.modules.clinical.domain.shadow_edits import resolver_edicion
@@ -47,6 +48,8 @@ _FORBIDDEN = "Access to this resource is not allowed"
 _SEXES = {"M", "F"}
 _ENTIDAD_LECTURA = "modo_sombra"
 _ENTIDAD_SNAPSHOT = "hallazgos_sombra"
+# LOINC of the MCV analyte used by the supporting signal (S20, migration 0017).
+VCM_LOINC = "787-2"
 
 
 class ShadowFindingsService:
@@ -187,7 +190,15 @@ class ShadowFindingsService:
         altitude, smoker, cigarettes = self._store.patient_clinical_profile(paciente_id)
         ajuste = total_adjustment(altitude, smoker, cigarettes)
         today = self._clock().date()
-        return shadow_report(_inputs(roles, sex, birth, today, ajuste, pregnancy))
+        vcm_limite = self._vcm_lower_limit(sex, today)
+        return shadow_report(_inputs(roles, sex, birth, today, ajuste, pregnancy, vcm_limite))
+
+    def _vcm_lower_limit(self, sex: str | None, today: date) -> Decimal | None:
+        """Lower MCV limit from validated references only; None keeps the signal NO_EVALUABLE."""
+        analito_id = self._store.analyte_id_by_loinc(VCM_LOINC)
+        if analito_id is None:
+            return None
+        return limite_inferior_vcm(self._store.list_validated_references(analito_id, today), sex)
 
     def _audit(
         self,
@@ -225,6 +236,7 @@ def _inputs(
     today: date,
     ajuste_g_l: int | None,
     pregnancy: str | None,
+    vcm_limite_inferior_fl: Decimal | None = None,
 ) -> ShadowInputs:
     fasting = roles.get("glucosa_ayuno")
     hba1c = roles.get("hba1c")
@@ -241,4 +253,6 @@ def _inputs(
         random_mg_dl=None,
         symptoms=None,
         ajuste_g_l=ajuste_g_l,
+        vcm_fl=roles.get("vcm"),
+        vcm_limite_inferior_fl=vcm_limite_inferior_fl,
     )

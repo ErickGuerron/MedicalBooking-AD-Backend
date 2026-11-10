@@ -22,6 +22,10 @@ from medicalbooking.modules.clinical.domain.anemia import (
 )
 from medicalbooking.modules.clinical.domain.diabetes import DiabetesFinding, diabetes_finding
 from medicalbooking.modules.clinical.domain.iron import IronFinding, iron_finding
+from medicalbooking.modules.clinical.domain.microcitosis import (
+    MicrocitosisFinding,
+    microcitosis_signal,
+)
 
 MODO_SOMBRA = "SOMBRA"
 ANEMIA_CATEGORIES = frozenset({ANEMIA_LEVE, ANEMIA_MODERADA, ANEMIA_GRAVE})
@@ -43,6 +47,10 @@ class ShadowInputs:
     # WHO 2024 altitude plus smoking adjustment in g/L. None means it is unknown: the anaemia
     # finding is then not evaluable rather than assumed to be zero (S3, S12).
     ajuste_g_l: int | None = 0
+    # S20: MCV in fL and the laboratory's validated lower reference limit. The limit is never a
+    # number in code; without it the supporting signal is NO_EVALUABLE.
+    vcm_fl: Decimal | None = None
+    vcm_limite_inferior_fl: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,8 @@ class ShadowReport:
     anemia: AnemiaFinding
     hierro: IronFinding
     diabetes: DiabetesFinding
+    # S20: supporting signal next to the anaemia finding. Not stored in snapshots (no migration).
+    microcitosis: MicrocitosisFinding | None = None
     modo: str = MODO_SOMBRA
     modifica_decision: bool = False
 
@@ -85,4 +95,7 @@ def shadow_report(inputs: ShadowInputs) -> ShadowReport:
         inputs.symptoms,
         anemia=anemia.categoria != SIN_ANEMIA,
     )
-    return ShadowReport(anemia=anemia, hierro=hierro, diabetes=diabetes)
+    microcitosis = microcitosis_signal(
+        anemia.categoria, inputs.vcm_fl, inputs.vcm_limite_inferior_fl
+    )
+    return ShadowReport(anemia=anemia, hierro=hierro, diabetes=diabetes, microcitosis=microcitosis)

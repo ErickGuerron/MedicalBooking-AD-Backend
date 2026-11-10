@@ -56,3 +56,9 @@ def test_a_result_in_another_unit_is_not_used() -> None:
 def test_two_results_for_the_same_role_are_ambiguous() -> None:
     with pytest.raises(AmbiguousResult):
         roles_from_loinc([("4548-4", "%", d("6.5")), ("4548-4", "%", d("6.6"))])
+
+
+def test_mcv_maps_to_its_role_in_femtolitres() -> None:
+    # 787-2 MCV by automated count (S20). Only fL is accepted; another unit is not used.
+    assert roles_from_loinc([("787-2", "fL", d("72"))]) == {"vcm": d("72")}
+    assert roles_from_loinc([("787-2", "g/dL", d("7.2"))]) == {}

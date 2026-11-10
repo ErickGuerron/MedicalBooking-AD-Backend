@@ -164,6 +164,15 @@ class SqlClinicalStore:
             ).all()
         return [_reference(row) for row in rows]
 
+    def analyte_id_by_loinc(self, codigo_loinc: str) -> str | None:
+        """The active analyte that carries this LOINC code, or None (S20)."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id FROM conocimiento_analitos WHERE codigo_loinc = :c AND activo = 1"),
+                {"c": codigo_loinc},
+            ).first()
+        return None if row is None else str(row.id)
+
     def create_reference(self, command: NewReference, now: datetime) -> None:
         with self._engine.begin() as conn:
             conn.execute(
