@@ -24,7 +24,7 @@ Branch: feature/knowledge-importers (worktree C:\Users\erick\AppData\Local\Temp\
 - T2 | S7, S10, S5 | pending | migration 0017: conocimiento_documentos, conocimiento_evidencias, knowledge_bundle_aplicaciones (append-only), nullable version columns on propuestas_clinicas. RED: migration test for constraints. Commit: pending
 - T3 | S2, S3, S4, S14 | pending | loader: parse, validate, dry-run, one transaction, idempotent, published immutability. RED first. Commit: pending
 - T4 | S6, S14 | pending | verify command and canonical digest; drift test. Commit: pending
-- T5 | S9 | pending | scripts/validation/ for CHMS and NHANES with input URLs and SHA-256 recorded; knowledge/validation/ CSV outputs; re-run reproduces numbers. Commit: pending
+- T5 | S9 | partial (NHANES anaemia vs ferritin done: scripts/validation/nhanes_anemia_regla_combinada.py, protocolo_muestreo.json with URLs and SHA-256, output knowledge/validation/nhanes_anemia_regla_combinada.csv; CHMS, roc.py, tsat.py and the diabetes evaluation still live outside the repository) | scripts/validation/ for CHMS and NHANES with input URLs and SHA-256 recorded; knowledge/validation/ CSV outputs; re-run reproduces numbers. Commit: pending
 - T6 | S11 | blocked on D1 | evaluation check against the bundle digest; RED first. Commit: pending
 - T7 | S12, S13 | pending | docs/knowledge-replication.md runbook and synthetic flag. Commit: pending
 - T8 | S15, S16 | pending | threshold-equals-bundle test; differential check of knowledge-import and clinical commands; full suite. Commit: pending
@@ -37,3 +37,4 @@ Route: all inline for the first pass. Writer delegation only if T5 and T3 run in
 - L3 (evidence): migration 0016_shadow_edits.sql is the latest; the next migration is 0017.
 - L4 (evidence): the clinical constants live in code (iron.py: WHO 2020 table and AGA 45 ug/L; snapshot.py: RULE_VERSION sombra-hallazgos-2). They are reproducible through git but not as data (S16).
 - L5 (decision needed): D1, digest mismatch behaviour (S11): refuse with 409 (recommended) or warn and record.
+- L6 (evidence): first S9 script added. It loads domain/anemia.py and domain/hb_adjustments.py by path, so the numbers follow the code. It stops when an input hash differs from the protocol. Not committed.
