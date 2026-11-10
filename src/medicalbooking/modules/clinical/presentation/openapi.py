@@ -185,6 +185,169 @@ def clinical_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/lab/orders/{order_id}/sombra": {
+                "get": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "getShadowFindings",
+                    "summary": "Read the shadow findings of an order (ordering doctor)",
+                    "description": (
+                        "Read-only. Nothing is stored and the decision is not modified "
+                        "(modo SOMBRA, modifica_decision is always false)."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path("order_id")],
+                    "responses": {
+                        "200": {
+                            "description": "Shadow findings for anemia, iron and diabetes",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "modo": {"type": "string", "enum": ["SOMBRA"]},
+                                            "modifica_decision": {
+                                                "type": "boolean",
+                                                "enum": [False],
+                                            },
+                                            "anemia": {"type": "object"},
+                                            "hierro": {"type": "object"},
+                                            "diabetes": {"type": "object"},
+                                        },
+                                        "required": ["modo", "modifica_decision"],
+                                    }
+                                }
+                            },
+                        },
+                        **_AUTH_ERRORS,
+                        "409": _problem("Order inputs cannot be interpreted"),
+                    },
+                }
+            },
+            "/api/v1/me/perfil-clinico": {
+                "put": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "saveClinicalProfile",
+                    "summary": "Declare own altitude of residence and smoking (patient)",
+                    "description": (
+                        "Self-reported data for the WHO 2024 haemoglobin adjustments. Altitude and "
+                        "smoking are mandatory; a smoker declares cigarettes per day. Only the "
+                        "patient writes it."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["altitud_residencia_m", "fumador"],
+                                    "properties": {
+                                        "altitud_residencia_m": {
+                                            "type": "integer",
+                                            "minimum": 0,
+                                            "maximum": 8848,
+                                        },
+                                        "fumador": {"type": "boolean"},
+                                        "cigarrillos_dia": {
+                                            "type": ["integer", "null"],
+                                            "minimum": 0,
+                                            "maximum": 200,
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {"description": "Profile saved"},
+                        **_AUTH_ERRORS,
+                        "422": _problem("Invalid altitude, smoking or cigarette count"),
+                    },
+                }
+            },
+            (
+                "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/"
+                "hallazgos/{hallazgo}/ediciones"
+            ): {
+                "post": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "editShadowFinding",
+                    "summary": "Physician confirms, discards or modifies a shadow finding",
+                    "description": (
+                        "Appends one physician action on one finding of an immutable snapshot "
+                        "(CONFIRMAR, DESCARTAR or MODIFICAR). A reason is mandatory. The snapshot "
+                        "and the suggestion are never changed. Requires revisiones.registrar and "
+                        "ownership of the order."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["accion", "motivo"],
+                                    "properties": {
+                                        "accion": {
+                                            "type": "string",
+                                            "enum": ["CONFIRMAR", "DESCARTAR", "MODIFICAR"],
+                                        },
+                                        "categoria_nueva": {"type": ["string", "null"]},
+                                        "motivo": {"type": "string", "maxLength": 500},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": {"description": "Edit recorded"},
+                        **_AUTH_ERRORS,
+                        "404": _problem("Snapshot or finding not found for this order"),
+                        "422": _problem("Invalid action, category or missing reason"),
+                    },
+                }
+            },
+            "/api/v1/lab/orders/{order_id}/sombra/snapshots": {
+                "post": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "recordShadowSnapshot",
+                    "summary": "Store an immutable snapshot of the shadow findings",
+                    "description": (
+                        "Explicit action of the ordering doctor. Each call creates a new snapshot "
+                        "with the evidence (result id, value, unit) of each finding. Snapshots "
+                        "are never updated or deleted. The decision is not modified."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path("order_id")],
+                    "responses": {
+                        "201": {
+                            "description": "Snapshot created",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": _UUID,
+                                            "modo": {"type": "string", "enum": ["SOMBRA"]},
+                                            "modifica_decision": {
+                                                "type": "boolean",
+                                                "enum": [False],
+                                            },
+                                            "version_regla": {"type": "string"},
+                                            "items": {"type": "array", "items": {"type": "object"}},
+                                        },
+                                        "required": ["id", "modo", "modifica_decision"],
+                                    }
+                                }
+                            },
+                        },
+                        **_AUTH_ERRORS,
+                        "409": _problem("Order inputs cannot be interpreted"),
+                    },
+                }
+            },
             "/api/v1/clinical/proposals/{proposal_id}/reviews": {
                 "post": {
                     "tags": ["Clinical proposals"],

@@ -15,8 +15,10 @@ from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from medicalbooking.config import Settings
+from medicalbooking.modules.clinical.application.clinical_profile import PatientProfileService
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
 from medicalbooking.modules.clinical.application.proposals import ProposalService
+from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
 from medicalbooking.modules.clinical.infrastructure.repositories import SqlClinicalStore
 from medicalbooking.modules.clinical.presentation.openapi import clinical_fragment
 from medicalbooking.modules.clinical.presentation.routes import clinical_bp
@@ -57,9 +59,11 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
-    knowledge, proposals = _build_clinical(engine)
+    knowledge, proposals, shadow, patient_profile = _build_clinical(engine)
     app.extensions["medicalbooking.knowledge"] = knowledge
     app.extensions["medicalbooking.proposals"] = proposals
+    app.extensions["medicalbooking.shadow"] = shadow
+    app.extensions["medicalbooking.patient_profile"] = patient_profile
 
     app.register_blueprint(health_bp)
     app.register_blueprint(identity_bp)
@@ -126,11 +130,17 @@ def _build_laboratory(settings: Settings, engine: Any) -> LabService:
     )
 
 
-def _build_clinical(engine: Any) -> tuple[KnowledgeService, ProposalService]:
-    """Composition root for clinical knowledge (E5): one store shared by both services."""
+def _build_clinical(
+    engine: Any,
+) -> tuple[KnowledgeService, ProposalService, ShadowFindingsService, PatientProfileService]:
+    """Composition root for clinical knowledge (E5), shadow findings (S13) and the patient profile
+    (S12): one shared store."""
     store = SqlClinicalStore(engine)
-    return KnowledgeService(store=store, clock=_utc_now), ProposalService(
-        store=store, clock=_utc_now
+    return (
+        KnowledgeService(store=store, clock=_utc_now),
+        ProposalService(store=store, clock=_utc_now),
+        ShadowFindingsService(store=store, clock=_utc_now),
+        PatientProfileService(store=store, clock=_utc_now),
     )
 
 

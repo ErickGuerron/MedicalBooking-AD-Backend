@@ -183,7 +183,13 @@ class LabService:
                 None if entry.valor_numerico is None else Decimal(str(entry.valor_numerico)),
                 entry.unidad,
                 references,
-                PatientContext(sex, age_days, entry.metodo_analitico, entry.tipo_muestra),
+                PatientContext(
+                    sex,
+                    age_days,
+                    entry.metodo_analitico,
+                    entry.tipo_muestra,
+                    contexto=entry.contexto_muestra,
+                ),
                 today,
             )
             ref = verdict.reference

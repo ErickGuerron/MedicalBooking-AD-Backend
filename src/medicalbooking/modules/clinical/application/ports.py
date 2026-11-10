@@ -18,6 +18,34 @@ from medicalbooking.modules.laboratory.application.ports import AuditEvent
 
 
 @dataclass(frozen=True)
+class ShadowEvidenceRecord:
+    rol: str
+    resultado_id: str
+    valor: Decimal
+    unidad: str
+
+
+@dataclass(frozen=True)
+class ShadowItemRecord:
+    hallazgo: str
+    categoria: str
+    corte_valor: Decimal | None
+    corte_unidad: str | None
+    fuente: str
+    motivo: str | None
+    evidencia: tuple[ShadowEvidenceRecord, ...]
+
+
+@dataclass(frozen=True)
+class ShadowSnapshotRecord:
+    id: str
+    orden_id: str
+    version_regla: str
+    creado_en: datetime
+    items: tuple[ShadowItemRecord, ...]
+
+
+@dataclass(frozen=True)
 class AnalyteView:
     id: str
     nombre: str
@@ -105,6 +133,8 @@ class ClinicalStore(Protocol):
 
     def list_validated_references(self, analito_id: str, on: date) -> list[Reference]: ...
 
+    def analyte_id_by_loinc(self, codigo_loinc: str) -> str | None: ...
+
     def create_reference(self, command: NewReference, now: datetime) -> None: ...
 
     def validate_reference(self, reference_id: str, actor_user_id: str, now: datetime) -> str:
@@ -122,6 +152,63 @@ class ClinicalStore(Protocol):
     # ----- proposals -----
 
     def load_order_for_evaluation(self, order_id: str) -> OrderForEvaluation | None: ...
+
+    def loinc_results_for_order(self, order_id: str) -> list[tuple[str, str | None, Decimal]]: ...
+
+    def pregnancy_states_for_order(self, order_id: str) -> list[str | None]:
+        """The pregnancy state recorded on each result of one order (S18); None when unknown."""
+        ...
+
+    def loinc_evidence_for_order(self, order_id: str) -> list[tuple[str, str, str | None, Decimal]]:
+        """(result id, loinc, unit, value) of the numeric LOINC results of one order (S9)."""
+        ...
+
+    def patient_clinical_profile(
+        self, paciente_id: str
+    ) -> tuple[int | None, bool | None, int | None]:
+        """(altitud_residencia_m, fumador, cigarrillos_dia) of a patient; None means unknown."""
+        ...
+
+    def save_patient_clinical_profile(
+        self,
+        usuario_id: str,
+        altitud_residencia_m: int | None,
+        fumador: bool | None,
+        cigarrillos_dia: int | None,
+    ) -> str | None:
+        """Store the patient's own profile; return the patient id, or None without a patient."""
+        ...
+
+    def record_shadow_snapshot(
+        self,
+        order_id: str,
+        version_regla: str,
+        items: tuple[ShadowItemRecord, ...],
+        actor_user_id: str,
+        now: datetime,
+    ) -> str:
+        """Insert one immutable snapshot with its items and evidence; return its id."""
+        ...
+
+    def shadow_item_category(self, order_id: str, snapshot_id: str, hallazgo: str) -> str | None:
+        """The suggested category of one finding of one snapshot of this order; None if absent."""
+        ...
+
+    def record_shadow_edit(
+        self,
+        snapshot_id: str,
+        hallazgo: str,
+        accion: str,
+        categoria_anterior: str,
+        categoria_nueva: str,
+        motivo: str,
+        medico_user_id: str,
+        now: datetime,
+    ) -> str:
+        """Append one physician edit; return its id. Edits are never updated or deleted (S7)."""
+        ...
+
+    def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]: ...
 
     def validated_rules(self, now: datetime) -> list[RuleSpec]: ...
 

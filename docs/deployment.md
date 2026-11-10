@@ -66,6 +66,14 @@ docker compose -f deploy/vm1/compose.yaml up -d      # VM1
 docker compose -f deploy/vm2/compose.yaml up -d      # VM2
 ```
 
+Lab PDFs are stored under `LAB_DOCUMENTS_DIR`, which the image sets to `/app/data/documents`. Mount a
+persistent volume there on each VM (`docker run -v <name>:/app/data/documents ...`), or the files are lost
+when the container is recreated. Until shared storage exists (see "Not yet implemented"), each VM keeps its
+own files.
+
+Run the knowledge importer on demand, not on a schedule: it needs clinical review of its output before
+any draft is published. Command and guarantees: `docs/knowledge-import.md`.
+
 Schedule the hold expiration worker (E4) on one VM, every few minutes, against the same
 database. It is a one-shot process, not part of the replicas:
 

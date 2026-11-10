@@ -34,6 +34,8 @@ class ResultInput:
     valor: Decimal | None
     unidad: str | None
     interpretacion: str | None
+    # Sample context (e.g. "AYUNO"). None means unknown, never assumed.
+    contexto_muestra: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,8 @@ class CriterionSpec:
     operador: str
     umbral: Decimal | None
     unidad: str | None
+    # When set, the criterion only holds for a result whose sample context is exactly this.
+    contexto: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,13 @@ def _criterion(
     result = _single_result(results, criterion.analito_id)
     if result is None:
         return None, None
+    if criterion.contexto is not None:
+        # Unknown sample context: the criterion cannot be decided, so the rule does not run.
+        if result.contexto_muestra is None:
+            return None, None
+        # A known different context (e.g. a non-fasting sample) does not satisfy the criterion.
+        if result.contexto_muestra != criterion.contexto:
+            return False, None
     if criterion.operador in _NUMERIC:
         if result.valor is None or criterion.umbral is None:
             return None, None

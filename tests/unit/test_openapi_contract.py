@@ -36,6 +36,10 @@ EXPECTED_PATHS = {
     "/api/v1/knowledge/rules/{rule_id}/validate",
     "/api/v1/lab/orders/{order_id}/evaluate",
     "/api/v1/lab/orders/{order_id}/proposal",
+    "/api/v1/lab/orders/{order_id}/sombra",
+    "/api/v1/lab/orders/{order_id}/sombra/snapshots",
+    "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/hallazgos/{hallazgo}/ediciones",
+    "/api/v1/me/perfil-clinico",
     "/api/v1/clinical/proposals/{proposal_id}/reviews",
 }
 
