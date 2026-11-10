@@ -36,8 +36,11 @@ from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLab
 from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
 from medicalbooking.modules.laboratory.presentation.openapi import laboratory_fragment
 from medicalbooking.modules.laboratory.presentation.routes import lab_bp
+from medicalbooking.modules.payments.application.billing_service import BillingService
 from medicalbooking.modules.payments.application.webhook_service import StripeWebhookService
+from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
 from medicalbooking.modules.payments.infrastructure.repositories import SqlPaymentsStore
+from medicalbooking.modules.payments.infrastructure.stripe_checkout import StripeCheckoutGateway
 from medicalbooking.modules.payments.presentation.openapi import payments_fragment
 from medicalbooking.modules.payments.presentation.routes import payments_bp
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
@@ -69,6 +72,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.shadow"] = shadow
     app.extensions["medicalbooking.patient_profile"] = patient_profile
     app.extensions["medicalbooking.payments_webhook"] = _build_payments_webhook(settings, engine)
+    app.extensions["medicalbooking.billing"] = _build_billing(settings, engine)
 
     app.register_blueprint(health_bp)
     app.register_blueprint(payments_bp)
@@ -148,6 +152,24 @@ def _build_payments_webhook(settings: Settings, engine: Any) -> StripeWebhookSer
         store=SqlPaymentsStore(engine, clock=lambda: datetime.now(UTC)),
         secret=secret,
         clock=lambda: int(datetime.now(UTC).timestamp()),
+    )
+
+
+def _build_billing(settings: Settings, engine: Any) -> BillingService:
+    """Composition root for billing (invoices and checkout). The Stripe key stays in the gateway.
+
+    Return URLs point to the Flutter front end; a payment is confirmed only by the webhook.
+    """
+    key = settings.stripe_secret_key.get_secret_value() if settings.stripe_secret_key else None
+    gateway = StripeCheckoutGateway(
+        secret_key=key,
+        success_url=f"{settings.flutter_front_url}/pago/exito",
+        cancel_url=f"{settings.flutter_front_url}/pago/cancelado",
+    )
+    return BillingService(
+        store=SqlBillingStore(engine),
+        gateway=gateway,
+        clock=lambda: datetime.now(UTC),
     )
 
 

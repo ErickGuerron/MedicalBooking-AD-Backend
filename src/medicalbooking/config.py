@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # Stripe signing secret of the webhook endpoint (test or live). Without it the webhook
     # fails closed with 503: no event is trusted without verification.
     stripe_webhook_secret: SecretStr | None = None
+    # Stripe secret key for Checkout Sessions (test key locally). Without it checkout answers
+    # 503 and creates nothing. Never logged.
+    stripe_secret_key: SecretStr | None = None
     brevo_api_key: SecretStr | None = None
     mail_from: str | None = None
     mail_from_name: str = Field(default="MedicalBooking", min_length=1, max_length=70)
