@@ -34,6 +34,9 @@ Defaults target the local development instance.
 | `JWT_SIGNING_KEY` | none | Required outside `local`/`test`; at least 32 characters |
 | `JWT_ACCESS_TTL_MINUTES` | `15` | Access token lifetime (1 to 60) |
 | `APPOINTMENT_HOLD_MINUTES` | `15` | How long a pending appointment holds its slot (1 to 120) |
+| `STRIPE_SECRET_KEY` | none | Stripe secret key for Checkout Sessions. Test key locally, live key only in the production secret store. Without it checkout answers 503 and creates nothing |
+| `STRIPE_WEBHOOK_SECRET` | none | Signing secret of the webhook endpoint. Without it the webhook answers 503 |
+| `FLUTTER_FRONT_URL` | `http://localhost:8081` | Base of the checkout return pages `/pago/exito` and `/pago/cancelado` |
 | `LAB_DOCUMENTS_DIR` | `storage/documents` | Private folder for uploaded lab PDFs. Single host only until shared storage exists (E7). Never versioned |
 | `API_DOCS_ENABLED` | unset | Unset: on outside `production`, off in `production`. Set `true` or `false` to override |
 
@@ -156,6 +159,9 @@ Errors use `application/problem+json` with `correlation_id`.
 | `GET /api/v1/availability?desde=&hasta=&medico_id=` | Free slots in a window | ISO-8601 with offset; window at most 31 days; past slots never returned |
 | `POST /api/v1/appointments` | Reserve a slot (status `PENDIENTE_PAGO`) | Requires header `Idempotency-Key` (8 to 100 characters). Same key and body returns the original (200); same key with another body returns 409; a new reservation returns 201 |
 | `POST /api/v1/appointments/{id}/cancel` | Cancel an own appointment and release its slot | Missing and foreign appointments both return 403 |
+| `POST /api/v1/invoices` | Invoice an own active appointment (one detail line at the service price) | Body `{"cita_id"}`. Status `PENDIENTE`; one invoice per appointment (409). Missing and foreign appointments both return 403 |
+| `POST /api/v1/payments/checkout` | Start a Stripe Checkout for an own pending invoice | Body `{"factura_id"}`, header `Idempotency-Key`. 201 new, 200 replay of the same key and invoice, 409 for another invoice. Returns `checkout_url`. Payment is confirmed only by the verified webhook, never by the redirect. 503 when Stripe is not configured or unreachable |
+| `POST /api/v1/payments/webhook` | Stripe event (no JWT) | Signature over the raw body; duplicates are recorded once |
 | `POST /api/v1/lab/orders` | Order lab tests for a patient (status `SOLICITADA`) | Requires `ordenes.crear` and a doctor profile. Test types must be active |
 | `GET /api/v1/lab/orders/{id}` | Read an order | Only the patient or the ordering doctor; anything else is 403 |
 | `POST /api/v1/lab/orders/{id}/results` | Enter results by hand for one test | Requires `resultados.registrar`. No clinical classification (E5). A test can be recorded once (409 otherwise) |
