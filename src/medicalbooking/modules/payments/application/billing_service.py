@@ -123,6 +123,8 @@ class BillingStore(Protocol):
 
     def find_payment_by_key(self, key: str) -> PaymentRecord | None: ...
 
+    def find_pending_payment_for_invoice(self, factura_id: str) -> PaymentRecord | None: ...
+
     def reserve_payment(self, payment: NewPayment) -> PaymentReservation: ...
 
     def record_session(self, pago_id: str, session_id: str) -> None: ...
@@ -192,6 +194,12 @@ class BillingService:
         existing = self._store.find_payment_by_key(idempotency_key)
         if existing is not None:
             return self._replay(existing, invoice, factura_id, idempotency_key)
+
+        # A new key never opens a second checkout while an attempt is still pending: the
+        # existing attempt is reopened with its own provider key, so Stripe returns its session.
+        pending = self._store.find_pending_payment_for_invoice(factura_id)
+        if pending is not None:
+            return self._open_session(invoice, pending, pending.clave, replayed=True)
 
         reservation = self._store.reserve_payment(
             NewPayment(

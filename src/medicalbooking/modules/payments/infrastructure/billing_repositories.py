@@ -136,6 +136,18 @@ class SqlBillingStore:
             ).first()
         return _payment(row) if row is not None else None
 
+    def find_pending_payment_for_invoice(self, factura_id: str) -> PaymentRecord | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT TOP (1) id, factura_id, clave_idempotencia, estado FROM pagos "
+                    "WHERE factura_id = :factura AND estado = 'PENDIENTE' "
+                    "ORDER BY creado_en"
+                ),
+                {"factura": factura_id},
+            ).first()
+        return _payment(row) if row is not None else None
+
     def reserve_payment(self, payment: NewPayment) -> PaymentReservation:
         try:
             with self._engine.begin() as conn:

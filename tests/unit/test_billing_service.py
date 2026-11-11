@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -93,8 +93,19 @@ class FakeBillingStore:
     def record_session(self, pago_id, session_id):
         self.sessions[pago_id] = session_id
 
+    def find_pending_payment_for_invoice(self, factura_id):
+        return next(
+            (
+                p
+                for p in self.payments.values()
+                if p.factura_id == factura_id and p.estado == "PENDIENTE"
+            ),
+            None,
+        )
+
     def mark_rejected(self, pago_id):
         self.rejected.add(pago_id)
+        self.payments[pago_id] = replace(self.payments[pago_id], estado="RECHAZADO")
 
 
 @dataclass
@@ -341,6 +352,37 @@ def test_replay_does_not_open_a_session_for_a_paid_invoice():
     with pytest.raises(Conflict):
         service.start_checkout(_patient(owner), factura_id=invoice.id, idempotency_key=KEY)
     assert len(gateway.requests) == calls
+
+
+def test_new_key_on_an_invoice_with_a_pending_attempt_reuses_that_checkout():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    gateway = FakeGateway()
+    service = _service(store, gateway)
+    first = service.start_checkout(_patient(owner), factura_id=invoice.id, idempotency_key=KEY)
+    second = service.start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0002"
+    )
+    assert second.pago_id == first.pago_id
+    assert second.checkout_url == first.checkout_url
+    assert second.replayed is True
+    assert store.reserve_calls == 1
+    # The provider is asked again with the attempt's own key, so Stripe returns the same session.
+    assert [r.idempotency_key for r in gateway.requests] == [KEY, KEY]
+
+
+def test_new_key_after_the_pending_attempt_was_rejected_opens_a_new_attempt():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    service = _service(store, FakeGateway(fail=True))
+    with pytest.raises(ServiceUnavailable):
+        service.start_checkout(_patient(owner), factura_id=invoice.id, idempotency_key=KEY)
+    retry = _service(store, FakeGateway())
+    result = retry.start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0002"
+    )
+    assert result.replayed is False
+    assert store.reserve_calls == 2
 
 
 def test_replay_without_provider_creates_nothing_and_keeps_the_attempt_pending():
