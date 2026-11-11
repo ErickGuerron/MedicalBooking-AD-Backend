@@ -80,6 +80,10 @@ class FakeBillingStore:
         existing = self.find_payment_by_key(payment.clave)
         if existing is not None:
             return PaymentReservation(payment=existing, created=False)
+        # Mirrors the unique index on pending attempts per invoice (migration 0019).
+        pending = self._pending_for(payment.factura_id)
+        if pending is not None:
+            return PaymentReservation(payment=pending, created=False)
         self.reserve_calls += 1
         record = PaymentRecord(
             id=payment.id,
@@ -94,6 +98,9 @@ class FakeBillingStore:
         self.sessions[pago_id] = session_id
 
     def find_pending_payment_for_invoice(self, factura_id):
+        return self._pending_for(factura_id)
+
+    def _pending_for(self, factura_id):
         return next(
             (
                 p
@@ -369,6 +376,34 @@ def test_new_key_on_an_invoice_with_a_pending_attempt_reuses_that_checkout():
     assert store.reserve_calls == 1
     # The provider is asked again with the attempt's own key, so Stripe returns the same session.
     assert [r.idempotency_key for r in gateway.requests] == [KEY, KEY]
+
+
+class _AttemptLandsAfterPrecheck(FakeBillingStore):
+    """Another request's pending attempt commits after this request's pre-check."""
+
+    def find_pending_payment_for_invoice(self, factura_id):
+        return None
+
+
+def test_concurrent_new_key_that_loses_the_insert_race_reuses_the_winning_attempt():
+    owner = _id()
+    base, invoice = _invoiced(owner)
+    store = _AttemptLandsAfterPrecheck(
+        appointments=base.appointments, invoices=base.invoices, payments=base.payments
+    )
+    winner = PaymentRecord(
+        id=_id(), factura_id=invoice.id, clave="winner-key-0001", estado="PENDIENTE"
+    )
+    store.payments[winner.id] = winner
+    gateway = FakeGateway()
+    result = _service(store, gateway).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="loser-key-0002"
+    )
+    assert result.pago_id == winner.id
+    assert result.replayed is True
+    assert store.reserve_calls == 0
+    # The winner's own provider key is used, so the loser never opens a second session.
+    assert [r.idempotency_key for r in gateway.requests] == ["winner-key-0001"]
 
 
 def test_new_key_after_the_pending_attempt_was_rejected_opens_a_new_attempt():

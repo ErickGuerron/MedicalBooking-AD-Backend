@@ -172,6 +172,9 @@ class SqlBillingStore:
                 raise
             existing = self.find_payment_by_key(payment.clave)
             if existing is None:
+                # Another request committed a pending attempt for this invoice first.
+                existing = self.find_pending_payment_for_invoice(payment.factura_id)
+            if existing is None:
                 raise
             return PaymentReservation(payment=existing, created=False)
         return PaymentReservation(

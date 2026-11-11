@@ -199,7 +199,7 @@ class BillingService:
         # existing attempt is reopened with its own provider key, so Stripe returns its session.
         pending = self._store.find_pending_payment_for_invoice(factura_id)
         if pending is not None:
-            return self._open_session(invoice, pending, pending.clave, replayed=True)
+            return self._reopen_pending(invoice, pending)
 
         reservation = self._store.reserve_payment(
             NewPayment(
@@ -212,8 +212,15 @@ class BillingService:
             )
         )
         if not reservation.created:
+            # The unique index may hand back the attempt another request just committed.
+            if reservation.payment.clave != idempotency_key:
+                return self._reopen_pending(invoice, reservation.payment)
             return self._replay(reservation.payment, invoice, factura_id, idempotency_key)
         return self._open_session(invoice, reservation.payment, idempotency_key, replayed=False)
+
+    def _reopen_pending(self, invoice: InvoiceRecord, payment: PaymentRecord) -> CheckoutStart:
+        # Reopen with the attempt's own key so the provider returns its existing session.
+        return self._open_session(invoice, payment, payment.clave, replayed=True)
 
     def _replay(
         self,
