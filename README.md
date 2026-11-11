@@ -36,6 +36,7 @@ Defaults target the local development instance.
 | `APPOINTMENT_HOLD_MINUTES` | `15` | How long a pending appointment holds its slot (1 to 120) |
 | `STRIPE_SECRET_KEY` | none | Stripe secret key for Checkout Sessions. Test key locally, live key only in the production secret store. Without it checkout answers 503 and creates nothing |
 | `STRIPE_WEBHOOK_SECRET` | none | Signing secret of the webhook endpoint. Without it the webhook answers 503 |
+| `STRIPE_PUBLISHABLE_KEY` | none | Publishable key `pk_test_...` (public). Returned with every checkout so the browser can mount the embedded session. Checkout answers 503 without it |
 | `FLUTTER_FRONT_URL` | `http://localhost:8081` | Base of the checkout return pages `/pago/exito` and `/pago/cancelado` |
 | `LAB_DOCUMENTS_DIR` | `storage/documents` | Private folder for uploaded lab PDFs. Single host only until shared storage exists (E7). Never versioned |
 | `API_DOCS_ENABLED` | unset | Unset: on outside `production`, off in `production`. Set `true` or `false` to override |
@@ -154,15 +155,18 @@ Errors use `application/problem+json` with `correlation_id`.
 | `POST /api/v1/auth/login` | Sign in, returns a bearer token | Same answer for unknown email, wrong password and locked account. Five consecutive failures lock the account for 15 minutes; a success clears the counter |
 | `GET /api/v1/me` | Current user, roles and permissions | |
 | `POST /api/v1/users` | Create a user | Requires `usuarios.administrar` |
+| `GET /api/v1/users?limit=&offset=` | List user accounts (no credentials) | Requires `usuarios.administrar`. Ordered by email; `limit` 1 to 200 (default 50), `offset` 0 or more; invalid values get `422` |
 | `POST /api/v1/auth/register` | Patient self-registration, always `202` with the same message | Creates an inactive patient and sends an activation link by Brevo (`BREVO_API_KEY`, `MAIL_FROM`, `MAIL_FROM_NAME`). Same answer and work for registered and new emails. Rate-limited with login at Nginx |
 | `GET /api/v1/auth/verify-email?token=...` | Activate the account from the email link | Single-use token valid 24 hours, stored only as a SHA-256 hash. Invalid, used or expired tokens get one generic `422` |
 | `GET /api/v1/availability?desde=&hasta=&medico_id=` | Free slots in a window | ISO-8601 with offset; window at most 31 days; past slots never returned |
 | `POST /api/v1/appointments` | Reserve a slot (status `PENDIENTE_PAGO`) | Requires header `Idempotency-Key` (8 to 100 characters). Same key and body returns the original (200); same key with another body returns 409; a new reservation returns 201 |
+| `GET /api/v1/appointments?estado=&limit=&offset=` | List own appointments, or the doctor's agenda | Patients see their own; a doctor with a doctor profile sees the agenda; anyone else gets 403. Rows carry `id`, `estado`, `inicio` and `fin` only. Same paging rules as users |
 | `POST /api/v1/appointments/{id}/cancel` | Cancel an own appointment and release its slot | Missing and foreign appointments both return 403 |
 | `POST /api/v1/invoices` | Invoice an own active appointment (one detail line at the service price) | Body `{"cita_id"}`. Status `PENDIENTE`; one invoice per appointment (409). Missing and foreign appointments both return 403 |
-| `POST /api/v1/payments/checkout` | Start a Stripe Checkout for an own pending invoice | Body `{"factura_id"}`, header `Idempotency-Key`. 201 new, 200 replay of the same key and invoice, 409 for another invoice. A new key on an invoice with a pending attempt first asks Stripe about that session (read only): open returns its checkout (200); paid reconciles the payment and the invoice to PAGADA and answers 409 without charging again; expired cancels the attempt and opens a new one (201). Stripe unreachable or an unexpected state answers 503 and changes nothing. Returns `checkout_url`. Payment is confirmed only by the verified webhook, never by the redirect. 503 when Stripe is not configured or unreachable |
+| `POST /api/v1/payments/checkout` | Start an embedded Stripe Checkout for an own pending invoice | Body `{"factura_id"}`, header `Idempotency-Key`. 201 new, 200 replay of the same key and invoice, 409 for another invoice. A new key on an invoice with a pending attempt first asks Stripe about that session (read only): open returns its checkout (200); paid reconciles the payment and the invoice to PAGADA and answers 409 without charging again; expired cancels the attempt and opens a new one (201). Stripe unreachable or an unexpected state answers 503 and changes nothing. Returns an embedded Checkout Session: `client_secret` (mounts the session in the browser) and `publishable_key`. The session has no hosted URL. Its `return_url` is `FLUTTER_FRONT_URL/pago/retorno?session_id=...`. Payment is confirmed only by the verified webhook, never by the redirect. 503 when Stripe is not configured or unreachable |
 | `POST /api/v1/payments/webhook` | Stripe event (no JWT) | Signature over the raw body; duplicates are recorded once |
 | `POST /api/v1/lab/orders` | Order lab tests for a patient (status `SOLICITADA`) | Requires `ordenes.crear` and a doctor profile. Test types must be active |
+| `GET /api/v1/lab/orders?estado=&limit=&offset=` | List the orders the caller may read, newest first | Patient sees own orders; ordering doctor sees orders placed by them; others get 403. No result values in the list |
 | `GET /api/v1/lab/orders/{id}` | Read an order | Only the patient or the ordering doctor; anything else is 403 |
 | `POST /api/v1/lab/orders/{id}/results` | Enter results by hand for one test | Requires `resultados.registrar`. No clinical classification (E5). A test can be recorded once (409 otherwise) |
 | `GET /api/v1/lab/orders/{id}/results` | Read the results | Patient or ordering doctor; each read is audited |
@@ -173,12 +177,15 @@ Errors use `application/problem+json` with `correlation_id`.
 | `POST /api/v1/knowledge/analytes` | Create an analyte | Requires `conocimiento.administrar` |
 | `GET /api/v1/knowledge/analytes/{id}/references?fecha=` | Validated reference ranges valid on a date | Drafts are never listed |
 | `POST /api/v1/knowledge/analytes/{id}/references` | Create a draft reference range | Requires `conocimiento.administrar`. Invisible until validated |
+| `GET /api/v1/knowledge/references?analito_id=&estado=` | List reference ranges with their state | Requires `conocimiento.validar` or `conocimiento.administrar`. Listing `BORRADOR` needs `analito_id`; unknown analyte gets 404 |
 | `POST /api/v1/knowledge/references/{id}/validate` | Validate a draft range | Requires `conocimiento.validar`. 409 when it overlaps a validated range |
+| `GET /api/v1/knowledge/rules?estado=` | List declarative rules | Requires `conocimiento.leer` (validated rules only). `conocimiento.validar` or `conocimiento.administrar` also see drafts; asking for `BORRADOR` without them gets 403 |
 | `POST /api/v1/knowledge/rules` | Create a declarative rule draft | Requires `conocimiento.administrar`. Numeric criteria need a unit |
 | `POST /api/v1/knowledge/rules/{id}/validate` | Validate a rule draft | Requires `conocimiento.validar`. Only validated rules run |
 | `POST /api/v1/lab/orders/{id}/evaluate` | Create the preliminary proposal of a complete order | Deterministic. One proposal per order. Never a diagnosis |
 | `GET /api/v1/lab/orders/{id}/proposal` | Read the proposal | Ordering doctor only; denials are audited |
 | `POST /api/v1/clinical/proposals/{id}/reviews` | Record the single medical decision | `ACEPTAR`, `CORREGIR` (needs the corrected conclusion) or `RECHAZAR` (needs a reason). The proposal content is never rewritten |
+| `GET /api/v1/lab/orders/{id}/sombra/snapshots/{snapshot_id}/hallazgos/{hallazgo}/ediciones` | Append-only edit history of one shadow finding | Same access as the shadow read (`resultados.leer_con_acceso` and the ordering doctor). Missing and foreign resources both return 403; every read is audited |
 
 Booking is safe under concurrency: the slot is claimed with a conditional update and a
 filtered unique index, so concurrent requests for one slot yield exactly one `201`.

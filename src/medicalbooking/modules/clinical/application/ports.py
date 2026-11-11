@@ -85,6 +85,45 @@ class NewRule:
 
 
 @dataclass(frozen=True)
+class RuleView:
+    """A declarative rule with its criteria, as listed for knowledge readers (S3)."""
+
+    id: str
+    codigo: str
+    version: int
+    nombre: str
+    descripcion: str | None
+    tipo: str
+    expresion_logica: str
+    mensaje: str
+    prioridad: str
+    estado: str
+    criteria: tuple[CriterionSpec, ...]
+
+
+@dataclass(frozen=True)
+class ReferenceView:
+    """A reference range with its analyte and state, as listed for validators (S4)."""
+
+    reference: Reference
+    analito_id: str
+    estado: str
+
+
+@dataclass(frozen=True)
+class ShadowEditView:
+    """One physician action on a shadow finding, as stored (S7). Append-only rows."""
+
+    id: str
+    accion: str
+    categoria_anterior: str
+    categoria_nueva: str
+    motivo: str
+    medico_user_id: str
+    creado_en: datetime
+
+
+@dataclass(frozen=True)
 class OrderForEvaluation:
     order_id: str
     estado: str
@@ -132,6 +171,16 @@ class ClinicalStore(Protocol):
     ) -> None: ...
 
     def list_validated_references(self, analito_id: str, on: date) -> list[Reference]: ...
+
+    def list_references(
+        self, analito_id: str | None, estados: tuple[str, ...]
+    ) -> list[ReferenceView]:
+        """References of the given states, of one analyte or of all when analito_id is None."""
+        ...
+
+    def list_rules(self, estados: tuple[str, ...]) -> list[RuleView]:
+        """Rules of the given states with their criteria, ordered by code and version."""
+        ...
 
     def analyte_id_by_loinc(self, codigo_loinc: str) -> str | None: ...
 
@@ -206,6 +255,10 @@ class ClinicalStore(Protocol):
         now: datetime,
     ) -> str:
         """Append one physician edit; return its id. Edits are never updated or deleted (S7)."""
+        ...
+
+    def list_shadow_edits(self, snapshot_id: str, hallazgo: str) -> list[ShadowEditView]:
+        """The edits of one finding of one snapshot, oldest first (S7). Read-only."""
         ...
 
     def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]: ...

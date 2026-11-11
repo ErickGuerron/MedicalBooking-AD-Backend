@@ -26,6 +26,18 @@ class AccessProfile:
 
 
 @dataclass(frozen=True)
+class UserSummary:
+    """Administrator view of an account. Never carries credentials."""
+
+    user_id: str
+    email: str
+    first_name: str
+    last_name: str
+    status: str
+    roles: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class NewUser:
     user_id: str
     email: str
@@ -67,6 +79,10 @@ class UserDirectory(Protocol):
     def has_active_patient_access(self, clinician_user_id: str, patient_id: str) -> bool: ...
 
     def create_user(self, new_user: NewUser) -> None: ...
+
+    def list_users(self, limit: int, offset: int) -> list[UserSummary]:
+        """One page of accounts ordered by email, with their roles. Never reads credentials."""
+        ...
 
     def register_failed_login(self, user_id: str, now: datetime) -> None:
         """Count one failure atomically and lock the account when the threshold is reached."""

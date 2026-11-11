@@ -23,11 +23,13 @@ KEY = "checkout-key-0001"
 
 
 class OkGateway:
+    publishable_key = "pk_test_route_publishable"
+
     def is_configured(self) -> bool:
         return True
 
     def create_session(self, request: CheckoutRequest) -> CheckoutSession:
-        return CheckoutSession(id="cs_route_1", url="https://pay.test/route")
+        return CheckoutSession(id="cs_route_1", client_secret="cs_route_1_secret")
 
 
 class _Tokens:
@@ -141,5 +143,8 @@ def test_checkout_answers_201_then_200_on_replay(patient) -> None:
 
     assert first.status_code == 201
     assert second.status_code == 200
-    assert first.get_json()["checkout_url"] == "https://pay.test/route"
+    body = first.get_json()
+    assert body["client_secret"] == "cs_route_1_secret"
+    assert body["publishable_key"] == "pk_test_route_publishable"
+    assert "checkout_url" not in body
     assert second.get_json()["pago_id"] == first.get_json()["pago_id"]

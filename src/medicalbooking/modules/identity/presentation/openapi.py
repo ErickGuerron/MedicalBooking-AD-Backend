@@ -75,6 +75,46 @@ def identity_fragment() -> dict[str, Any]:
                 }
             },
             "/api/v1/users": {
+                "get": {
+                    "tags": ["Identity"],
+                    "operationId": "listUsers",
+                    "summary": "List user accounts (administrator)",
+                    "description": (
+                        "Requires the usuarios.administrar permission. Ordered by email. Never "
+                        "carries credentials."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                                "default": 50,
+                            },
+                        },
+                        {
+                            "name": "offset",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "default": 0,
+                            },
+                        },
+                    ],
+                    "responses": {
+                        "200": _json_response("Users", "UserList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks usuarios.administrar"),
+                        "422": _problem("Invalid limit or offset"),
+                    },
+                },
                 "post": {
                     "tags": ["Identity"],
                     "operationId": "createUser",
@@ -89,7 +129,7 @@ def identity_fragment() -> dict[str, Any]:
                         "409": _problem("Email already registered"),
                         "422": _problem("Invalid request body"),
                     },
-                }
+                },
             },
             "/api/v1/auth/register": {
                 "post": {
@@ -166,6 +206,28 @@ def identity_fragment() -> dict[str, Any]:
                     "type": "object",
                     "required": ["id"],
                     "properties": {"id": {"type": "string", "format": "uuid"}},
+                },
+                "UserSummary": {
+                    "type": "object",
+                    "required": ["id", "email", "nombres", "apellidos", "activo", "roles"],
+                    "properties": {
+                        "id": {"type": "string", "format": "uuid"},
+                        "email": {"type": "string"},
+                        "nombres": {"type": "string"},
+                        "apellidos": {"type": "string"},
+                        "activo": {"type": "boolean"},
+                        "roles": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+                "UserList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/UserSummary"},
+                        }
+                    },
                 },
             }
         },

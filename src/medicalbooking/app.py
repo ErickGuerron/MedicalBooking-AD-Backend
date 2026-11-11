@@ -163,8 +163,8 @@ def _build_billing(settings: Settings, engine: Any) -> BillingService:
     key = settings.stripe_secret_key.get_secret_value() if settings.stripe_secret_key else None
     gateway = StripeCheckoutGateway(
         secret_key=key,
-        success_url=f"{settings.flutter_front_url}/pago/exito",
-        cancel_url=f"{settings.flutter_front_url}/pago/cancelado",
+        return_url=f"{settings.flutter_front_url}/pago/retorno?session_id={{CHECKOUT_SESSION_ID}}",
+        publishable_key=settings.stripe_publishable_key,
     )
     return BillingService(
         store=SqlBillingStore(engine),

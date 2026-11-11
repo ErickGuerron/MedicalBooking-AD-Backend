@@ -19,6 +19,9 @@ from medicalbooking.modules.clinical.application.knowledge import KnowledgeServi
 from medicalbooking.modules.clinical.application.ports import (
     FindingView,
     ProposalView,
+    ReferenceView,
+    RuleView,
+    ShadowEditView,
     ShadowSnapshotRecord,
 )
 from medicalbooking.modules.clinical.application.proposals import ProposalService
@@ -169,6 +172,57 @@ def _reference_json(reference: Reference) -> dict[str, Any]:
     }
 
 
+def _optional_uuid(name: str) -> str | None:
+    raw = request.args.get(name)
+    if raw is None:
+        return None
+    try:
+        return str(uuid.UUID(raw))
+    except ValueError:
+        raise ValidationFailed(f"'{name}' must be a UUID") from None
+
+
+def _rule_json(rule: RuleView) -> dict[str, Any]:
+    return {
+        "id": rule.id,
+        "codigo": rule.codigo,
+        "version": rule.version,
+        "nombre": rule.nombre,
+        "descripcion": rule.descripcion,
+        "tipo": rule.tipo,
+        "expresion_logica": rule.expresion_logica,
+        "mensaje": rule.mensaje,
+        "prioridad": rule.prioridad,
+        "estado": rule.estado,
+        "criterios": [
+            {
+                "analito_id": criterion.analito_id,
+                "operador": criterion.operador,
+                "umbral": None if criterion.umbral is None else float(criterion.umbral),
+                "unidad": criterion.unidad,
+                "contexto": criterion.contexto,
+            }
+            for criterion in rule.criteria
+        ],
+    }
+
+
+def _reference_row_json(row: ReferenceView) -> dict[str, Any]:
+    return {**_reference_json(row.reference), "analito_id": row.analito_id, "estado": row.estado}
+
+
+def _edit_json(edit: ShadowEditView) -> dict[str, Any]:
+    return {
+        "id": edit.id,
+        "accion": edit.accion,
+        "categoria_anterior": edit.categoria_anterior,
+        "categoria_nueva": edit.categoria_nueva,
+        "motivo": edit.motivo,
+        "medico_user_id": edit.medico_user_id,
+        "creado_en": edit.creado_en.isoformat(),
+    }
+
+
 def _finding_json(finding: FindingView) -> dict[str, Any]:
     return {
         "id": finding.id,
@@ -239,6 +293,18 @@ def list_references(analyte_id: uuid.UUID) -> tuple[Response, int]:
     return jsonify(items=[_reference_json(r) for r in references]), 200
 
 
+@clinical_bp.get("/knowledge/references")
+@authenticated
+def list_knowledge_references() -> tuple[Response, int]:
+    """Reference ranges with their state, for validators and administrators (S4)."""
+    rows = _knowledge().list_references(
+        g.actor,
+        analito_id=_optional_uuid("analito_id"),
+        estado=request.args.get("estado"),
+    )
+    return jsonify(items=[_reference_row_json(row) for row in rows]), 200
+
+
 @clinical_bp.post("/knowledge/analytes/<uuid:analyte_id>/references")
 @authenticated
 def create_reference(analyte_id: uuid.UUID) -> tuple[Response, int]:
@@ -294,6 +360,14 @@ def create_rule() -> tuple[Response, int]:
         criteria=criteria,
     )
     return jsonify(id=rule_id, estado="BORRADOR"), 201
+
+
+@clinical_bp.get("/knowledge/rules")
+@authenticated
+def list_knowledge_rules() -> tuple[Response, int]:
+    """Declarative rules for readers (S3). Drafts are listed only for validators and admins."""
+    rules = _knowledge().list_rules(g.actor, estado=request.args.get("estado"))
+    return jsonify(items=[_rule_json(rule) for rule in rules]), 200
 
 
 @clinical_bp.post("/knowledge/rules/<uuid:rule_id>/validate")
@@ -385,6 +459,18 @@ def edit_shadow_finding(
         ),
         201,
     )
+
+
+@clinical_bp.get(
+    "/lab/orders/<uuid:order_id>/sombra/snapshots/<uuid:snapshot_id>/hallazgos/<hallazgo>/ediciones"
+)
+@authenticated
+def list_shadow_edit_history(
+    order_id: uuid.UUID, snapshot_id: uuid.UUID, hallazgo: str
+) -> tuple[Response, int]:
+    """Append-only edit history of one shadow finding (S7). Read-only, every read is audited."""
+    edits = _shadow().edit_history(g.actor, str(order_id), str(snapshot_id), hallazgo)
+    return jsonify(items=[_edit_json(edit) for edit in edits]), 200
 
 
 def _snapshot_json(snapshot: ShadowSnapshotRecord) -> dict[str, Any]:
