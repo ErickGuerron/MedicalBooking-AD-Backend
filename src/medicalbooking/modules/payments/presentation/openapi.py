@@ -20,6 +20,30 @@ _IDEMPOTENCY_KEY = {
     "checkout; the same key with another invoice answers 409.",
     "schema": {"type": "string", "minLength": 8, "maxLength": 100},
 }
+_SETUP_IDEMPOTENCY_KEY = {
+    "name": "Idempotency-Key",
+    "in": "header",
+    "required": True,
+    "description": "8 to 100 characters. Repeating the same key returns the same SetupIntent and "
+    "client secret; the key is scoped to the caller.",
+    "schema": {"type": "string", "minLength": 8, "maxLength": 100},
+}
+_LIST_PARAMETERS = [
+    {
+        "name": "limit",
+        "in": "query",
+        "required": False,
+        "description": "Cards per page. Defaults to 10.",
+        "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
+    },
+    {
+        "name": "starting_after",
+        "in": "query",
+        "required": False,
+        "description": "Cursor: the next_cursor of the previous page (a Stripe payment method id).",
+        "schema": {"type": "string", "pattern": "^pm_[A-Za-z0-9_]{1,100}$"},
+    },
+]
 
 
 _CARD_SCHEMA = {
@@ -218,27 +242,36 @@ def payments_fragment() -> dict[str, Any]:
                 "get": {
                     "tags": ["Payments"],
                     "operationId": "listPaymentMethods",
-                    "summary": "List the caller's saved cards (owner only)",
+                    "summary": "List the caller's saved cards (owner only, paged)",
                     "description": (
                         "Cards of the caller's Stripe customer, read from Stripe on each call. "
                         "Only card-type methods are listed. No card data is stored by the "
-                        "server. A user without a customer gets an empty list and no provider "
-                        "call."
+                        "server. Pages of up to 100 cards; when has_more is true, pass "
+                        "next_cursor as starting_after to read the next page. A user without a "
+                        "customer gets an empty page and no provider call."
                     ),
                     "security": _BEARER,
+                    "parameters": _LIST_PARAMETERS,
                     "responses": {
                         "200": {
-                            "description": "Saved cards (possibly empty)",
+                            "description": "One page of saved cards (possibly empty)",
                             "content": {
                                 "application/json": {
                                     "schema": {
                                         "type": "object",
-                                        "required": ["items"],
+                                        "required": ["items", "has_more", "next_cursor"],
+                                        "additionalProperties": False,
                                         "properties": {
                                             "items": {
                                                 "type": "array",
                                                 "items": _CARD_SCHEMA,
-                                            }
+                                            },
+                                            "has_more": {"type": "boolean"},
+                                            "next_cursor": {
+                                                "type": ["string", "null"],
+                                                "description": "Id of the last item when "
+                                                "has_more is true, otherwise null",
+                                            },
                                         },
                                     }
                                 }
@@ -246,6 +279,7 @@ def payments_fragment() -> dict[str, Any]:
                         },
                         "401": _problem("Missing or invalid bearer token"),
                         "403": _problem("The caller may not manage saved cards"),
+                        "422": _problem("limit outside 1 to 100, or an invalid starting_after"),
                         "503": _problem("Payment provider not configured or unavailable"),
                     },
                 },
@@ -261,6 +295,7 @@ def payments_fragment() -> dict[str, Any]:
                         "the card is saved only when Stripe confirms the setup."
                     ),
                     "security": _BEARER,
+                    "parameters": [_SETUP_IDEMPOTENCY_KEY],
                     "responses": {
                         "201": {
                             "description": "Setup intent created",
@@ -280,6 +315,7 @@ def payments_fragment() -> dict[str, Any]:
                         },
                         "401": _problem("Missing or invalid bearer token"),
                         "403": _problem("The caller may not manage saved cards"),
+                        "422": _problem("Missing or invalid Idempotency-Key header"),
                         "503": _problem(
                             "Payment provider not configured or unavailable; nothing is stored"
                         ),

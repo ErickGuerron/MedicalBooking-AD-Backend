@@ -1,5 +1,6 @@
 """HTTP contract of /me/payment-methods with the in-memory service: auth, permission, status
-codes, exact response shapes and the same answer for missing and foreign cards."""
+codes, exact response shapes, query validation, idempotent setup and the same answer for missing
+and foreign cards."""
 
 from __future__ import annotations
 
@@ -18,10 +19,14 @@ from medicalbooking.modules.payments.presentation.routes import (
 )
 from medicalbooking.shared.domain.errors import AppError
 from tests.unit.test_payment_methods_customers import FakeCustomerStore
-from tests.unit.test_payment_methods_service import CARD, FakeStripe, _card
+from tests.unit.test_payment_methods_service import CARD, OTHER_CARD, FakeStripe, _card
 
 PUBLISHABLE = "pk_test_fake_publishable"
 CARD_KEYS = {"id", "brand", "last4", "exp_month", "exp_year", "is_default"}
+PAGE_KEYS = {"items", "has_more", "next_cursor"}
+CARDS = "/api/v1/me/payment-methods"
+SETUP = "/api/v1/me/payment-methods/setup-intents"
+SETUP_KEY = "route-setup-key-0001"
 
 
 class _Tokens:
@@ -67,51 +72,47 @@ def patient():
 
 
 AUTH = {"Authorization": "Bearer tok-patient"}
+SETUP_HEADERS = {**AUTH, "Idempotency-Key": SETUP_KEY}
 
 
 def test_every_route_requires_a_bearer_token(patient):
     _, profiles = patient
     client = _app(FakeStripe(), FakeCustomerStore(), profiles).test_client()
-    assert client.get("/api/v1/me/payment-methods").status_code == 401
-    assert client.post("/api/v1/me/payment-methods/setup-intents").status_code == 401
-    assert client.delete(f"/api/v1/me/payment-methods/{CARD}").status_code == 401
+    assert client.get(CARDS).status_code == 401
+    assert client.post(SETUP, headers={"Idempotency-Key": SETUP_KEY}).status_code == 401
+    assert client.delete(f"{CARDS}/{CARD}").status_code == 401
 
 
 def test_a_role_without_the_permission_gets_403_on_every_route():
     other = _profile(permissions=frozenset(), roles=frozenset({"MEDICO"}))
     client = _app(FakeStripe(), FakeCustomerStore(), {"tok-other": other}).test_client()
-    headers = {"Authorization": "Bearer tok-other"}
-    assert client.get("/api/v1/me/payment-methods", headers=headers).status_code == 403
-    assert (
-        client.post("/api/v1/me/payment-methods/setup-intents", headers=headers).status_code == 403
-    )
-    assert client.delete(f"/api/v1/me/payment-methods/{CARD}", headers=headers).status_code == 403
+    headers = {"Authorization": "Bearer tok-other", "Idempotency-Key": SETUP_KEY}
+    assert client.get(CARDS, headers=headers).status_code == 403
+    assert client.post(SETUP, headers=headers).status_code == 403
+    assert client.delete(f"{CARDS}/{CARD}", headers=headers).status_code == 403
 
 
-def test_listing_without_a_customer_is_200_with_no_items(patient):
+def test_listing_without_a_customer_is_200_with_an_empty_page(patient):
     _, profiles = patient
     response = (
-        _app(FakeStripe(), FakeCustomerStore(), profiles)
-        .test_client()
-        .get("/api/v1/me/payment-methods", headers=AUTH)
+        _app(FakeStripe(), FakeCustomerStore(), profiles).test_client().get(CARDS, headers=AUTH)
     )
     assert response.status_code == 200
-    assert response.get_json() == {"items": []}
+    assert response.get_json() == {"items": [], "has_more": False, "next_cursor": None}
 
 
-def test_listing_answers_only_the_documented_card_fields(patient):
+def test_listing_answers_the_page_envelope_and_only_the_documented_card_fields(patient):
     profile, profiles = patient
     store = FakeCustomerStore(rows={profile.user_id: "cus_test_owner_0001"})
     stripe = FakeStripe(cards=[_card(CARD, "4242")], default=CARD)
-    response = (
-        _app(stripe, store, profiles).test_client().get("/api/v1/me/payment-methods", headers=AUTH)
-    )
+    response = _app(stripe, store, profiles).test_client().get(CARDS, headers=AUTH)
 
     assert response.status_code == 200
-    items = response.get_json()["items"]
-    assert len(items) == 1
-    assert set(items[0]) == CARD_KEYS
-    assert items[0] == {
+    body = response.get_json()
+    assert set(body) == PAGE_KEYS
+    assert len(body["items"]) == 1
+    assert set(body["items"][0]) == CARD_KEYS
+    assert body["items"][0] == {
         "id": CARD,
         "brand": "visa",
         "last4": "4242",
@@ -119,6 +120,77 @@ def test_listing_answers_only_the_documented_card_fields(patient):
         "exp_year": 2031,
         "is_default": True,
     }
+    assert body["has_more"] is False
+    assert body["next_cursor"] is None
+
+
+def test_has_more_true_returns_the_last_id_as_the_next_cursor(patient):
+    profile, profiles = patient
+    store = FakeCustomerStore(rows={profile.user_id: "cus_test_owner_0001"})
+    stripe = FakeStripe(cards=[_card(CARD), _card(OTHER_CARD)], has_more=True)
+    body = _app(stripe, store, profiles).test_client().get(CARDS, headers=AUTH).get_json()
+
+    assert body["has_more"] is True
+    assert body["next_cursor"] == OTHER_CARD
+    assert [item["id"] for item in body["items"]] == [CARD, OTHER_CARD]
+
+
+def test_the_default_page_size_is_ten(patient):
+    profile, profiles = patient
+    store = FakeCustomerStore(rows={profile.user_id: "cus_test_owner_0001"})
+    stripe = FakeStripe()
+    _app(stripe, store, profiles).test_client().get(CARDS, headers=AUTH)
+    assert stripe.list_calls == [(10, None)]
+
+
+@pytest.mark.parametrize("limit", ["1", "100"])
+def test_limit_boundaries_are_accepted_and_forwarded(patient, limit):
+    profile, profiles = patient
+    store = FakeCustomerStore(rows={profile.user_id: "cus_test_owner_0001"})
+    stripe = FakeStripe()
+    response = (
+        _app(stripe, store, profiles).test_client().get(f"{CARDS}?limit={limit}", headers=AUTH)
+    )
+    assert response.status_code == 200
+    assert stripe.list_calls == [(int(limit), None)]
+
+
+@pytest.mark.parametrize("limit", ["0", "101", "-1", "abc", "", "1.5", "10x"])
+def test_an_invalid_limit_is_422_and_never_reaches_stripe(patient, limit):
+    profile, profiles = patient
+    store = FakeCustomerStore(rows={profile.user_id: "cus_test_owner_0001"})
+    stripe = FakeStripe()
+    response = (
+        _app(stripe, store, profiles).test_client().get(f"{CARDS}?limit={limit}", headers=AUTH)
+    )
+    assert response.status_code == 422
+    assert stripe.calls == []
+
+
+def test_an_invalid_starting_after_is_422_and_never_reaches_stripe(patient):
+    profile, profiles = patient
+    store = FakeCustomerStore(rows={profile.user_id: "cus_test_owner_0001"})
+    stripe = FakeStripe()
+    response = (
+        _app(stripe, store, profiles)
+        .test_client()
+        .get(f"{CARDS}?starting_after=cus_test_0001", headers=AUTH)
+    )
+    assert response.status_code == 422
+    assert stripe.calls == []
+
+
+def test_a_valid_starting_after_is_forwarded_to_stripe(patient):
+    profile, profiles = patient
+    store = FakeCustomerStore(rows={profile.user_id: "cus_test_owner_0001"})
+    stripe = FakeStripe()
+    response = (
+        _app(stripe, store, profiles)
+        .test_client()
+        .get(f"{CARDS}?starting_after={CARD}", headers=AUTH)
+    )
+    assert response.status_code == 200
+    assert stripe.list_calls == [(10, CARD)]
 
 
 def test_setup_intent_answers_201_with_the_secret_and_the_publishable_key(patient):
@@ -126,11 +198,40 @@ def test_setup_intent_answers_201_with_the_secret_and_the_publishable_key(patien
     response = (
         _app(FakeStripe(), FakeCustomerStore(), profiles)
         .test_client()
-        .post("/api/v1/me/payment-methods/setup-intents", headers=AUTH)
+        .post(SETUP, headers=SETUP_HEADERS)
     )
     assert response.status_code == 201
     assert set(response.get_json()) == {"client_secret", "publishable_key"}
     assert response.get_json()["publishable_key"] == PUBLISHABLE
+
+
+def test_setup_intent_without_an_idempotency_key_is_422_and_touches_nothing(patient):
+    _, profiles = patient
+    stripe, store = FakeStripe(), FakeCustomerStore()
+    response = _app(stripe, store, profiles).test_client().post(SETUP, headers=AUTH)
+    assert response.status_code == 422
+    assert stripe.calls == []
+    assert store.saves == []
+
+
+def test_setup_intent_with_a_short_idempotency_key_is_422_and_touches_nothing(patient):
+    _, profiles = patient
+    stripe, store = FakeStripe(), FakeCustomerStore()
+    response = (
+        _app(stripe, store, profiles)
+        .test_client()
+        .post(SETUP, headers={**AUTH, "Idempotency-Key": "short"})
+    )
+    assert response.status_code == 422
+    assert stripe.calls == []
+    assert store.saves == []
+
+
+def test_setup_intent_forwards_the_user_scoped_idempotency_key(patient):
+    profile, profiles = patient
+    stripe = FakeStripe()
+    _app(stripe, FakeCustomerStore(), profiles).test_client().post(SETUP, headers=SETUP_HEADERS)
+    assert stripe.setup_keys == [f"setup-{profile.user_id}-{SETUP_KEY}"]
 
 
 def test_setup_intent_while_unconfigured_is_503_problem_json(patient):
@@ -138,7 +239,7 @@ def test_setup_intent_while_unconfigured_is_503_problem_json(patient):
     response = (
         _app(FakeStripe(configured=False), FakeCustomerStore(), profiles)
         .test_client()
-        .post("/api/v1/me/payment-methods/setup-intents", headers=AUTH)
+        .post(SETUP, headers=SETUP_HEADERS)
     )
     assert response.status_code == 503
 
@@ -147,11 +248,7 @@ def test_removing_an_own_card_is_204_with_no_body(patient):
     profile, profiles = patient
     store = FakeCustomerStore(rows={profile.user_id: "cus_test_owner_0001"})
     stripe = FakeStripe(owners={CARD: "cus_test_owner_0001"})
-    response = (
-        _app(stripe, store, profiles)
-        .test_client()
-        .delete(f"/api/v1/me/payment-methods/{CARD}", headers=AUTH)
-    )
+    response = _app(stripe, store, profiles).test_client().delete(f"{CARDS}/{CARD}", headers=AUTH)
     assert response.status_code == 204
     assert response.data == b""
     assert stripe.detached == [CARD]
@@ -163,8 +260,8 @@ def test_missing_and_foreign_cards_get_the_same_403(patient):
     stripe = FakeStripe(owners={CARD: "cus_test_someone_else"})
     client = _app(stripe, store, profiles).test_client()
 
-    foreign = client.delete(f"/api/v1/me/payment-methods/{CARD}", headers=AUTH)
-    missing = client.delete("/api/v1/me/payment-methods/pm_test_missing_0009", headers=AUTH)
+    foreign = client.delete(f"{CARDS}/{CARD}", headers=AUTH)
+    missing = client.delete(f"{CARDS}/pm_test_missing_0009", headers=AUTH)
 
     assert foreign.status_code == missing.status_code == 403
     assert foreign.get_json() == missing.get_json()
@@ -177,7 +274,7 @@ def test_a_malformed_card_id_is_403_not_404(patient):
     response = (
         _app(FakeStripe(), store, profiles)
         .test_client()
-        .delete("/api/v1/me/payment-methods/not-a-card", headers=AUTH)
+        .delete(f"{CARDS}/not-a-card", headers=AUTH)
     )
     assert response.status_code == 403
 
@@ -188,6 +285,6 @@ def test_a_card_id_with_slashes_is_403_not_404(patient):
     response = (
         _app(FakeStripe(), store, profiles)
         .test_client()
-        .delete("/api/v1/me/payment-methods/pm_x/../../customers", headers=AUTH)
+        .delete(f"{CARDS}/pm_x/../../customers", headers=AUTH)
     )
     assert response.status_code == 403

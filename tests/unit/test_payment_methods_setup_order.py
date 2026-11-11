@@ -22,6 +22,9 @@ ACTOR = AccessProfile(
 )
 
 
+KEY = "setup-client-key-0001"
+
+
 class _Store:
     def __init__(self) -> None:
         self.mapping: dict[str, str] = {}
@@ -42,6 +45,7 @@ def _service(handler, store: _Store) -> PaymentMethodService:
         return_url="https://front.test/pago/retorno",
         publishable_key="pk_test_synthetic",
         client=client,
+        sleep=lambda _seconds: None,
     )
     return PaymentMethodService(gateway, CustomerDirectory(store, gateway))
 
@@ -54,7 +58,7 @@ def test_a_failed_setup_intent_stores_no_customer_mapping():
 
     store = _Store()
     with pytest.raises(ServiceUnavailable):
-        _service(handler, store).start_setup(ACTOR)
+        _service(handler, store).start_setup(ACTOR, idempotency_key=KEY)
     assert store.find("u9") is None
 
 
@@ -65,6 +69,6 @@ def test_a_successful_setup_intent_stores_the_customer_mapping():
         return httpx.Response(200, json={"client_secret": "seti_1_secret_x"})
 
     store = _Store()
-    start = _service(handler, store).start_setup(ACTOR)
+    start = _service(handler, store).start_setup(ACTOR, idempotency_key=KEY)
     assert start.client_secret == "seti_1_secret_x"
     assert store.find("u9") == "cus_new"

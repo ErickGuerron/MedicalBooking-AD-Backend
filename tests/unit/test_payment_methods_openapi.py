@@ -56,6 +56,40 @@ def test_listing_documents_the_card_fields_and_no_card_data(spec) -> None:
     assert item["additionalProperties"] is False
 
 
+def test_listing_documents_the_limit_and_cursor_parameters(spec) -> None:
+    parameters = {p["name"]: p for p in _operation(spec, CARDS, "get")["parameters"]}
+    assert set(parameters) == {"limit", "starting_after"}
+    assert parameters["limit"]["in"] == "query"
+    assert parameters["limit"]["schema"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 10,
+    }
+    assert parameters["starting_after"]["in"] == "query"
+    assert parameters["starting_after"]["required"] is False
+
+
+def test_listing_documents_the_page_envelope(spec) -> None:
+    response = _operation(spec, CARDS, "get")["responses"]["200"]
+    schema = response["content"]["application/json"]["schema"]
+    assert set(schema["properties"]) == {"items", "has_more", "next_cursor"}
+    assert schema["properties"]["has_more"]["type"] == "boolean"
+
+
+def test_setup_intent_requires_the_idempotency_key_header(spec) -> None:
+    parameters = _operation(spec, SETUP, "post")["parameters"]
+    assert parameters == [
+        {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": True,
+            "description": parameters[0]["description"],
+            "schema": {"type": "string", "minLength": 8, "maxLength": 100},
+        }
+    ]
+
+
 def test_setup_intent_documents_the_secret_and_the_publishable_key(spec) -> None:
     response = _operation(spec, SETUP, "post")["responses"]["201"]
     schema = response["content"]["application/json"]["schema"]
@@ -65,8 +99,8 @@ def test_setup_intent_documents_the_secret_and_the_publishable_key(spec) -> None
 @pytest.mark.parametrize(
     ("path", "method", "codes"),
     [
-        (CARDS, "get", {"200", "401", "403", "503"}),
-        (SETUP, "post", {"201", "401", "403", "503"}),
+        (CARDS, "get", {"200", "401", "403", "422", "503"}),
+        (SETUP, "post", {"201", "401", "403", "422", "503"}),
         (REMOVE, "delete", {"204", "401", "403", "503"}),
     ],
 )

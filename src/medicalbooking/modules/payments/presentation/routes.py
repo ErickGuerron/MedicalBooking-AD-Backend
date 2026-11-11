@@ -29,6 +29,7 @@ from medicalbooking.modules.payments.application.webhook_service import (
     StripeWebhookService,
     WebhookNotConfigured,
 )
+from medicalbooking.modules.payments.domain.payment_methods import parse_page_limit
 from medicalbooking.shared.domain.errors import ValidationFailed
 
 payments_bp = Blueprint("payments", __name__, url_prefix="/api/v1")
@@ -89,14 +90,31 @@ def start_checkout() -> tuple[Response, int]:
 @payments_bp.get("/me/payment-methods")
 @authenticated
 def list_payment_methods() -> tuple[Response, int]:
-    cards = _payment_methods().list_cards(g.actor)
-    return jsonify({"items": [_card_json(card) for card in cards]}), 200
+    limit = parse_page_limit(request.args.get("limit"))
+    page = _payment_methods().list_cards(
+        g.actor,
+        limit=limit,
+        starting_after=request.args.get("starting_after"),
+    )
+    return (
+        jsonify(
+            {
+                "items": [_card_json(card) for card in page.items],
+                "has_more": page.has_more,
+                "next_cursor": page.next_cursor,
+            }
+        ),
+        200,
+    )
 
 
 @payments_bp.post("/me/payment-methods/setup-intents")
 @authenticated
 def start_setup_intent() -> tuple[Response, int]:
-    result = _payment_methods().start_setup(g.actor)
+    key = request.headers.get(IDEMPOTENCY_HEADER, "")
+    if not key:
+        raise ValidationFailed("Idempotency-Key header is required")
+    result = _payment_methods().start_setup(g.actor, idempotency_key=key)
     return (
         jsonify(
             {

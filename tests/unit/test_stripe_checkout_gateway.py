@@ -40,6 +40,7 @@ def _gateway(
         return_url=RETURN_URL,
         publishable_key=publishable,
         client=client,
+        sleep=lambda _seconds: None,
     )
 
 
@@ -192,3 +193,192 @@ def test_a_non_object_checkout_answer_keeps_its_original_failure_message():
         gateway.retrieve_session("cs_test_9")
     assert str(create_error.value) == "Stripe answered without a checkout session"
     assert str(retrieve_error.value) == "Stripe answered without a checkout session"
+
+
+# --- bounded automatic retries (shared request helper) ----------------------------------------
+
+
+def _retrying_gateway(handler, sleeps: list[float]) -> StripeCheckoutGateway:
+    client = httpx.Client(
+        base_url="https://api.stripe.test", transport=httpx.MockTransport(handler)
+    )
+    return StripeCheckoutGateway(
+        secret_key=SECRET,
+        return_url=RETURN_URL,
+        publishable_key=PUBLISHABLE,
+        client=client,
+        sleep=sleeps.append,
+    )
+
+
+def _script(*steps):
+    """Serve the steps in order. A step is a response or an exception to raise."""
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        step = steps[len(calls) - 1]
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+    return handler, calls
+
+
+def _status(code: int) -> httpx.Response:
+    return httpx.Response(code, json={"error": {"message": f"boom {SECRET}"}})
+
+
+def _session_ok() -> httpx.Response:
+    return httpx.Response(
+        200, json={"id": "cs_test_retry", "client_secret": "cs_test_retry_secret"}
+    )
+
+
+def _session_get_ok() -> httpx.Response:
+    return httpx.Response(200, json={"id": "cs_test_retry", "status": "open"})
+
+
+def test_a_transient_503_on_a_read_is_retried_and_the_second_attempt_succeeds():
+    sleeps: list[float] = []
+    handler, calls = _script(_status(503), _session_get_ok())
+
+    snapshot = _retrying_gateway(handler, sleeps).retrieve_session("cs_test_retry")
+
+    assert snapshot.id == "cs_test_retry"
+    assert len(calls) == 2
+    assert sleeps == [0.5]
+
+
+def test_a_transient_503_on_a_keyed_post_is_not_retried():
+    # Stripe stores the first answer of a keyed POST, so a repeat would replay the 503.
+    sleeps: list[float] = []
+    handler, calls = _script(_status(503), _session_ok())
+
+    with pytest.raises(ProviderUnavailable):
+        _retrying_gateway(handler, sleeps).create_session(REQUEST)
+
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_three_503_responses_on_a_read_raise_unavailable_after_exactly_three_attempts():
+    sleeps: list[float] = []
+    handler, calls = _script(_status(503), _status(503), _status(503))
+
+    with pytest.raises(ProviderUnavailable) as error:
+        _retrying_gateway(handler, sleeps).retrieve_session("cs_test_retry")
+
+    assert len(calls) == 3
+    assert sleeps == [0.5, 1.0]
+    assert str(error.value) == "Stripe answered 503"
+    assert SECRET not in str(error.value)
+
+
+def test_a_client_error_is_never_retried():
+    sleeps: list[float] = []
+    handler, calls = _script(_status(400), _session_ok())
+
+    with pytest.raises(ProviderUnavailable):
+        _retrying_gateway(handler, sleeps).create_session(REQUEST)
+
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_detach_is_not_retried_on_503():
+    sleeps: list[float] = []
+    handler, calls = _script(_status(503), httpx.Response(200, json={"id": "pm_x"}))
+
+    with pytest.raises(ProviderUnavailable):
+        _retrying_gateway(handler, sleeps).detach_payment_method("pm_test_card_0003")
+
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_a_network_error_is_retried():
+    sleeps: list[float] = []
+    handler, calls = _script(httpx.ConnectError("no route"), _session_ok())
+
+    session = _retrying_gateway(handler, sleeps).create_session(REQUEST)
+
+    assert session.id == "cs_test_retry"
+    assert len(calls) == 2
+
+
+def test_a_timeout_is_retried_like_any_network_error():
+    sleeps: list[float] = []
+    handler, calls = _script(httpx.ReadTimeout("slow"), _session_ok())
+
+    _retrying_gateway(handler, sleeps).create_session(REQUEST)
+
+    assert len(calls) == 2
+
+
+def test_a_429_is_retried_for_a_get():
+    sleeps: list[float] = []
+    handler, calls = _script(_status(429), _session_get_ok())
+
+    snapshot = _retrying_gateway(handler, sleeps).retrieve_session("cs_test_retry")
+
+    assert snapshot.status == "open"
+    assert len(calls) == 2
+
+
+def test_a_409_is_retried_only_when_the_request_carries_an_idempotency_key():
+    sleeps: list[float] = []
+    handler, calls = _script(_status(409), _session_ok())
+    session = _retrying_gateway(handler, sleeps).create_session(REQUEST)
+    assert session.id == "cs_test_retry"
+    assert len(calls) == 2
+
+    sleeps_get: list[float] = []
+    handler_get, calls_get = _script(_status(409), _session_get_ok())
+    with pytest.raises(ProviderUnavailable):
+        _retrying_gateway(handler_get, sleeps_get).retrieve_session("cs_test_retry")
+    assert len(calls_get) == 1
+    assert sleeps_get == []
+
+
+def test_a_malformed_success_body_is_never_retried():
+    sleeps: list[float] = []
+    handler, calls = _script(httpx.Response(200, text="<html>"), _session_ok())
+
+    with pytest.raises(ProviderUnavailable):
+        _retrying_gateway(handler, sleeps).create_session(REQUEST)
+
+    assert len(calls) == 1
+
+
+def test_every_attempt_of_a_keyed_request_sends_the_same_idempotency_key():
+    sleeps: list[float] = []
+    handler, calls = _script(_status(409), _session_ok())
+
+    _retrying_gateway(handler, sleeps).create_session(REQUEST)
+
+    assert [call.headers["Idempotency-Key"] for call in calls] == [
+        REQUEST.idempotency_key,
+        REQUEST.idempotency_key,
+    ]
+
+
+def test_a_successful_checkout_is_sent_exactly_once():
+    sleeps: list[float] = []
+    handler, calls = _script(_session_ok())
+
+    _retrying_gateway(handler, sleeps).create_session(REQUEST)
+
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_a_missing_object_is_answered_once_and_never_retried():
+    sleeps: list[float] = []
+    handler, calls = _script(httpx.Response(404, json={"error": {"code": "resource_missing"}}))
+
+    snapshot = _retrying_gateway(handler, sleeps).retrieve_payment_method("pm_gone_0001")
+
+    assert snapshot is None
+    assert len(calls) == 1
+    assert sleeps == []

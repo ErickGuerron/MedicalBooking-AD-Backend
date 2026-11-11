@@ -1,5 +1,5 @@
 """Saved payment methods use cases against in-memory fakes: permission, ownership, provider
-failures and the rule that no card data is stored locally."""
+failures, the rule that no card data is stored locally, idempotent setup and pagination."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.payments.application.billing_service import ProviderUnavailable
 from medicalbooking.modules.payments.application.customers import CustomerDirectory
 from medicalbooking.modules.payments.application.payment_methods import (
+    CardPage,
     CardSnapshot,
     PaymentMethodService,
     PaymentMethodSnapshot,
@@ -20,12 +21,13 @@ from medicalbooking.modules.payments.domain.payment_methods import (
     PERM_PAYMENT_METHODS,
     is_payment_method_id,
 )
-from medicalbooking.shared.domain.errors import Forbidden, ServiceUnavailable
+from medicalbooking.shared.domain.errors import Forbidden, ServiceUnavailable, ValidationFailed
 from tests.unit.test_payment_methods_customers import FakeCustomerStore
 
 PUBLISHABLE = "pk_test_fake_publishable"
 CARD = "pm_test_card_0001"
 OTHER_CARD = "pm_test_card_0002"
+CLIENT_KEY = "client-setup-key-0001"
 
 
 def _id() -> str:
@@ -49,6 +51,7 @@ class FakeStripe:
     fail: bool = False
     customer_id: str = "cus_test_created_0001"
     cards: list[CardSnapshot] = field(default_factory=list)
+    has_more: bool = False
     default: str | None = None
     owners: dict[str, str | None] = field(default_factory=dict)
     detach_result: bool = True
@@ -56,6 +59,8 @@ class FakeStripe:
     detached: list[str] = field(default_factory=list)
     created_customers: list[str] = field(default_factory=list)
     setup_customers: list[str] = field(default_factory=list)
+    setup_keys: list[str] = field(default_factory=list)
+    list_calls: list[tuple[int, str | None]] = field(default_factory=list)
     publishable_key: str | None = PUBLISHABLE
 
     def is_configured(self) -> bool:
@@ -71,14 +76,18 @@ class FakeStripe:
         self.created_customers.append(idempotency_key)
         return self.customer_id
 
-    def create_setup_intent(self, customer_id: str) -> str:
+    def create_setup_intent(self, customer_id: str, idempotency_key: str) -> str:
         self._maybe_fail("create_setup_intent")
         self.setup_customers.append(customer_id)
+        self.setup_keys.append(idempotency_key)
         return "seti_test_secret_0001"
 
-    def list_cards(self, customer_id: str) -> list[CardSnapshot]:
+    def list_cards(
+        self, customer_id: str, *, limit: int = 10, starting_after: str | None = None
+    ) -> CardPage:
         self._maybe_fail("list_cards")
-        return list(self.cards)
+        self.list_calls.append((limit, starting_after))
+        return CardPage(cards=list(self.cards), has_more=self.has_more)
 
     def default_payment_method(self, customer_id: str) -> str | None:
         self._maybe_fail("default_payment_method")
@@ -128,7 +137,7 @@ def test_listing_requires_the_permission():
 def test_setup_requires_the_permission():
     world = _world()
     with pytest.raises(Forbidden):
-        world.service.start_setup(_patient(permissions=frozenset()))
+        world.service.start_setup(_patient(permissions=frozenset()), idempotency_key=CLIENT_KEY)
     assert world.stripe.calls == []
 
 
@@ -145,7 +154,10 @@ def test_removal_requires_the_permission():
 
 def test_listing_without_a_customer_is_empty_and_never_touches_stripe():
     world = _world()
-    assert world.service.list_cards(_patient()) == []
+    page = world.service.list_cards(_patient())
+    assert page.items == []
+    assert page.has_more is False
+    assert page.next_cursor is None
     assert world.stripe.calls == []
     assert world.store.saves == []
 
@@ -158,13 +170,13 @@ def test_listing_maps_each_card_and_marks_the_default():
     )
     world = _world(stripe, FakeCustomerStore(rows={owner: "cus_test_owner_0001"}))
 
-    cards = world.service.list_cards(_patient(owner))
+    page = world.service.list_cards(_patient(owner))
 
-    assert [(c.id, c.brand, c.last4, c.is_default) for c in cards] == [
+    assert [(c.id, c.brand, c.last4, c.is_default) for c in page.items] == [
         (CARD, "visa", "4242", False),
         (OTHER_CARD, "visa", "0005", True),
     ]
-    assert (cards[0].exp_month, cards[0].exp_year) == (12, 2031)
+    assert (page.items[0].exp_month, page.items[0].exp_year) == (12, 2031)
 
 
 def test_listing_fails_closed_when_the_provider_is_unavailable():
@@ -176,6 +188,80 @@ def test_listing_fails_closed_when_the_provider_is_unavailable():
     assert "secret" not in error.value.detail
 
 
+def test_listing_asks_stripe_for_the_default_page_of_ten():
+    owner = _id()
+    stripe = FakeStripe()
+    world = _world(stripe, FakeCustomerStore(rows={owner: "cus_test_owner_0001"}))
+
+    world.service.list_cards(_patient(owner))
+
+    assert stripe.list_calls == [(10, None)]
+
+
+def test_listing_forwards_the_requested_limit_and_cursor():
+    owner = _id()
+    stripe = FakeStripe()
+    world = _world(stripe, FakeCustomerStore(rows={owner: "cus_test_owner_0001"}))
+
+    world.service.list_cards(_patient(owner), limit=100, starting_after=CARD)
+
+    assert stripe.list_calls == [(100, CARD)]
+
+
+def test_a_limit_above_one_hundred_is_rejected_before_stripe():
+    owner = _id()
+    stripe = FakeStripe()
+    world = _world(stripe, FakeCustomerStore(rows={owner: "cus_test_owner_0001"}))
+
+    with pytest.raises(ValidationFailed):
+        world.service.list_cards(_patient(owner), limit=101)
+    assert stripe.calls == []
+
+
+def test_an_invalid_starting_after_is_rejected_before_stripe():
+    owner = _id()
+    stripe = FakeStripe()
+    world = _world(stripe, FakeCustomerStore(rows={owner: "cus_test_owner_0001"}))
+
+    with pytest.raises(ValidationFailed):
+        world.service.list_cards(_patient(owner), starting_after="cus_test_0001")
+    assert stripe.calls == []
+
+
+def test_has_more_true_points_the_cursor_at_the_last_item():
+    owner = _id()
+    stripe = FakeStripe(cards=[_card(CARD), _card(OTHER_CARD)], has_more=True)
+    world = _world(stripe, FakeCustomerStore(rows={owner: "cus_test_owner_0001"}))
+
+    page = world.service.list_cards(_patient(owner))
+
+    assert len(page.items) == 2
+    assert page.has_more is True
+    assert page.next_cursor == OTHER_CARD
+
+
+def test_has_more_false_has_no_cursor():
+    owner = _id()
+    stripe = FakeStripe(cards=[_card(CARD)], has_more=False)
+    world = _world(stripe, FakeCustomerStore(rows={owner: "cus_test_owner_0001"}))
+
+    page = world.service.list_cards(_patient(owner))
+
+    assert page.has_more is False
+    assert page.next_cursor is None
+
+
+def test_listing_reads_the_customer_default_once_per_request():
+    owner = _id()
+    stripe = FakeStripe(cards=[_card(CARD)], has_more=True)
+    world = _world(stripe, FakeCustomerStore(rows={owner: "cus_test_owner_0001"}))
+
+    world.service.list_cards(_patient(owner))
+
+    assert stripe.calls.count("default_payment_method") == 1
+    assert stripe.calls.count("list_cards") == 1
+
+
 # --- setup intent --------------------------------------------------------------
 
 
@@ -183,7 +269,7 @@ def test_setup_creates_the_customer_then_the_setup_intent_and_returns_the_key():
     world = _world()
     usuario = _id()
 
-    start = world.service.start_setup(_patient(usuario))
+    start = world.service.start_setup(_patient(usuario), idempotency_key=CLIENT_KEY)
 
     assert start.client_secret == "seti_test_secret_0001"
     assert start.publishable_key == PUBLISHABLE
@@ -192,10 +278,27 @@ def test_setup_creates_the_customer_then_the_setup_intent_and_returns_the_key():
     assert world.store.saves == [(usuario, "cus_test_created_0001")]
 
 
+def test_setup_sends_the_idempotency_key_scoped_to_the_user():
+    world = _world()
+    usuario = _id()
+
+    world.service.start_setup(_patient(usuario), idempotency_key=CLIENT_KEY)
+
+    assert world.stripe.setup_keys == [f"setup-{usuario}-{CLIENT_KEY}"]
+
+
+def test_setup_refuses_a_short_key_before_any_call_or_local_write():
+    world = _world()
+    with pytest.raises(ValidationFailed):
+        world.service.start_setup(_patient(), idempotency_key="short")
+    assert world.stripe.calls == []
+    assert world.store.saves == []
+
+
 def test_setup_is_refused_before_anything_is_stored_when_unconfigured():
     world = _world(FakeStripe(configured=False))
     with pytest.raises(ServiceUnavailable):
-        world.service.start_setup(_patient())
+        world.service.start_setup(_patient(), idempotency_key=CLIENT_KEY)
     assert world.store.saves == []
     assert world.stripe.calls == []
 
@@ -203,7 +306,7 @@ def test_setup_is_refused_before_anything_is_stored_when_unconfigured():
 def test_setup_provider_failure_is_unavailable_without_provider_detail():
     world = _world(FakeStripe(fail=True))
     with pytest.raises(ServiceUnavailable) as error:
-        world.service.start_setup(_patient())
+        world.service.start_setup(_patient(), idempotency_key=CLIENT_KEY)
     assert "secret" not in error.value.detail
     assert world.store.saves == []
 
