@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from medicalbooking.shared.domain.errors import ValidationFailed
+
 # Brute-force protection (spec section 10). Five consecutive failures lock the account
 # for fifteen minutes; a successful login clears the counter.
 MAX_FAILED_LOGINS = 5
@@ -13,6 +15,16 @@ PERM_PATIENT_READ_OWN = "pacientes.leer_propio"
 PERM_PATIENT_READ_WITH_ACCESS = "pacientes.leer_con_acceso"
 PERM_PATIENT_READ_ANY = "pacientes.leer_cualquiera"
 PERM_USERS_ADMIN = "usuarios.administrar"
+
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
+
+
+def validate_page(limit: int, offset: int) -> None:
+    if not 1 <= limit <= MAX_PAGE_SIZE:
+        raise ValidationFailed(f"'limit' must be between 1 and {MAX_PAGE_SIZE}")
+    if offset < 0:
+        raise ValidationFailed("'offset' must be zero or greater")
 
 
 def can_read_patient(
