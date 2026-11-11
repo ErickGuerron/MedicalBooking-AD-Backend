@@ -324,7 +324,7 @@ def test_limit_of_200_is_accepted(world) -> None:
     assert world.store.list_calls[-1]["limit"] == 200
 
 
-@pytest.mark.parametrize("offset", ["-1", "x"])
+@pytest.mark.parametrize("offset", ["-1", "x", "2147483648"])
 def test_offset_must_be_a_non_negative_integer(world, offset) -> None:
     response = _http(world).get(f"{LIST_URL}?offset={offset}", headers=_bearer("tok-patient"))
 

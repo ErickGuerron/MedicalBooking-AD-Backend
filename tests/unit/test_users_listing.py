@@ -247,6 +247,7 @@ def test_limit_of_exactly_two_hundred_is_accepted(
         {"limit": "1.5"},
         {"offset": "-1"},
         {"offset": "x"},
+        {"offset": "2147483648"},
     ],
 )
 def test_invalid_paging_answers_422_without_querying(

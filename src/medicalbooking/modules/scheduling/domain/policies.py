@@ -30,11 +30,14 @@ def validate_window(start: datetime, end: datetime) -> None:
         raise ValidationFailed("The window cannot exceed 31 days")
 
 
+MAX_PAGE_OFFSET = 2_147_483_647  # SQL Server OFFSET takes an INT; larger values fail as a 500
+
+
 def validate_page(limit: int, offset: int) -> None:
     if not 1 <= limit <= MAX_PAGE_SIZE:
         raise ValidationFailed(f"'limit' must be between 1 and {MAX_PAGE_SIZE}")
-    if offset < 0:
-        raise ValidationFailed("'offset' must be zero or greater")
+    if not 0 <= offset <= MAX_PAGE_OFFSET:
+        raise ValidationFailed(f"'offset' must be between 0 and {MAX_PAGE_OFFSET}")
 
 
 def validate_estado(estado: str) -> None:

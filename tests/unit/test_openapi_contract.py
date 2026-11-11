@@ -157,7 +157,12 @@ def test_user_listing_documents_pagination_defaults_and_bounds(spec) -> None:
         "maximum": 200,
         "default": 50,
     }
-    assert parameters["offset"]["schema"] == {"type": "integer", "minimum": 0, "default": 0}
+    assert parameters["offset"]["schema"] == {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2147483647,
+        "default": 0,
+    }
 
 
 def test_error_responses_use_problem_json(spec) -> None:

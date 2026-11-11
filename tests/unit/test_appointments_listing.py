@@ -270,6 +270,7 @@ def test_limit_and_offset_are_passed_to_the_store(client: FlaskClient, store: Li
         {"limit": "abc"},
         {"offset": "-1"},
         {"offset": "x"},
+        {"offset": "2147483648"},
     ],
 )
 def test_invalid_paging_answers_422_without_querying(

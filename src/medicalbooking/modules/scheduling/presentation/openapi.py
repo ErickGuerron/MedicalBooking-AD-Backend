@@ -115,7 +115,12 @@ def scheduling_fragment() -> dict[str, Any]:
                             "name": "offset",
                             "in": "query",
                             "required": False,
-                            "schema": {"type": "integer", "minimum": 0, "default": 0},
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "default": 0,
+                            },
                         },
                     ],
                     "responses": {

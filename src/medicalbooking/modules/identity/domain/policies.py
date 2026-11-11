@@ -18,13 +18,14 @@ PERM_USERS_ADMIN = "usuarios.administrar"
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
+MAX_PAGE_OFFSET = 2_147_483_647  # SQL Server OFFSET takes an INT; larger values fail as a 500
 
 
 def validate_page(limit: int, offset: int) -> None:
     if not 1 <= limit <= MAX_PAGE_SIZE:
         raise ValidationFailed(f"'limit' must be between 1 and {MAX_PAGE_SIZE}")
-    if offset < 0:
-        raise ValidationFailed("'offset' must be zero or greater")
+    if not 0 <= offset <= MAX_PAGE_OFFSET:
+        raise ValidationFailed(f"'offset' must be between 0 and {MAX_PAGE_OFFSET}")
 
 
 def can_read_patient(
