@@ -4139,6 +4139,245 @@
         ]
       }
     },
+    "/api/v1/me/payment-methods": {
+      "get": {
+        "description": "Cards of the caller's Stripe customer, read from Stripe on each call. Only card-type methods are listed. No card data is stored by the server. A user without a customer gets an empty list and no provider call.",
+        "operationId": "listPaymentMethods",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "brand": {
+                            "description": "Card brand, for example visa",
+                            "type": "string"
+                          },
+                          "exp_month": {
+                            "maximum": 12,
+                            "minimum": 1,
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "exp_year": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "id": {
+                            "description": "Stripe PaymentMethod id (pm_...)",
+                            "type": "string"
+                          },
+                          "is_default": {
+                            "type": "boolean"
+                          },
+                          "last4": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "brand",
+                          "last4",
+                          "exp_month",
+                          "exp_year",
+                          "is_default"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Saved cards (possibly empty)"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The caller may not manage saved cards"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Payment provider not configured or unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List the caller's saved cards (owner only)",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/api/v1/me/payment-methods/setup-intents": {
+      "post": {
+        "description": "Creates the caller's Stripe customer on first use, then a SetupIntent for off-session use. The browser confirms it with the client secret; the card is saved only when Stripe confirms the setup.",
+        "operationId": "createPaymentMethodSetupIntent",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "client_secret": {
+                      "type": "string"
+                    },
+                    "publishable_key": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "client_secret",
+                    "publishable_key"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Setup intent created"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The caller may not manage saved cards"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Payment provider not configured or unavailable; nothing is stored"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Start saving a card without paying (owner only)",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/api/v1/me/payment-methods/{payment_method_id}": {
+      "delete": {
+        "description": "Detaches the card from the caller's Stripe customer. The server reads the card from Stripe first. A missing card and a card of another customer get the same 403.",
+        "operationId": "removePaymentMethod",
+        "parameters": [
+          {
+            "description": "Stripe PaymentMethod id (pm_...)",
+            "in": "path",
+            "name": "payment_method_id",
+            "required": true,
+            "schema": {
+              "pattern": "^pm_[A-Za-z0-9_]{1,100}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Card removed"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing card, or a card that is not the caller's"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Payment provider not configured or unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Remove one of the caller's saved cards (owner only)",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
     "/api/v1/me/perfil-clinico": {
       "put": {
         "description": "Self-reported data for the WHO 2024 haemoglobin adjustments. Altitude and smoking are mandatory; a smoker declares cigarettes per day. Only the patient writes it.",

@@ -16,7 +16,7 @@ from medicalbooking.modules.payments.application.billing_service import (
 )
 from medicalbooking.modules.payments.presentation.routes import BILLING_EXTENSION, payments_bp
 from medicalbooking.shared.domain.errors import AppError
-from tests.unit.test_billing_service import FakeBillingStore, _appointment, _id
+from tests.unit.test_billing_service import FakeBillingStore, FakeCustomers, _appointment, _id
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
 KEY = "checkout-key-0001"
@@ -48,7 +48,7 @@ def _app(store: FakeBillingStore, profiles: dict[str, AccessProfile]) -> Flask:
     app = Flask("test-billing")
     app.register_blueprint(payments_bp)
     app.extensions[BILLING_EXTENSION] = BillingService(
-        store=store, gateway=OkGateway(), clock=lambda: NOW
+        store=store, gateway=OkGateway(), clock=lambda: NOW, customers=FakeCustomers()
     )
     app.extensions["medicalbooking.identity"] = _Tokens(profiles)
 
