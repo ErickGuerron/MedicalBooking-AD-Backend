@@ -108,6 +108,40 @@ def clinical_fragment() -> dict[str, Any]:
                     },
                 },
             },
+            "/api/v1/knowledge/references": {
+                "get": {
+                    "tags": ["Clinical knowledge"],
+                    "operationId": "listKnowledgeReferences",
+                    "summary": "List reference ranges with their state (validators and admins)",
+                    "description": (
+                        "Requires conocimiento.validar or conocimiento.administrar. Listing "
+                        "estado BORRADOR requires analito_id. Validated ranges per analyte are "
+                        "also served by GET /api/v1/knowledge/analytes/{analyte_id}/references."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "analito_id",
+                            "in": "query",
+                            "required": False,
+                            "schema": _UUID,
+                        },
+                        {
+                            "name": "estado",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "enum": ["BORRADOR", "VALIDADA"]},
+                        },
+                    ],
+                    "responses": {
+                        "200": _ok("References with their state", "ReferenceRowList"),
+                        **_AUTH_ERRORS,
+                        "403": _problem("Caller lacks conocimiento.validar or administrar"),
+                        "404": _problem("Analyte not found"),
+                        "422": _problem("Invalid parameter, or BORRADOR without analito_id"),
+                    },
+                }
+            },
             "/api/v1/knowledge/references/{reference_id}/validate": {
                 "post": {
                     "tags": ["Clinical knowledge"],
@@ -125,6 +159,30 @@ def clinical_fragment() -> dict[str, Any]:
                 }
             },
             "/api/v1/knowledge/rules": {
+                "get": {
+                    "tags": ["Clinical knowledge"],
+                    "operationId": "listKnowledgeRules",
+                    "summary": "List declarative rules (drafts for validators and admins)",
+                    "description": (
+                        "conocimiento.leer sees VALIDADA rules only. conocimiento.validar or "
+                        "conocimiento.administrar also see BORRADOR rules. Asking for estado "
+                        "BORRADOR without those permissions answers 403."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "estado",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "enum": ["BORRADOR", "VALIDADA"]},
+                        }
+                    ],
+                    "responses": {
+                        "200": _ok("Rules with their criteria", "KnowledgeRuleList"),
+                        **_AUTH_ERRORS,
+                        "422": _problem("estado must be BORRADOR or VALIDADA"),
+                    },
+                },
                 "post": {
                     "tags": ["Clinical knowledge"],
                     "operationId": "createRuleDraft",
@@ -136,7 +194,7 @@ def clinical_fragment() -> dict[str, Any]:
                         **_AUTH_ERRORS,
                         "422": _problem("Invalid rule or unknown analyte"),
                     },
-                }
+                },
             },
             "/api/v1/knowledge/rules/{rule_id}/validate": {
                 "post": {
@@ -270,6 +328,35 @@ def clinical_fragment() -> dict[str, Any]:
                 "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/"
                 "hallazgos/{hallazgo}/ediciones"
             ): {
+                "get": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "listShadowEditHistory",
+                    "summary": "Append-only edit history of one shadow finding",
+                    "description": (
+                        "Same access as the shadow read: resultados.leer_con_acceso and ownership "
+                        "by the ordering doctor. A missing order, snapshot or finding answers the "
+                        "same 403. Read-only; every read is audited."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        _path("order_id"),
+                        _path("snapshot_id"),
+                        {
+                            "name": "hallazgo",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        },
+                    ],
+                    "responses": {
+                        "200": _ok("Edits, oldest first", "ShadowEditList"),
+                        **_AUTH_ERRORS,
+                        "403": _problem(
+                            "Caller lacks resultados.leer_con_acceso, is not the ordering "
+                            "doctor, or the snapshot or finding does not exist for this order"
+                        ),
+                    },
+                },
                 "post": {
                     "tags": ["Clinical proposals"],
                     "operationId": "editShadowFinding",
@@ -307,7 +394,7 @@ def clinical_fragment() -> dict[str, Any]:
                         "404": _problem("Snapshot or finding not found for this order"),
                         "422": _problem("Invalid action, category or missing reason"),
                     },
-                }
+                },
             },
             "/api/v1/lab/orders/{order_id}/sombra/snapshots": {
                 "post": {
@@ -387,6 +474,111 @@ def clinical_fragment() -> dict[str, Any]:
                 "ProposalReviewResponse": {
                     "type": "object",
                     "properties": {"id": _UUID, "decision": {"type": "string"}},
+                },
+                "KnowledgeRule": {
+                    "type": "object",
+                    "required": ["id", "codigo", "version", "estado", "criterios"],
+                    "properties": {
+                        "id": _UUID,
+                        "codigo": {"type": "string"},
+                        "version": {"type": "integer"},
+                        "nombre": {"type": "string"},
+                        "descripcion": {"type": ["string", "null"]},
+                        "tipo": {"type": "string"},
+                        "expresion_logica": {"type": "string"},
+                        "mensaje": {"type": "string"},
+                        "prioridad": {"type": "string"},
+                        "estado": {"type": "string", "enum": ["BORRADOR", "VALIDADA"]},
+                        "criterios": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["analito_id", "operador"],
+                                "properties": {
+                                    "analito_id": _UUID,
+                                    "operador": {"type": "string"},
+                                    "umbral": {"type": ["number", "null"]},
+                                    "unidad": {"type": ["string", "null"]},
+                                    "contexto": {"type": ["string", "null"]},
+                                },
+                            },
+                        },
+                    },
+                },
+                "KnowledgeRuleList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/KnowledgeRule"},
+                        }
+                    },
+                },
+                "ReferenceRow": {
+                    "type": "object",
+                    "required": ["id", "version", "unidad", "fecha_inicio", "analito_id", "estado"],
+                    "properties": {
+                        "id": _UUID,
+                        "version": {"type": "integer"},
+                        "unidad": {"type": "string"},
+                        "minimo": {"type": ["number", "null"]},
+                        "maximo": {"type": ["number", "null"]},
+                        "sexo": {"type": ["string", "null"]},
+                        "edad_min_dias": {"type": ["integer", "null"]},
+                        "edad_max_dias": {"type": ["integer", "null"]},
+                        "metodo": {"type": ["string", "null"]},
+                        "tipo_muestra": {"type": ["string", "null"]},
+                        "contexto": {"type": ["string", "null"]},
+                        "fecha_inicio": {"type": "string", "format": "date"},
+                        "fecha_fin": {"type": ["string", "null"], "format": "date"},
+                        "analito_id": _UUID,
+                        "estado": {"type": "string", "enum": ["BORRADOR", "VALIDADA"]},
+                    },
+                },
+                "ReferenceRowList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/ReferenceRow"},
+                        }
+                    },
+                },
+                "ShadowEdit": {
+                    "type": "object",
+                    "required": [
+                        "id",
+                        "accion",
+                        "categoria_anterior",
+                        "categoria_nueva",
+                        "motivo",
+                        "medico_user_id",
+                        "creado_en",
+                    ],
+                    "properties": {
+                        "id": _UUID,
+                        "accion": {
+                            "type": "string",
+                            "enum": ["CONFIRMAR", "DESCARTAR", "MODIFICAR"],
+                        },
+                        "categoria_anterior": {"type": "string"},
+                        "categoria_nueva": {"type": "string"},
+                        "motivo": {"type": "string"},
+                        "medico_user_id": _UUID,
+                        "creado_en": {"type": "string", "format": "date-time"},
+                    },
+                },
+                "ShadowEditList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/ShadowEdit"},
+                        }
+                    },
                 },
                 "AnalyteList": {
                     "type": "object",

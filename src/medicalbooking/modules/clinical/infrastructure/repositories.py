@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Connection, Engine, bindparam, text
 
 from medicalbooking.modules.clinical.application.ports import (
     AnalyteView,
@@ -22,6 +22,9 @@ from medicalbooking.modules.clinical.application.ports import (
     NewRule,
     OrderForEvaluation,
     ProposalView,
+    ReferenceView,
+    RuleView,
+    ShadowEditView,
     ShadowItemRecord,
 )
 from medicalbooking.modules.clinical.domain import (
@@ -48,6 +51,25 @@ _REF_SELECT_WITH_STATE = (
     "edad_min_dias, edad_max_dias, metodo_analitico, tipo_muestra, contexto, "
     "fecha_inicio, fecha_fin, estado FROM conocimiento_referencias "
 )
+
+# Listings bind their state list as one expanding parameter: the SQL text stays constant.
+_LIST_REFERENCES = text(
+    "SELECT analito_id, id, version, unidad, referencia_min, referencia_max, sexo_aplicable, "
+    "edad_min_dias, edad_max_dias, metodo_analitico, tipo_muestra, contexto, fecha_inicio, "
+    "fecha_fin, estado FROM conocimiento_referencias WHERE estado IN :estados "
+    "ORDER BY analito_id, fecha_inicio"
+).bindparams(bindparam("estados", expanding=True))
+_LIST_REFERENCES_OF_ANALYTE = text(
+    "SELECT analito_id, id, version, unidad, referencia_min, referencia_max, sexo_aplicable, "
+    "edad_min_dias, edad_max_dias, metodo_analitico, tipo_muestra, contexto, fecha_inicio, "
+    "fecha_fin, estado FROM conocimiento_referencias WHERE estado IN :estados AND analito_id = :a "
+    "ORDER BY analito_id, fecha_inicio"
+).bindparams(bindparam("estados", expanding=True))
+_LIST_RULES = text(
+    "SELECT id, codigo, version, nombre, descripcion, tipo, expresion_logica, mensaje_propuesto, "
+    "prioridad, estado FROM conocimiento_reglas WHERE estado IN :estados "
+    "ORDER BY codigo, version"
+).bindparams(bindparam("estados", expanding=True))
 
 
 def _canonical(value: object) -> str:
@@ -163,6 +185,71 @@ class SqlClinicalStore:
                 {"a": guid, "hoy": on},
             ).all()
         return [_reference(row) for row in rows]
+
+    def list_references(
+        self, analito_id: str | None, estados: tuple[str, ...]
+    ) -> list[ReferenceView]:
+        if not estados:
+            return []
+        if analito_id is None:
+            statement, params = _LIST_REFERENCES, {"estados": list(estados)}
+        else:
+            guid = _as_guid(analito_id)
+            if guid is None:
+                return []
+            statement = _LIST_REFERENCES_OF_ANALYTE
+            params = {"estados": list(estados), "a": guid}
+        with self._engine.connect() as conn:
+            rows = conn.execute(statement, params).all()
+        return [
+            ReferenceView(
+                reference=_reference(row),
+                analito_id=_canonical(row.analito_id),
+                estado=row.estado,
+            )
+            for row in rows
+        ]
+
+    def list_rules(self, estados: tuple[str, ...]) -> list[RuleView]:
+        if not estados:
+            return []
+        with self._engine.connect() as conn:
+            rules = conn.execute(_LIST_RULES, {"estados": list(estados)}).all()
+            views = []
+            for rule in rules:
+                criteria = conn.execute(
+                    text(
+                        "SELECT analito_id, operador, umbral_numerico, unidad, contexto "
+                        "FROM conocimiento_reglas_criterios WHERE regla_id = :r "
+                        "ORDER BY orden_criterio"
+                    ),
+                    {"r": rule.id},
+                ).all()
+                views.append(
+                    RuleView(
+                        id=_canonical(rule.id),
+                        codigo=rule.codigo,
+                        version=rule.version,
+                        nombre=rule.nombre,
+                        descripcion=rule.descripcion,
+                        tipo=rule.tipo,
+                        expresion_logica=rule.expresion_logica,
+                        mensaje=rule.mensaje_propuesto,
+                        prioridad=rule.prioridad,
+                        estado=rule.estado,
+                        criteria=tuple(
+                            CriterionSpec(
+                                analito_id=_canonical(item.analito_id),
+                                operador=item.operador,
+                                umbral=item.umbral_numerico,
+                                unidad=item.unidad,
+                                contexto=item.contexto,
+                            )
+                            for item in criteria
+                        ),
+                    )
+                )
+        return views
 
     def analyte_id_by_loinc(self, codigo_loinc: str) -> str | None:
         """The active analyte that carries this LOINC code, or None (S20)."""
@@ -583,6 +670,32 @@ class SqlClinicalStore:
                 },
             )
         return edit_id
+
+    def list_shadow_edits(self, snapshot_id: str, hallazgo: str) -> list[ShadowEditView]:
+        guid = _as_guid(snapshot_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, accion, categoria_anterior, categoria_nueva, motivo, "
+                    "medico_user_id, creado_en FROM hallazgos_sombra_ediciones "
+                    "WHERE snapshot_id = :s AND hallazgo = :h ORDER BY creado_en, id"
+                ),
+                {"s": guid, "h": hallazgo},
+            ).all()
+        return [
+            ShadowEditView(
+                id=_canonical(row.id),
+                accion=row.accion,
+                categoria_anterior=row.categoria_anterior,
+                categoria_nueva=row.categoria_nueva,
+                motivo=row.motivo,
+                medico_user_id=_canonical(row.medico_user_id),
+                creado_en=row.creado_en.replace(tzinfo=UTC),
+            )
+            for row in rows
+        ]
 
     def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]:
         guid = _as_guid(paciente_id)

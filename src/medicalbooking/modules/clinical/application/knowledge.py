@@ -17,6 +17,8 @@ from medicalbooking.modules.clinical.application.ports import (
     ClinicalStore,
     NewReference,
     NewRule,
+    ReferenceView,
+    RuleView,
 )
 from medicalbooking.modules.clinical.domain.evaluation import CriterionSpec
 from medicalbooking.modules.identity.application.ports import AccessProfile
@@ -36,9 +38,24 @@ MAX_CRITERIA = 10
 _CODE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,79}$")
 
 
+BORRADOR = "BORRADOR"
+VALIDADA = "VALIDADA"
+ESTADOS = frozenset({BORRADOR, VALIDADA})
+ESTADOS_ORDERED = (BORRADOR, VALIDADA)
+
+
 def _require(actor: AccessProfile, permission: str) -> None:
     if permission not in actor.permissions:
         raise Forbidden("Access to this resource is not allowed")
+
+
+def _require_any(actor: AccessProfile, *permissions: str) -> None:
+    if not actor.permissions.intersection(permissions):
+        raise Forbidden("Access to this resource is not allowed")
+
+
+def _sees_drafts(actor: AccessProfile) -> bool:
+    return PERM_VALIDATE in actor.permissions or PERM_ADMIN in actor.permissions
 
 
 class KnowledgeService:
@@ -57,6 +74,34 @@ class KnowledgeService:
         if not self._store.analyte_exists(analito_id):
             raise NotFound("Analyte not found")
         return self._store.list_validated_references(analito_id, on)
+
+    def list_rules(self, actor: AccessProfile, *, estado: str | None) -> list[RuleView]:
+        """Rules for readers (S3). Drafts are listed only for validators and administrators."""
+        _require_any(actor, PERM_READ, PERM_VALIDATE, PERM_ADMIN)
+        sees_drafts = _sees_drafts(actor)
+        if estado is not None and estado not in ESTADOS:
+            raise ValidationFailed("State must be BORRADOR or VALIDADA")
+        if estado == BORRADOR and not sees_drafts:
+            raise Forbidden("Access to this resource is not allowed")
+        if estado is not None:
+            estados = (estado,)
+        else:
+            estados = ESTADOS_ORDERED if sees_drafts else (VALIDADA,)
+        return self._store.list_rules(estados)
+
+    def list_references(
+        self, actor: AccessProfile, *, analito_id: str | None, estado: str | None
+    ) -> list[ReferenceView]:
+        """Reference ranges with their state, for validators and administrators (S4)."""
+        _require_any(actor, PERM_VALIDATE, PERM_ADMIN)
+        if estado is not None and estado not in ESTADOS:
+            raise ValidationFailed("State must be BORRADOR or VALIDADA")
+        if estado == BORRADOR and analito_id is None:
+            raise ValidationFailed("analito_id is required to list draft references")
+        if analito_id is not None and not self._store.analyte_exists(analito_id):
+            raise NotFound("Analyte not found")
+        estados = (estado,) if estado is not None else ESTADOS_ORDERED
+        return self._store.list_references(analito_id, estados)
 
     # ---------- drafts ----------
 
