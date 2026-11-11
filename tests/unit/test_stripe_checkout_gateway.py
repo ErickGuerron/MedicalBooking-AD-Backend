@@ -95,3 +95,54 @@ def test_a_non_json_success_body_is_unavailable_not_a_crash():
 
     with pytest.raises(ProviderUnavailable):
         _gateway(handler).create_session(REQUEST)
+
+
+def test_retrieve_is_a_read_only_get_for_the_session_and_maps_its_state():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers["Authorization"]
+        return httpx.Response(
+            200,
+            json={
+                "id": "cs_test_9",
+                "url": "https://pay.test/cs_9",
+                "status": "complete",
+                "payment_status": "paid",
+                "amount_total": 2550,
+                "currency": "usd",
+            },
+        )
+
+    snapshot = _gateway(handler).retrieve_session("cs_test_9")
+
+    assert seen["method"] == "GET"
+    assert seen["path"] == f"{CHECKOUT_PATH}/cs_test_9"
+    assert seen["auth"] == f"Bearer {SECRET}"
+    assert snapshot.status == "complete"
+    assert snapshot.payment_status == "paid"
+    assert snapshot.amount_cents == 2550
+    assert snapshot.currency == "USD"
+
+
+def test_retrieve_failure_becomes_unavailable_without_leaking_the_body():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"message": f"oops {SECRET}"}})
+
+    with pytest.raises(ProviderUnavailable) as error:
+        _gateway(handler).retrieve_session("cs_test_9")
+    assert SECRET not in str(error.value)
+
+
+def test_retrieve_without_secret_never_calls_the_provider():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={})
+
+    with pytest.raises(ProviderUnavailable):
+        _gateway(handler, secret=None).retrieve_session("cs_test_9")
+    assert calls == []

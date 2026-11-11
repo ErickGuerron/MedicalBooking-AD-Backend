@@ -125,3 +125,37 @@ def test_a_rejected_attempt_does_not_block_a_new_one(engine: Engine, factura: st
     second = store.reserve_payment(_payment(factura, "second-key-00002"))
     assert second.created is True
     assert sorted(_estados(engine, factura)) == ["PENDIENTE", "RECHAZADO"]
+
+
+def test_pending_lookup_returns_the_provider_session(engine: Engine, factura: str) -> None:
+    store = SqlBillingStore(engine)
+    created = store.reserve_payment(_payment(factura, "sess-key-0000001")).payment
+    store.record_session(created.id, "cs_test_sess_1")
+    found = store.find_pending_payment_for_invoice(factura)
+    assert found is not None
+    assert found.session_id == "cs_test_sess_1"
+
+
+def test_confirm_payment_settles_the_attempt_and_the_invoice_once(
+    engine: Engine, factura: str
+) -> None:
+    store = SqlBillingStore(engine)
+    payment = store.reserve_payment(_payment(factura, "paid-key-0000001")).payment
+    store.confirm_payment(payment.id, factura, NOW)
+    store.confirm_payment(payment.id, factura, NOW)  # a repeat changes nothing and fails nothing
+    assert _estados(engine, factura) == ["CONFIRMADO"]
+    with engine.connect() as conn:
+        factura_estado = conn.execute(
+            text("SELECT estado FROM facturas WHERE id = :f"), {"f": factura}
+        ).scalar_one()
+    assert factura_estado == "PAGADA"
+
+
+def test_cancelled_attempt_frees_the_invoice_for_a_new_one(engine: Engine, factura: str) -> None:
+    store = SqlBillingStore(engine)
+    old = store.reserve_payment(_payment(factura, "gone-key-0000001")).payment
+    store.cancel_pending_payment(old.id)
+    assert store.find_pending_payment_for_invoice(factura) is None
+    new = store.reserve_payment(_payment(factura, "next-key-0000002"))
+    assert new.created is True
+    assert sorted(_estados(engine, factura)) == ["CANCELADO", "PENDIENTE"]

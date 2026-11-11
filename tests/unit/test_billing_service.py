@@ -15,6 +15,7 @@ from medicalbooking.modules.payments.application.billing_service import (
     BillingService,
     CheckoutRequest,
     CheckoutSession,
+    CheckoutSnapshot,
     InvoiceRecord,
     NewInvoice,
     NewPayment,
@@ -52,6 +53,17 @@ class FakeBillingStore:
     reserve_calls: int = 0
     sessions: dict[str, str] = field(default_factory=dict)
     rejected: set[str] = field(default_factory=set)
+    confirmed: list[str] = field(default_factory=list)
+    cancelled: list[str] = field(default_factory=list)
+
+    def confirm_payment(self, pago_id, factura_id, now):
+        self.confirmed.append(pago_id)
+        self.payments[pago_id] = replace(self.payments[pago_id], estado="CONFIRMADO")
+        self.invoices[factura_id] = replace(self.invoices[factura_id], estado="PAGADA")
+
+    def cancel_pending_payment(self, pago_id):
+        self.cancelled.append(pago_id)
+        self.payments[pago_id] = replace(self.payments[pago_id], estado="CANCELADO")
 
     def find_appointment_billing(self, cita_id):
         return self.appointments.get(cita_id)
@@ -119,7 +131,9 @@ class FakeBillingStore:
 class FakeGateway:
     configured: bool = True
     fail: bool = False
+    retrieve_fail: bool = False
     requests: list[CheckoutRequest] = field(default_factory=list)
+    sessions: dict[str, CheckoutSnapshot] = field(default_factory=dict)
 
     def is_configured(self) -> bool:
         return self.configured
@@ -128,7 +142,21 @@ class FakeGateway:
         self.requests.append(request)
         if self.fail:
             raise ProviderUnavailable("provider down")
-        return CheckoutSession(id=f"cs_{len(self.requests)}", url="https://checkout.test/x")
+        session_id = f"cs_{len(self.requests)}"
+        self.sessions[session_id] = CheckoutSnapshot(
+            id=session_id,
+            url="https://checkout.test/x",
+            status="open",
+            payment_status="unpaid",
+            amount_cents=request.amount_cents,
+            currency=request.currency,
+        )
+        return CheckoutSession(id=session_id, url="https://checkout.test/x")
+
+    def retrieve_session(self, session_id: str) -> CheckoutSnapshot:
+        if self.retrieve_fail:
+            raise ProviderUnavailable("provider down")
+        return self.sessions[session_id]
 
 
 def _appointment(owner: str, estado: str = "PENDIENTE_PAGO", factura_id=None) -> AppointmentBilling:
@@ -431,3 +459,122 @@ def test_replay_without_provider_creates_nothing_and_keeps_the_attempt_pending()
             _patient(owner), factura_id=invoice.id, idempotency_key=KEY
         )
     assert store.rejected == set()
+
+
+# --- repayment: the server asks Stripe before reusing a pending attempt -------------------
+
+
+def _pending_with_session(store, factura_id, session_id, clave="old-key-0000001"):
+    record = PaymentRecord(
+        id=_id(),
+        factura_id=factura_id,
+        clave=clave,
+        estado="PENDIENTE",
+        session_id=session_id,
+    )
+    store.payments[record.id] = record
+    return record
+
+
+def _snapshot(session_id, *, status, payment_status="unpaid", amount_cents=2550, currency="USD"):
+    return CheckoutSnapshot(
+        id=session_id,
+        url="https://checkout.test/old",
+        status=status,
+        payment_status=payment_status,
+        amount_cents=amount_cents,
+        currency=currency,
+    )
+
+
+def test_open_attempt_at_stripe_reopens_with_its_own_key():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    pending = _pending_with_session(store, invoice.id, "cs_open", clave="open-key-0000001")
+    gateway = FakeGateway()
+    gateway.sessions["cs_open"] = _snapshot("cs_open", status="open")
+    result = _service(store, gateway).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="new-key-0000002"
+    )
+    assert result.pago_id == pending.id
+    assert [r.idempotency_key for r in gateway.requests] == ["open-key-0000001"]
+    assert store.cancelled == []
+    assert store.confirmed == []
+
+
+def test_attempt_paid_at_stripe_is_reconciled_without_a_new_charge():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    pending = _pending_with_session(store, invoice.id, "cs_paid")
+    gateway = FakeGateway()
+    gateway.sessions["cs_paid"] = _snapshot("cs_paid", status="complete", payment_status="paid")
+    with pytest.raises(Conflict):
+        _service(store, gateway).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key="new-key-0000003"
+        )
+    assert store.confirmed == [pending.id]
+    assert store.invoices[invoice.id].estado == "PAGADA"
+    assert gateway.requests == []
+    assert store.reserve_calls == 0
+
+
+def test_attempt_expired_at_stripe_is_cancelled_and_a_new_attempt_opens():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    pending = _pending_with_session(store, invoice.id, "cs_old")
+    gateway = FakeGateway()
+    gateway.sessions["cs_old"] = _snapshot("cs_old", status="expired")
+    result = _service(store, gateway).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="new-key-0000004"
+    )
+    assert store.cancelled == [pending.id]
+    assert result.pago_id != pending.id
+    assert result.replayed is False
+    assert store.confirmed == []
+    assert [r.idempotency_key for r in gateway.requests] == ["new-key-0000004"]
+
+
+def test_provider_unreachable_while_checking_changes_nothing():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    _pending_with_session(store, invoice.id, "cs_any")
+    gateway = FakeGateway(retrieve_fail=True)
+    with pytest.raises(ServiceUnavailable):
+        _service(store, gateway).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key="new-key-0000005"
+        )
+    assert store.cancelled == []
+    assert store.confirmed == []
+    assert gateway.requests == []
+    assert store.reserve_calls == 0
+
+
+def test_paid_session_with_another_amount_is_not_confirmed():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    _pending_with_session(store, invoice.id, "cs_wrong")
+    gateway = FakeGateway()
+    gateway.sessions["cs_wrong"] = _snapshot(
+        "cs_wrong", status="complete", payment_status="paid", amount_cents=100
+    )
+    with pytest.raises(ServiceUnavailable):
+        _service(store, gateway).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key="new-key-0000006"
+        )
+    assert store.confirmed == []
+    assert store.invoices[invoice.id].estado == "PENDIENTE"
+
+
+def test_session_complete_but_not_paid_yet_is_still_processing():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    _pending_with_session(store, invoice.id, "cs_async")
+    gateway = FakeGateway()
+    gateway.sessions["cs_async"] = _snapshot("cs_async", status="complete", payment_status="unpaid")
+    with pytest.raises(Conflict):
+        _service(store, gateway).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key="new-key-0000007"
+        )
+    assert store.confirmed == []
+    assert store.cancelled == []
+    assert gateway.requests == []

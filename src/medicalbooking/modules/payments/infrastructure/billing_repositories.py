@@ -129,7 +129,8 @@ class SqlBillingStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT id, factura_id, clave_idempotencia, estado FROM pagos "
+                    "SELECT id, factura_id, clave_idempotencia, estado, "
+                    "stripe_checkout_session_id FROM pagos "
                     "WHERE clave_idempotencia = :clave"
                 ),
                 {"clave": key},
@@ -140,7 +141,8 @@ class SqlBillingStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT TOP (1) id, factura_id, clave_idempotencia, estado FROM pagos "
+                    "SELECT TOP (1) id, factura_id, clave_idempotencia, estado, "
+                    "stripe_checkout_session_id FROM pagos "
                     "WHERE factura_id = :factura AND estado = 'PENDIENTE' "
                     "ORDER BY creado_en"
                 ),
@@ -207,9 +209,39 @@ class SqlBillingStore:
                 {"pago": pago_id},
             )
 
+    def confirm_payment(self, pago_id: str, factura_id: str, now: datetime) -> None:
+        # Same guarded updates as the verified webhook: a racing event changes nothing twice.
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE pagos SET estado = 'CONFIRMADO', pagado_en = :ahora "
+                    "WHERE id = :pago AND estado = 'PENDIENTE'"
+                ),
+                {"pago": pago_id, "ahora": _utc_naive(now)},
+            )
+            conn.execute(
+                text(
+                    "UPDATE facturas SET estado = 'PAGADA' "
+                    "WHERE id = :factura AND estado = 'PENDIENTE'"
+                ),
+                {"factura": factura_id},
+            )
+
+    def cancel_pending_payment(self, pago_id: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE pagos SET estado = 'CANCELADO' "
+                    "WHERE id = :pago AND estado = 'PENDIENTE'"
+                ),
+                {"pago": pago_id},
+            )
+
 
 def _payment(row: Row[Any]) -> PaymentRecord:
+    session_id = row.stripe_checkout_session_id
     return PaymentRecord(
+        session_id=str(session_id) if session_id is not None else None,
         id=str(row.id).lower(),
         factura_id=str(row.factura_id).lower(),
         clave=row.clave_idempotencia,
