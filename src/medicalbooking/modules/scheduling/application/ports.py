@@ -29,6 +29,16 @@ class Appointment:
 
 
 @dataclass(frozen=True)
+class AppointmentSummary:
+    """Listing row. Deliberately carries no patient data."""
+
+    id: str
+    estado: str
+    inicio_utc: datetime
+    fin_utc: datetime
+
+
+@dataclass(frozen=True)
 class ReserveCommand:
     key: str
     patient_user_id: str
@@ -82,6 +92,20 @@ class SchedulingStore(Protocol):
     def service_is_active(self, servicio_id: str) -> bool: ...
 
     def find_appointment_by_key(self, key: str) -> Appointment | None: ...
+
+    def has_doctor_profile(self, user_id: str) -> bool: ...
+
+    def list_patient_appointments(
+        self, patient_user_id: str, estado: str | None, limit: int, offset: int
+    ) -> list[AppointmentSummary]:
+        """One page of the patient's own appointments, ordered by slot start then id."""
+        ...
+
+    def list_agenda_appointments(
+        self, doctor_user_id: str, estado: str | None, limit: int, offset: int
+    ) -> list[AppointmentSummary]:
+        """One page of appointments booked on the doctor's own agendas."""
+        ...
 
     def reserve(self, command: ReserveCommand) -> ReserveOutcome: ...
 
