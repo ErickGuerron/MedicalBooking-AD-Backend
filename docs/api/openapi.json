@@ -4265,11 +4265,14 @@
               "application/json": {
                 "schema": {
                   "properties": {
-                    "checkout_url": {
+                    "client_secret": {
                       "type": "string"
                     },
                     "pago_id": {
                       "format": "uuid",
+                      "type": "string"
+                    },
+                    "publishable_key": {
                       "type": "string"
                     }
                   },
@@ -4284,11 +4287,14 @@
               "application/json": {
                 "schema": {
                   "properties": {
-                    "checkout_url": {
+                    "client_secret": {
                       "type": "string"
                     },
                     "pago_id": {
                       "format": "uuid",
+                      "type": "string"
+                    },
+                    "publishable_key": {
                       "type": "string"
                     }
                   },

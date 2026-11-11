@@ -15,6 +15,7 @@ Status: **receiver implemented** (E4, payments): `POST /api/v1/payments/webhook`
 |---|---|---|
 | `STRIPE_SECRET_KEY` | `sk_test_...` locally, `sk_live_...` in production | `.env` (local, not versioned) or the production secret store |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...` of the endpoint for that mode | Same as above |
+| STRIPE_PUBLISHABLE_KEY | pk_test_... locally, pk_live_... in production | .env or the secret store. Public, but kept with the other Stripe settings |
 
 Do not commit real values. `.env.example` gets placeholders only, added when the payments code lands.
 

@@ -22,28 +22,31 @@ CHECKOUT_PATH = "/v1/checkout/sessions"
 
 
 class StripeCheckoutGateway:
+    """Creates embedded Checkout Sessions. The publishable key is public by design: the
+    browser needs it to mount the session with its client secret."""
+
     def __init__(
         self,
         secret_key: str | None,
-        success_url: str,
-        cancel_url: str,
+        return_url: str,
+        publishable_key: str | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self._secret_key = secret_key
-        self._success_url = success_url
-        self._cancel_url = cancel_url
+        self._return_url = return_url
+        self.publishable_key = publishable_key
         self._client = client or httpx.Client(base_url=STRIPE_API_BASE, timeout=10.0)
 
     def is_configured(self) -> bool:
-        return bool(self._secret_key)
+        return bool(self._secret_key and self.publishable_key)
 
     def create_session(self, request: CheckoutRequest) -> CheckoutSession:
         if not self._secret_key:
             raise ProviderUnavailable("Stripe secret key is not configured")
         form = {
             "mode": "payment",
-            "success_url": self._success_url,
-            "cancel_url": self._cancel_url,
+            "ui_mode": "embedded_page",
+            "return_url": self._return_url,
             "client_reference_id": request.reference,
             "line_items[0][quantity]": "1",
             "line_items[0][price_data][currency]": request.currency.lower(),
@@ -70,10 +73,10 @@ class StripeCheckoutGateway:
         if not isinstance(body, dict):
             raise ProviderUnavailable("Stripe answered without a checkout session")
         session_id = body.get("id")
-        url = body.get("url")
-        if not isinstance(session_id, str) or not isinstance(url, str):
+        client_secret = body.get("client_secret")
+        if not isinstance(session_id, str) or not isinstance(client_secret, str):
             raise ProviderUnavailable("Stripe answered without a checkout session")
-        return CheckoutSession(id=session_id, url=url)
+        return CheckoutSession(id=session_id, client_secret=client_secret)
 
     def retrieve_session(self, session_id: str) -> CheckoutSnapshot:
         """Read a session's state with a GET. Nothing is created, charged or changed."""
