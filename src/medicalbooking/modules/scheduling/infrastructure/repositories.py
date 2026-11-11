@@ -16,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
-    AppointmentSummary,
     AvailableSlot,
     CancelCommand,
     CancelOutcome,
@@ -158,43 +157,6 @@ class SqlSchedulingStore:
                 text(_APPOINTMENT_SELECT + "WHERE c.clave_idempotencia = :k"), {"k": key}
             ).first()
         return None if row is None else _appointment(row)
-
-    def has_doctor_profile(self, user_id: str) -> bool:
-        with self._engine.connect() as conn:
-            found = conn.execute(
-                text("SELECT 1 FROM medicos WHERE usuario_id = :u"), {"u": user_id}
-            ).first()
-        return found is not None
-
-    def list_patient_appointments(self, patient_user_id, estado, limit, offset):
-        return self._list_summaries(_PATIENT_SOURCE, patient_user_id, estado, limit, offset)
-
-    def list_agenda_appointments(self, doctor_user_id, estado, limit, offset):
-        return self._list_summaries(_AGENDA_SOURCE, doctor_user_id, estado, limit, offset)
-
-    def _list_summaries(self, source: str, user_id, estado, limit, offset):
-        """Only id, estado and slot times leave the database: no patient columns are selected."""
-        sql = _SUMMARY_SELECT + source
-        params: dict[str, object] = {
-            "usuario": str(user_id),
-            "saltar": offset,
-            "cantidad": limit,
-        }
-        if estado is not None:
-            sql += "AND c.estado = :estado "
-            params["estado"] = estado
-        sql += "ORDER BY h.inicio_utc, c.id OFFSET :saltar ROWS FETCH NEXT :cantidad ROWS ONLY"
-        with self._engine.connect() as conn:
-            rows = conn.execute(text(sql), params).all()
-        return [
-            AppointmentSummary(
-                id=_canonical(row.id),
-                estado=row.estado,
-                inicio_utc=_utc_aware(row.inicio_utc),
-                fin_utc=_utc_aware(row.fin_utc),
-            )
-            for row in rows
-        ]
 
     def reserve(self, command: ReserveCommand) -> ReserveOutcome:
         return retry_on_deadlock(lambda: self._reserve_once(command))
@@ -391,18 +353,6 @@ class SqlSchedulingStore:
         return len(overdue)
 
 
-_SUMMARY_SELECT = "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc "
-# Patient ownership: citas.paciente_id -> pacientes.usuario_id.
-_PATIENT_SOURCE = (
-    "FROM citas c JOIN pacientes p ON p.id = c.paciente_id "
-    "JOIN horarios_disponibles h ON h.id = c.horario_id WHERE p.usuario_id = :usuario "
-)
-# Agenda ownership: slot -> agenda -> medico -> usuario.
-_AGENDA_SOURCE = (
-    "FROM citas c JOIN horarios_disponibles h ON h.id = c.horario_id "
-    "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
-    "WHERE m.usuario_id = :usuario "
-)
 _APPOINTMENT_SELECT = (
     "SELECT c.id, c.clave_idempotencia, c.horario_id, c.servicio_id, c.estado, c.motivo, "
     "c.expiracion_reserva, p.usuario_id AS patient_user_id "

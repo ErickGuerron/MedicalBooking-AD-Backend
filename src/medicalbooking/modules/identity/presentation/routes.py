@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
@@ -10,13 +9,10 @@ from typing import Any
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from medicalbooking.modules.identity.application.ports import UserSummary
-from medicalbooking.modules.identity.application.use_cases import ACTIVE, IdentityService
-from medicalbooking.modules.identity.domain.policies import DEFAULT_PAGE_SIZE
+from medicalbooking.modules.identity.application.use_cases import IdentityService
 from medicalbooking.shared.domain.errors import Unauthenticated, ValidationFailed
 
 identity_bp = Blueprint("identity", __name__, url_prefix="/api/v1")
-_INTEGER_PARAM = re.compile(r"-?[0-9]+")
 
 
 class LoginRequest(BaseModel):
@@ -50,27 +46,6 @@ def _parse(model: type[BaseModel]) -> Any:
         # Report field names only: never echo values, which may be passwords.
         fields = sorted({".".join(str(part) for part in item["loc"]) for item in error.errors()})
         raise ValidationFailed("Invalid fields: " + ", ".join(fields)) from None
-
-
-def _int_query(name: str, default: int) -> int:
-    """Read an optional integer query parameter. Range rules belong to the use case."""
-    if name not in request.args:
-        return default
-    raw = request.args[name]
-    if not _INTEGER_PARAM.fullmatch(raw):
-        raise ValidationFailed(f"'{name}' must be an integer")
-    return int(raw)
-
-
-def _user_json(user: UserSummary) -> dict[str, Any]:
-    return {
-        "id": user.user_id,
-        "email": user.email,
-        "nombres": user.first_name,
-        "apellidos": user.last_name,
-        "activo": user.status == ACTIVE,
-        "roles": list(user.roles),
-    }
 
 
 def authenticated(view: Callable[..., Response]) -> Callable[..., Response]:
@@ -162,14 +137,3 @@ def create_user() -> tuple[Response, int]:
         roles=body.roles,
     )
     return jsonify(id=user_id), 201
-
-
-@identity_bp.get("/users")
-@authenticated
-def list_users() -> tuple[Response, int]:
-    users = _service().list_users(
-        g.actor,
-        limit=_int_query("limit", DEFAULT_PAGE_SIZE),
-        offset=_int_query("offset", 0),
-    )
-    return jsonify(items=[_user_json(user) for user in users]), 200

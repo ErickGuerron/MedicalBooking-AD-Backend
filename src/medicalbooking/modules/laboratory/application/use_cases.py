@@ -19,7 +19,6 @@ from medicalbooking.modules.laboratory.application.ports import (
     AuditEvent,
     DocumentStorage,
     LabOrder,
-    LabOrderSummary,
     LabResult,
     LabStore,
     NewDocument,
@@ -111,39 +110,6 @@ class LabService:
     def get_order(self, actor: AccessProfile, order_id: str) -> LabOrder:
         order = self._readable_order(actor, order_id)
         return order
-
-    def list_orders(
-        self,
-        actor: AccessProfile,
-        *,
-        estado: str | None,
-        limit: int,
-        offset: int,
-    ) -> list[LabOrderSummary]:
-        """Orders the actor may read: own orders as a patient, orders placed as a doctor.
-
-        The same permissions as the single-order read apply, and each side needs its profile.
-        Anyone else, including a doctor without a doctor profile, gets 403.
-        """
-        paciente_id = (
-            self._store.resolve_patient_id(actor.user_id)
-            if PERM_RESULT_READ_OWN in actor.permissions
-            else None
-        )
-        medico_id = (
-            self._store.resolve_medico_id(actor.user_id)
-            if PERM_RESULT_READ_CONTEXT in actor.permissions
-            else None
-        )
-        if paciente_id is None and medico_id is None:
-            raise Forbidden(_FORBIDDEN)
-        return self._store.list_orders(
-            paciente_id=paciente_id,
-            medico_id=medico_id,
-            estado=estado,
-            limit=limit,
-            offset=offset,
-        )
 
     # ---------- results ----------
 

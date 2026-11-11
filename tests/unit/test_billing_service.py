@@ -132,10 +132,8 @@ class FakeGateway:
     configured: bool = True
     fail: bool = False
     retrieve_fail: bool = False
-    publishable_key: str | None = "pk_test_fake_publishable"
     requests: list[CheckoutRequest] = field(default_factory=list)
     sessions: dict[str, CheckoutSnapshot] = field(default_factory=dict)
-    by_key: dict[str, CheckoutSession] = field(default_factory=dict)
 
     def is_configured(self) -> bool:
         return self.configured
@@ -144,21 +142,16 @@ class FakeGateway:
         self.requests.append(request)
         if self.fail:
             raise ProviderUnavailable("provider down")
-        # Like Stripe, a repeated Idempotency-Key returns the session it already created.
-        if request.idempotency_key in self.by_key:
-            return self.by_key[request.idempotency_key]
         session_id = f"cs_{len(self.requests)}"
         self.sessions[session_id] = CheckoutSnapshot(
             id=session_id,
-            url=None,
+            url="https://checkout.test/x",
             status="open",
             payment_status="unpaid",
             amount_cents=request.amount_cents,
             currency=request.currency,
         )
-        session = CheckoutSession(id=session_id, client_secret=f"{session_id}_secret")
-        self.by_key[request.idempotency_key] = session
-        return session
+        return CheckoutSession(id=session_id, url="https://checkout.test/x")
 
     def retrieve_session(self, session_id: str) -> CheckoutSnapshot:
         if self.retrieve_fail:
@@ -269,8 +262,7 @@ def test_checkout_reserves_a_pending_payment_then_records_the_session():
         _patient(owner), factura_id=invoice.id, idempotency_key=KEY
     )
     assert result.replayed is False
-    assert result.client_secret == "cs_1_secret"
-    assert result.publishable_key == "pk_test_fake_publishable"
+    assert result.checkout_url == "https://checkout.test/x"
     assert store.reserve_calls == 1
     request = gateway.requests[0]
     assert request.amount_cents == 2550
@@ -407,7 +399,7 @@ def test_new_key_on_an_invoice_with_a_pending_attempt_reuses_that_checkout():
         _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0002"
     )
     assert second.pago_id == first.pago_id
-    assert second.client_secret == first.client_secret
+    assert second.checkout_url == first.checkout_url
     assert second.replayed is True
     assert store.reserve_calls == 1
     # The provider is asked again with the attempt's own key, so Stripe returns the same session.

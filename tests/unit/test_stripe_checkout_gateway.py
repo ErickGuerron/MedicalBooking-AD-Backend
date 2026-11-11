@@ -15,8 +15,6 @@ from medicalbooking.modules.payments.infrastructure.stripe_checkout import (
 )
 
 SECRET = "sk_test_synthetic_secret"
-PUBLISHABLE = "pk_test_synthetic_publishable"
-RETURN_URL = "https://front.test/pago/retorno?session_id={CHECKOUT_SESSION_ID}"
 REQUEST = CheckoutRequest(
     idempotency_key="checkout-key-0001",
     amount_cents=2550,
@@ -26,23 +24,19 @@ REQUEST = CheckoutRequest(
 )
 
 
-def _gateway(
-    handler,
-    secret: str | None = SECRET,
-    publishable: str | None = PUBLISHABLE,
-) -> StripeCheckoutGateway:
+def _gateway(handler, secret: str | None = SECRET) -> StripeCheckoutGateway:
     client = httpx.Client(
         base_url="https://api.stripe.test", transport=httpx.MockTransport(handler)
     )
     return StripeCheckoutGateway(
         secret_key=secret,
-        return_url=RETURN_URL,
-        publishable_key=publishable,
+        success_url="https://front.test/pago/exito",
+        cancel_url="https://front.test/pago/cancelado",
         client=client,
     )
 
 
-def test_embedded_session_is_created_with_return_url_and_returns_its_client_secret():
+def test_session_is_created_with_amount_currency_and_provider_idempotency_key():
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -50,42 +44,18 @@ def test_embedded_session_is_created_with_return_url_and_returns_its_client_secr
         seen["auth"] = request.headers["Authorization"]
         seen["idem"] = request.headers["Idempotency-Key"]
         seen["body"] = request.content.decode()
-        return httpx.Response(
-            200, json={"id": "cs_test_1", "url": None, "client_secret": "cs_test_1_secret_x"}
-        )
+        return httpx.Response(200, json={"id": "cs_test_1", "url": "https://pay.test/cs_1"})
 
     session = _gateway(handler).create_session(REQUEST)
 
     assert session.id == "cs_test_1"
-    assert session.client_secret == "cs_test_1_secret_x"
+    assert session.url == "https://pay.test/cs_1"
     assert seen["path"] == CHECKOUT_PATH
     assert seen["auth"] == f"Bearer {SECRET}"
     assert seen["idem"] == REQUEST.idempotency_key
     assert "line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=2550" in seen["body"]
     assert "line_items%5B0%5D%5Bprice_data%5D%5Bcurrency%5D=usd" in seen["body"]
     assert "mode=payment" in seen["body"]
-    assert "ui_mode=embedded_page" in seen["body"]
-    assert "return_url=" in seen["body"]
-    assert "%7BCHECKOUT_SESSION_ID%7D" in seen["body"]
-    assert "success_url" not in seen["body"]
-    assert "cancel_url" not in seen["body"]
-
-
-def test_a_session_without_client_secret_is_unavailable():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"id": "cs_test_2", "url": None})
-
-    with pytest.raises(ProviderUnavailable):
-        _gateway(handler).create_session(REQUEST)
-
-
-def test_the_publishable_key_is_exposed_only_when_configured():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={})
-
-    assert _gateway(handler).publishable_key == PUBLISHABLE
-    assert _gateway(handler, publishable=None).is_configured() is False
-    assert _gateway(handler).is_configured() is True
 
 
 def test_provider_error_becomes_unavailable_without_leaking_the_body():

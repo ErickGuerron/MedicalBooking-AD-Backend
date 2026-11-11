@@ -12,7 +12,6 @@ from medicalbooking.modules.identity.application.ports import (
     AccessProfile,
     CredentialRecord,
     NewUser,
-    UserSummary,
 )
 from medicalbooking.modules.identity.domain.policies import (
     LOCK_DURATION,
@@ -174,35 +173,6 @@ class SqlUserDirectory:
 
     def create_user(self, new_user: NewUser) -> None:
         self._create(new_user, verification=None)
-
-    def list_users(self, limit: int, offset: int) -> list[UserSummary]:
-        """One page ordered by email. Credentials are never selected.
-
-        Role names come from the fixed roles catalogue and contain no commas, so
-        STRING_AGG keeps the page to a single round trip.
-        """
-        with self._engine.connect() as conn:
-            rows = conn.execute(
-                text(
-                    "SELECT u.id, u.email, u.nombre, u.apellido, u.estado, "
-                    "(SELECT STRING_AGG(r.nombre, ',') FROM usuarios_roles ur "
-                    "JOIN roles r ON r.id = ur.rol_id WHERE ur.usuario_id = u.id) AS roles "
-                    "FROM usuarios u ORDER BY u.email "
-                    "OFFSET :saltar ROWS FETCH NEXT :cantidad ROWS ONLY"
-                ),
-                {"saltar": offset, "cantidad": limit},
-            ).all()
-        return [
-            UserSummary(
-                user_id=_canonical(row.id),
-                email=row.email,
-                first_name=row.nombre,
-                last_name=row.apellido,
-                status=row.estado,
-                roles=tuple(sorted(name for name in (row.roles or "").split(",") if name)),
-            )
-            for row in rows
-        ]
 
     def create_pending_patient(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
         self._create(new_user, verification=(token_hash, valid_hours))

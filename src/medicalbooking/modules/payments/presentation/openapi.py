@@ -113,8 +113,7 @@ def payments_fragment() -> dict[str, Any]:
                                         "type": "object",
                                         "properties": {
                                             "pago_id": {"type": "string", "format": "uuid"},
-                                            "client_secret": {"type": "string"},
-                                            "publishable_key": {"type": "string"},
+                                            "checkout_url": {"type": "string"},
                                         },
                                     }
                                 }
@@ -128,8 +127,7 @@ def payments_fragment() -> dict[str, Any]:
                                         "type": "object",
                                         "properties": {
                                             "pago_id": {"type": "string", "format": "uuid"},
-                                            "client_secret": {"type": "string"},
-                                            "publishable_key": {"type": "string"},
+                                            "checkout_url": {"type": "string"},
                                         },
                                     }
                                 }

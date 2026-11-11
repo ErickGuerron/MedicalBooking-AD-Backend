@@ -19,7 +19,6 @@ from medicalbooking.modules.laboratory.application.ports import (
     AuditEvent,
     LabDetail,
     LabOrder,
-    LabOrderSummary,
     LabResult,
     NewDocument,
     NewOrder,
@@ -240,52 +239,6 @@ class SqlLabStore:
                 for row in detail_rows
             ),
         )
-
-    def list_orders(
-        self,
-        *,
-        paciente_id: str | None,
-        medico_id: str | None,
-        estado: str | None,
-        limit: int,
-        offset: int,
-    ) -> list[LabOrderSummary]:
-        patient = _as_guid(paciente_id) if paciente_id is not None else None
-        doctor = _as_guid(medico_id) if medico_id is not None else None
-        if patient is None and doctor is None:
-            return []
-        # One static statement: the flags switch each optional side on or off. Values are bound.
-        with self._engine.connect() as conn:
-            rows = conn.execute(
-                text(
-                    "SELECT o.id, o.paciente_id, o.estado, o.fecha_orden "
-                    "FROM ordenes_laboratorio o "
-                    "WHERE ((:usa_paciente = 1 AND o.paciente_id = :paciente) "
-                    "OR (:usa_medico = 1 AND o.medico_id = :medico)) "
-                    "AND (:filtra_estado = 0 OR o.estado = :estado) "
-                    "ORDER BY o.fecha_orden DESC, o.id ASC "
-                    "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY"
-                ),
-                {
-                    "usa_paciente": int(patient is not None),
-                    "paciente": patient,
-                    "usa_medico": int(doctor is not None),
-                    "medico": doctor,
-                    "filtra_estado": int(estado is not None),
-                    "estado": estado,
-                    "skip": offset,
-                    "take": limit,
-                },
-            ).all()
-        return [
-            LabOrderSummary(
-                id=_canonical(row.id),
-                paciente_id=_canonical(row.paciente_id),
-                estado=row.estado,
-                fecha=row.fecha_orden,
-            )
-            for row in rows
-        ]
 
     # ---------- results ----------
 

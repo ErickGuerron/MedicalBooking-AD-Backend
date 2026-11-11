@@ -60,9 +60,6 @@ class Settings(BaseSettings):
     # Stripe secret key for Checkout Sessions (test key locally). Without it checkout answers
     # 503 and creates nothing. Never logged.
     stripe_secret_key: SecretStr | None = None
-    # Publishable key (pk_test_... locally). Public by design: the browser mounts the embedded
-    # checkout with it. Checkout requires it, so no session is created without it.
-    stripe_publishable_key: str | None = None
     brevo_api_key: SecretStr | None = None
     mail_from: str | None = None
     mail_from_name: str = Field(default="MedicalBooking", min_length=1, max_length=70)

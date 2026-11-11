@@ -31,7 +31,6 @@ EXPECTED_PATHS = {
     "/api/v1/documents/{document_id}/download",
     "/api/v1/knowledge/analytes",
     "/api/v1/knowledge/analytes/{analyte_id}/references",
-    "/api/v1/knowledge/references",
     "/api/v1/knowledge/references/{reference_id}/validate",
     "/api/v1/knowledge/rules",
     "/api/v1/knowledge/rules/{rule_id}/validate",
@@ -68,9 +67,9 @@ def test_document_is_openapi_31_and_covers_identity_and_scheduling(spec) -> None
     assert set(spec["paths"]) == EXPECTED_PATHS
     assert set(spec["paths"]["/api/v1/auth/login"]) == {"post"}
     assert set(spec["paths"]["/api/v1/me"]) == {"get"}
-    assert set(spec["paths"]["/api/v1/users"]) == {"get", "post"}
+    assert set(spec["paths"]["/api/v1/users"]) == {"post"}
     assert set(spec["paths"]["/api/v1/availability"]) == {"get"}
-    assert set(spec["paths"]["/api/v1/appointments"]) == {"get", "post"}
+    assert set(spec["paths"]["/api/v1/appointments"]) == {"post"}
     assert set(spec["paths"]["/api/v1/appointments/{appointment_id}/cancel"]) == {"post"}
 
 
@@ -113,56 +112,10 @@ def test_protected_operations_require_bearer_and_login_does_not(spec) -> None:
         ("/api/v1/availability", "get", {"200", "401", "403", "422"}),
         ("/api/v1/appointments", "post", {"200", "201", "401", "403", "404", "409", "422"}),
         ("/api/v1/appointments/{appointment_id}/cancel", "post", {"200", "401", "403", "409"}),
-        ("/api/v1/users", "get", {"200", "401", "403", "422"}),
-        ("/api/v1/appointments", "get", {"200", "401", "403", "422"}),
-        ("/api/v1/knowledge/rules", "get", {"200", "401", "403", "422"}),
-        ("/api/v1/knowledge/references", "get", {"200", "401", "403", "404", "422"}),
-        (
-            "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/"
-            "hallazgos/{hallazgo}/ediciones",
-            "get",
-            {"200", "401", "403"},
-        ),
     ],
 )
 def test_operations_document_their_responses(spec, path: str, method: str, codes: set) -> None:
     assert set(spec["paths"][path][method]["responses"]) == codes
-
-
-@pytest.mark.parametrize(
-    ("path", "method"),
-    [
-        ("/api/v1/users", "get"),
-        ("/api/v1/appointments", "get"),
-        ("/api/v1/knowledge/rules", "get"),
-        ("/api/v1/knowledge/references", "get"),
-        (
-            "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/"
-            "hallazgos/{hallazgo}/ediciones",
-            "get",
-        ),
-    ],
-)
-def test_read_listing_operations_are_documented_with_bearer(spec, path: str, method: str) -> None:
-    assert method in spec["paths"][path]
-    assert spec["paths"][path][method]["security"] == [{"bearerAuth": []}]
-
-
-def test_user_listing_documents_pagination_defaults_and_bounds(spec) -> None:
-    parameters = {p["name"]: p for p in spec["paths"]["/api/v1/users"]["get"]["parameters"]}
-
-    assert parameters["limit"]["schema"] == {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 200,
-        "default": 50,
-    }
-    assert parameters["offset"]["schema"] == {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 2147483647,
-        "default": 0,
-    }
 
 
 def test_error_responses_use_problem_json(spec) -> None:

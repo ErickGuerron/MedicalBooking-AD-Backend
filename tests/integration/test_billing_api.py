@@ -40,8 +40,6 @@ KEY = "integration-signing-key-with-32+chars"
 class StubGateway:
     """Stands in for Stripe: configured, returns a deterministic session, records requests."""
 
-    publishable_key = "pk_test_stub_publishable"
-
     def __init__(self) -> None:
         self.requests: list[CheckoutRequest] = []
 
@@ -50,8 +48,7 @@ class StubGateway:
 
     def create_session(self, request: CheckoutRequest) -> CheckoutSession:
         self.requests.append(request)
-        session_id = f"cs_test_{uuid.uuid4().hex[:12]}"
-        return CheckoutSession(id=session_id, client_secret=f"{session_id}_secret")
+        return CheckoutSession(id=f"cs_test_{uuid.uuid4().hex[:12]}", url="https://pay.test/s")
 
 
 @pytest.fixture(scope="module")

@@ -18,13 +18,11 @@ from medicalbooking.modules.identity.application.ports import (
     PasswordHasher,
     TokenIssuer,
     UserDirectory,
-    UserSummary,
 )
 from medicalbooking.modules.identity.domain.policies import (
     PERM_USERS_ADMIN,
     can_read_patient,
     is_locked,
-    validate_page,
 )
 from medicalbooking.shared.domain.errors import (
     Conflict,
@@ -210,12 +208,6 @@ class IdentityService:
             )
         )
         return user_id
-
-    def list_users(self, actor: AccessProfile, *, limit: int, offset: int) -> list[UserSummary]:
-        if PERM_USERS_ADMIN not in actor.permissions:
-            raise Forbidden("Access to this resource is not allowed")
-        validate_page(limit, offset)
-        return self._directory.list_users(limit, offset)
 
 
 def _normalize_email(email: str) -> str:

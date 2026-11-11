@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
-    AppointmentSummary,
     AvailableSlot,
     CancelCommand,
     CancelStatus,
@@ -19,11 +18,8 @@ from medicalbooking.modules.scheduling.application.ports import (
 )
 from medicalbooking.modules.scheduling.domain.policies import (
     PERM_BOOK,
-    ROLE_PATIENT,
     is_same_request,
-    validate_estado,
     validate_idempotency_key,
-    validate_page,
     validate_window,
 )
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
@@ -143,30 +139,6 @@ class SchedulingService:
             raise Conflict("The appointment can no longer be cancelled")
         assert outcome.appointment is not None
         return outcome.appointment
-
-    def list_appointments(
-        self,
-        actor: AccessProfile,
-        *,
-        estado: str | None,
-        limit: int,
-        offset: int,
-    ) -> list[AppointmentSummary]:
-        """Appointments the actor owns: a patient's own, or those of the doctor's agenda.
-
-        Patients are checked first, so a user with both roles sees only their own
-        appointments as a patient. Any other actor is refused before paging is checked.
-        """
-        if ROLE_PATIENT in actor.roles:
-            query = self._store.list_patient_appointments
-        elif self._store.has_doctor_profile(actor.user_id):
-            query = self._store.list_agenda_appointments
-        else:
-            raise Forbidden("Access to this resource is not allowed")
-        validate_page(limit, offset)
-        if estado is not None:
-            validate_estado(estado)
-        return query(actor.user_id, estado, limit, offset)
 
     @staticmethod
     def _replay_or_conflict(

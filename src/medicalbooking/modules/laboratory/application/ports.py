@@ -30,16 +30,6 @@ class LabOrder:
 
 
 @dataclass(frozen=True)
-class LabOrderSummary:
-    """One row of an order listing: no details and no result values."""
-
-    id: str
-    paciente_id: str
-    estado: str
-    fecha: datetime
-
-
-@dataclass(frozen=True)
 class LabResult:
     id: str
     detalle_id: str
@@ -148,21 +138,6 @@ class LabStore(Protocol):
     def create_order(self, command: NewOrder) -> LabOrder: ...
 
     def get_order(self, order_id: str) -> LabOrder | None: ...
-
-    def list_orders(
-        self,
-        *,
-        paciente_id: str | None,
-        medico_id: str | None,
-        estado: str | None,
-        limit: int,
-        offset: int,
-    ) -> list[LabOrderSummary]:
-        """Orders of the given patient profile OR ordering doctor profile (at least one set).
-
-        Newest fecha first, then id ascending. Only the requested page is returned.
-        """
-        ...
 
     def record_results(
         self,

@@ -104,8 +104,4 @@ def _invoice_json(invoice: InvoiceRecord) -> dict[str, Any]:
 
 
 def _checkout_json(result: CheckoutStart) -> dict[str, Any]:
-    return {
-        "pago_id": result.pago_id,
-        "client_secret": result.client_secret,
-        "publishable_key": result.publishable_key,
-    }
+    return {"pago_id": result.pago_id, "checkout_url": result.checkout_url}

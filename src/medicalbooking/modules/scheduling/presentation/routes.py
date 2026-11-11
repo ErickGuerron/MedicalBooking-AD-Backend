@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -11,17 +10,11 @@ from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from medicalbooking.modules.identity.presentation.routes import authenticated
-from medicalbooking.modules.scheduling.application.ports import (
-    Appointment,
-    AppointmentSummary,
-    AvailableSlot,
-)
+from medicalbooking.modules.scheduling.application.ports import Appointment, AvailableSlot
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
-from medicalbooking.modules.scheduling.domain.policies import DEFAULT_PAGE_SIZE
 from medicalbooking.shared.domain.errors import ValidationFailed
 
 scheduling_bp = Blueprint("scheduling", __name__, url_prefix="/api/v1")
-_INTEGER_PARAM = re.compile(r"-?[0-9]+")
 
 
 class BookAppointmentRequest(BaseModel):
@@ -58,25 +51,6 @@ def _body() -> BookAppointmentRequest:
     except ValidationError as error:
         fields = sorted({".".join(str(part) for part in item["loc"]) for item in error.errors()})
         raise ValidationFailed("Invalid fields: " + ", ".join(fields)) from None
-
-
-def _int_query(name: str, default: int) -> int:
-    """Read an optional integer query parameter. Range rules belong to the use case."""
-    if name not in request.args:
-        return default
-    raw = request.args[name]
-    if not _INTEGER_PARAM.fullmatch(raw):
-        raise ValidationFailed(f"'{name}' must be an integer")
-    return int(raw)
-
-
-def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
-    return {
-        "id": appointment.id,
-        "estado": appointment.estado,
-        "inicio": appointment.inicio_utc.isoformat(),
-        "fin": appointment.fin_utc.isoformat(),
-    }
 
 
 def _slot_json(slot: AvailableSlot) -> dict[str, Any]:
@@ -134,15 +108,3 @@ def book() -> tuple[Response, int]:
 def cancel(appointment_id: uuid.UUID) -> tuple[Response, int]:
     appointment = _service().cancel(g.actor, str(appointment_id))
     return jsonify(_appointment_json(appointment)), 200
-
-
-@scheduling_bp.get("/appointments")
-@authenticated
-def list_appointments() -> tuple[Response, int]:
-    items = _service().list_appointments(
-        g.actor,
-        estado=request.args.get("estado"),
-        limit=_int_query("limit", DEFAULT_PAGE_SIZE),
-        offset=_int_query("offset", 0),
-    )
-    return jsonify(items=[_summary_json(item) for item in items]), 200

@@ -18,7 +18,6 @@ from decimal import Decimal
 from medicalbooking.modules.clinical.application.ports import (
     ClinicalStore,
     OrderForEvaluation,
-    ShadowEditView,
     ShadowEvidenceRecord,
     ShadowItemRecord,
     ShadowSnapshotRecord,
@@ -45,7 +44,6 @@ from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound
 PERM_READ = "resultados.leer_con_acceso"
 PERM_REVIEW = "revisiones.registrar"
 _ENTIDAD_EDICION = "hallazgo_sombra_edicion"
-_ENTIDAD_HISTORIAL = "hallazgo_sombra_ediciones"
 _FORBIDDEN = "Access to this resource is not allowed"
 _SEXES = {"M", "F"}
 _ENTIDAD_LECTURA = "modo_sombra"
@@ -159,24 +157,6 @@ class ShadowFindingsService:
         )
         self._audit(actor, order.paciente_id, entidad, snapshot_id, "revisar", "OK")
         return edit_id, nueva
-
-    def edit_history(
-        self, actor: AccessProfile, order_id: str, snapshot_id: str, hallazgo: str
-    ) -> list[ShadowEditView]:
-        """Append-only history of one finding (S7). Same access as the shadow read; read-only.
-
-        A missing snapshot or finding is refused with the same body as a foreign order, so the
-        answer never tells whether that snapshot exists. Every read and denial is audited.
-        """
-        order = self._authorize(actor, order_id, _ENTIDAD_HISTORIAL, "consultar")
-        if self._store.shadow_item_category(order_id, snapshot_id, hallazgo) is None:
-            self._audit(
-                actor, order.paciente_id, _ENTIDAD_HISTORIAL, order_id, "consultar", "DENEGADO"
-            )
-            raise Forbidden(_FORBIDDEN)
-        edits = self._store.list_shadow_edits(snapshot_id, hallazgo)
-        self._audit(actor, order.paciente_id, _ENTIDAD_HISTORIAL, order_id, "consultar", "OK")
-        return edits
 
     # ---------- helpers ----------
 

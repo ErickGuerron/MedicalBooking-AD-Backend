@@ -104,10 +104,8 @@ class CheckoutRequest:
 
 @dataclass(frozen=True)
 class CheckoutSession:
-    """An embedded Checkout Session. The client secret mounts it in the browser, never a URL."""
-
     id: str
-    client_secret: str
+    url: str
 
 
 @dataclass(frozen=True)
@@ -125,8 +123,7 @@ class CheckoutSnapshot:
 @dataclass(frozen=True)
 class CheckoutStart:
     pago_id: str
-    client_secret: str
-    publishable_key: str
+    checkout_url: str
     replayed: bool
 
 
@@ -153,8 +150,6 @@ class BillingStore(Protocol):
 
 
 class CheckoutGateway(Protocol):
-    publishable_key: str | None
-
     def is_configured(self) -> bool: ...
 
     def create_session(self, request: CheckoutRequest) -> CheckoutSession: ...
@@ -314,18 +309,7 @@ class BillingService:
             self._store.mark_rejected(payment.id)
             raise ServiceUnavailable("Payment provider is unavailable") from error
         self._store.record_session(payment.id, session.id)
-        return CheckoutStart(
-            pago_id=payment.id,
-            client_secret=session.client_secret,
-            publishable_key=self._publishable_key(),
-            replayed=replayed,
-        )
-
-    def _publishable_key(self) -> str:
-        key = self._gateway.publishable_key
-        if not key:
-            raise ServiceUnavailable("Payment provider is not configured")
-        return key
+        return CheckoutStart(pago_id=payment.id, checkout_url=session.url, replayed=replayed)
 
 
 def _require(actor: AccessProfile, permission: str) -> None:

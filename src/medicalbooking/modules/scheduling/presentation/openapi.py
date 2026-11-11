@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from medicalbooking.modules.scheduling.domain.policies import APPOINTMENT_STATES
 from medicalbooking.modules.scheduling.presentation.routes import BookAppointmentRequest
 
 _PROBLEM_CONTENT = {
@@ -83,53 +82,6 @@ def scheduling_fragment() -> dict[str, Any]:
                 }
             },
             "/api/v1/appointments": {
-                "get": {
-                    "tags": ["Scheduling"],
-                    "operationId": "listAppointments",
-                    "summary": "List own appointments, or the doctor's agenda",
-                    "description": (
-                        "A patient sees own appointments; a doctor with a doctor profile sees "
-                        "appointments of his or her agenda; any other caller gets 403. Ordered "
-                        "by slot start, then id. Rows carry no patient data."
-                    ),
-                    "security": _BEARER,
-                    "parameters": [
-                        {
-                            "name": "estado",
-                            "in": "query",
-                            "required": False,
-                            "schema": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
-                        },
-                        {
-                            "name": "limit",
-                            "in": "query",
-                            "required": False,
-                            "schema": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 200,
-                                "default": 50,
-                            },
-                        },
-                        {
-                            "name": "offset",
-                            "in": "query",
-                            "required": False,
-                            "schema": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 2147483647,
-                                "default": 0,
-                            },
-                        },
-                    ],
-                    "responses": {
-                        "200": _json_response("Appointments", "AppointmentSummaryList"),
-                        "401": _problem("Missing, malformed or inactive credentials"),
-                        "403": _problem("Caller is neither a patient nor a doctor with an agenda"),
-                        "422": _problem("Invalid estado, limit or offset"),
-                    },
-                },
                 "post": {
                     "tags": ["Scheduling"],
                     "operationId": "bookAppointment",
@@ -175,7 +127,7 @@ def scheduling_fragment() -> dict[str, Any]:
                         "409": _problem("Slot already taken, or key reused with another request"),
                         "422": _problem("Invalid body, missing key or slot already started"),
                     },
-                },
+                }
             },
             "/api/v1/appointments/{appointment_id}/cancel": {
                 "post": {
@@ -203,26 +155,6 @@ def scheduling_fragment() -> dict[str, Any]:
         "components": {
             "schemas": {
                 "BookAppointmentRequest": BookAppointmentRequest.model_json_schema(),
-                "AppointmentSummary": {
-                    "type": "object",
-                    "required": ["id", "estado", "inicio", "fin"],
-                    "properties": {
-                        "id": {"type": "string", "format": "uuid"},
-                        "estado": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
-                        "inicio": {"type": "string", "format": "date-time"},
-                        "fin": {"type": "string", "format": "date-time"},
-                    },
-                },
-                "AppointmentSummaryList": {
-                    "type": "object",
-                    "required": ["items"],
-                    "properties": {
-                        "items": {
-                            "type": "array",
-                            "items": {"$ref": "#/components/schemas/AppointmentSummary"},
-                        }
-                    },
-                },
                 "AvailableSlot": {
                     "type": "object",
                     "required": ["horario_id", "medico_id", "inicio_utc", "fin_utc"],

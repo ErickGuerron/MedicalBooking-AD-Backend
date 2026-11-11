@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC
 from typing import Any, Literal
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
@@ -12,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from medicalbooking.modules.identity.presentation.routes import authenticated
 from medicalbooking.modules.laboratory.application.ports import (
     LabOrder,
-    LabOrderSummary,
     LabResult,
     ResultEntry,
     StoredDocument,
@@ -64,14 +62,6 @@ class ReviewRequest(BaseModel):
     recomendaciones: str | None = Field(default=None, max_length=4000)
 
 
-class ListOrdersQuery(BaseModel):
-    """Query string of GET /lab/orders. Unknown parameters are ignored, invalid ones are 422."""
-
-    estado: Literal["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"] | None = None
-    limit: int = Field(default=50, ge=1, le=200)
-    offset: int = Field(default=0, ge=0, le=2_147_483_647)
-
-
 def _service() -> LabService:
     return current_app.extensions["medicalbooking.laboratory"]
 
@@ -80,10 +70,6 @@ def _parse(model: type[BaseModel]) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         raise ValidationFailed("Request body must be a JSON object")
-    return _validate(model, data)
-
-
-def _validate(model: type[BaseModel], data: dict[str, Any]) -> Any:
     try:
         return model.model_validate(data)
     except ValidationError as error:
@@ -102,16 +88,6 @@ def _order_json(order: LabOrder) -> dict[str, Any]:
             {"detalle_id": d.id, "tipo_prueba_id": d.tipo_prueba_id, "estado": d.estado}
             for d in order.details
         ],
-    }
-
-
-def _summary_json(order: LabOrderSummary) -> dict[str, Any]:
-    moment = order.fecha if order.fecha.tzinfo is not None else order.fecha.replace(tzinfo=UTC)
-    return {
-        "id": order.id,
-        "paciente_id": order.paciente_id,
-        "estado": order.estado,
-        "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
 
 
@@ -149,16 +125,6 @@ def create_order() -> tuple[Response, int]:
         tipo_prueba_ids=[str(item) for item in body.tipo_prueba_ids],
     )
     return jsonify(_order_json(order)), 201
-
-
-@lab_bp.get("/lab/orders")
-@authenticated
-def list_orders() -> tuple[Response, int]:
-    query = _validate(ListOrdersQuery, request.args.to_dict())
-    rows = _service().list_orders(
-        g.actor, estado=query.estado, limit=query.limit, offset=query.offset
-    )
-    return jsonify(items=[_summary_json(row) for row in rows]), 200
 
 
 @lab_bp.get("/lab/orders/<uuid:order_id>")
