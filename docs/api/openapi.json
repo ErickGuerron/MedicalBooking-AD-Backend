@@ -1774,6 +1774,111 @@
         ]
       }
     },
+    "/api/v1/invoices": {
+      "post": {
+        "description": "Creates one invoice with one detail line for the appointment price. Only the patient who owns an active appointment (PENDIENTE_PAGO or CONFIRMADA) may invoice it; one invoice per appointment.",
+        "operationId": "createInvoice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "cita_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "cita_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "estado": {
+                      "enum": [
+                        "PENDIENTE"
+                      ],
+                      "type": "string"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "moneda": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invoice created"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not the owner, or the appointment does not exist"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Appointment not invoiceable or already invoiced"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Invoice an appointment (owner only)",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
     "/api/v1/knowledge/analytes": {
       "get": {
         "operationId": "listKnowledgeAnalytes",
@@ -3286,6 +3391,144 @@
         "summary": "Declare own altitude of residence and smoking (patient)",
         "tags": [
           "Clinical proposals"
+        ]
+      }
+    },
+    "/api/v1/payments/checkout": {
+      "post": {
+        "description": "Reserves one pending payment attempt, opens a Stripe Checkout Session and returns its URL. The invoice is paid only when the verified webhook confirms the session; a redirect never confirms payment.",
+        "operationId": "startCheckout",
+        "parameters": [
+          {
+            "description": "8 to 100 characters. The same key with the same invoice returns the same checkout; the same key with another invoice answers 409.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 8,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "factura_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "factura_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "checkout_url": {
+                      "type": "string"
+                    },
+                    "pago_id": {
+                      "format": "uuid",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Replay of the same key and invoice"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "checkout_url": {
+                      "type": "string"
+                    },
+                    "pago_id": {
+                      "format": "uuid",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Checkout session created"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not the owner, or the invoice does not exist"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invoice not pending, or the key belongs to another invoice"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing Idempotency-Key or invalid body"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Payment provider not configured or unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Start a Stripe Checkout for an invoice (owner only)",
+        "tags": [
+          "Payments"
         ]
       }
     },
