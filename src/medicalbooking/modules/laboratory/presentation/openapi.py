@@ -50,6 +50,50 @@ def laboratory_fragment() -> dict[str, Any]:
     return {
         "paths": {
             "/api/v1/lab/orders": {
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "listLabOrders",
+                    "summary": "List orders the caller may read (own patient or ordering doctor)",
+                    "description": (
+                        "Newest first, then id. Rows carry no result values. A patient sees "
+                        "own orders; a doctor sees orders placed by them; others get 403."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "estado",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "string",
+                                "enum": ["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"],
+                            },
+                        },
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                                "default": 50,
+                            },
+                        },
+                        {
+                            "name": "offset",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "integer", "minimum": 0, "default": 0},
+                        },
+                    ],
+                    "responses": {
+                        "200": _json("Orders", "LabOrderSummaryList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller has no order read access"),
+                        "422": _problem("Invalid estado, limit or offset"),
+                    },
+                },
                 "post": {
                     "tags": ["Laboratory"],
                     "operationId": "createLabOrder",
@@ -66,7 +110,7 @@ def laboratory_fragment() -> dict[str, Any]:
                         "404": _problem("Patient not found"),
                         "422": _problem("Invalid body or unknown test type"),
                     },
-                }
+                },
             },
             "/api/v1/lab/orders/{order_id}": {
                 "get": {
@@ -232,6 +276,29 @@ def laboratory_fragment() -> dict[str, Any]:
                                 },
                             },
                         },
+                    },
+                },
+                "LabOrderSummary": {
+                    "type": "object",
+                    "required": ["id", "paciente_id", "estado", "fecha"],
+                    "properties": {
+                        "id": _UUID_PARAM,
+                        "paciente_id": _UUID_PARAM,
+                        "estado": {
+                            "type": "string",
+                            "enum": ["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"],
+                        },
+                        "fecha": {"type": "string", "format": "date-time"},
+                    },
+                },
+                "LabOrderSummaryList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/LabOrderSummary"},
+                        }
                     },
                 },
                 "LabResult": {
