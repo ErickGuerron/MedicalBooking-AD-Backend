@@ -22,7 +22,11 @@ from medicalbooking.modules.payments.application.billing_service import (
     CheckoutRequest,
     CheckoutSession,
 )
+from medicalbooking.modules.payments.application.customers import CustomerDirectory
 from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
+from medicalbooking.modules.payments.infrastructure.customer_repositories import (
+    SqlStripeCustomerStore,
+)
 from tests.integration.test_scheduling_api import (
     _book,
     _count,
@@ -52,6 +56,19 @@ class StubGateway:
         self.requests.append(request)
         session_id = f"cs_test_{uuid.uuid4().hex[:12]}"
         return CheckoutSession(id=session_id, client_secret=f"{session_id}_secret")
+
+    def create_customer(self, idempotency_key: str) -> str:
+        return f"cus_test_{uuid.uuid4().hex[:12]}"
+
+
+def _billing(engine: Engine, gateway: StubGateway) -> BillingService:
+    """Billing with the real SQL customer mapping and the stub provider."""
+    return BillingService(
+        store=SqlBillingStore(engine),
+        gateway=gateway,
+        clock=lambda: datetime.now(UTC),
+        customers=CustomerDirectory(SqlStripeCustomerStore(engine), gateway),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -140,9 +157,7 @@ def test_checkout_is_idempotent_per_key_and_stores_the_session(app, engine) -> N
     ]
 
     gateway = StubGateway()
-    app.extensions["medicalbooking.billing"] = BillingService(
-        store=SqlBillingStore(engine), gateway=gateway, clock=lambda: datetime.now(UTC)
-    )
+    app.extensions["medicalbooking.billing"] = _billing(engine, gateway)
     key = f"checkout-{uuid.uuid4()}"
     first = client.post(
         "/api/v1/payments/checkout",
@@ -177,9 +192,7 @@ def test_key_reused_for_another_invoice_conflicts(app, engine) -> None:
     factura = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers).get_json()[
         "id"
     ]
-    app.extensions["medicalbooking.billing"] = BillingService(
-        store=SqlBillingStore(engine), gateway=StubGateway(), clock=lambda: datetime.now(UTC)
-    )
+    app.extensions["medicalbooking.billing"] = _billing(engine, StubGateway())
     key = f"checkout-{uuid.uuid4()}"
     client.post(
         "/api/v1/payments/checkout",

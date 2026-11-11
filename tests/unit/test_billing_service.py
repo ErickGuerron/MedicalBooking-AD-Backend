@@ -166,6 +166,20 @@ class FakeGateway:
         return self.sessions[session_id]
 
 
+@dataclass
+class FakeCustomers:
+    """Stands in for the per-user Stripe customer. One customer per user, like the real one."""
+
+    failing: bool = False
+    ensured: list[str] = field(default_factory=list)
+
+    def ensure(self, usuario_id: str) -> str:
+        self.ensured.append(usuario_id)
+        if self.failing:
+            raise ServiceUnavailable("Payment provider is unavailable")
+        return f"cus_{usuario_id[:8]}"
+
+
 def _appointment(owner: str, estado: str = "PENDIENTE_PAGO", factura_id=None) -> AppointmentBilling:
     return AppointmentBilling(
         cita_id=_id(),
@@ -178,8 +192,12 @@ def _appointment(owner: str, estado: str = "PENDIENTE_PAGO", factura_id=None) ->
     )
 
 
-def _service(store: FakeBillingStore, gateway: FakeGateway) -> BillingService:
-    return BillingService(store=store, gateway=gateway, clock=lambda: NOW)
+def _service(
+    store: FakeBillingStore, gateway: FakeGateway, customers: FakeCustomers | None = None
+) -> BillingService:
+    return BillingService(
+        store=store, gateway=gateway, clock=lambda: NOW, customers=customers or FakeCustomers()
+    )
 
 
 def _seeded(owner: str, **kwargs) -> tuple[FakeBillingStore, AppointmentBilling]:
@@ -466,6 +484,32 @@ def test_replay_without_provider_creates_nothing_and_keeps_the_attempt_pending()
         _service(store, FakeGateway(configured=False)).start_checkout(
             _patient(owner), factura_id=invoice.id, idempotency_key=KEY
         )
+    assert store.rejected == set()
+
+
+def test_checkout_session_is_created_for_the_patient_stripe_customer():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    gateway = FakeGateway()
+    customers = FakeCustomers()
+    _service(store, gateway, customers).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key=KEY
+    )
+    assert customers.ensured == [owner]
+    assert gateway.requests[0].customer_id == f"cus_{owner[:8]}"
+
+
+def test_checkout_without_a_customer_opens_no_session_and_is_not_rejected():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    gateway = FakeGateway()
+    with pytest.raises(ServiceUnavailable):
+        _service(store, gateway, FakeCustomers(failing=True)).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
+        )
+    assert gateway.requests == []
+    assert store.sessions == {}
+    # Not terminal: a later request resumes the same attempt once the customer exists.
     assert store.rejected == set()
 
 

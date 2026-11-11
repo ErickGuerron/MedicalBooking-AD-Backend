@@ -1,8 +1,10 @@
-"""HTTP adapter for payments: the Stripe webhook (E4) and billing (invoices and checkout).
+"""HTTP adapter for payments: the Stripe webhook (E4), billing (invoices and checkout) and saved
+payment methods (/me/payment-methods).
 
 The webhook has no JWT: Stripe cannot send one. Trust comes from the signature over the raw
-body, which is read before any parsing. Billing endpoints require a JWT and per-resource
-authorization in the application layer. Errors go through the shared problem handler.
+body, which is read before any parsing. Billing and saved-card endpoints require a JWT and
+per-resource authorization in the application layer. Errors go through the shared problem
+handler.
 """
 
 from __future__ import annotations
@@ -19,6 +21,10 @@ from medicalbooking.modules.payments.application.billing_service import (
     CheckoutStart,
     InvoiceRecord,
 )
+from medicalbooking.modules.payments.application.payment_methods import (
+    PaymentMethodService,
+    SavedCard,
+)
 from medicalbooking.modules.payments.application.webhook_service import (
     StripeWebhookService,
     WebhookNotConfigured,
@@ -29,6 +35,7 @@ payments_bp = Blueprint("payments", __name__, url_prefix="/api/v1")
 
 WEBHOOK_EXTENSION = "medicalbooking.payments_webhook"
 BILLING_EXTENSION = "medicalbooking.billing"
+PAYMENT_METHODS_EXTENSION = "medicalbooking.payment_methods"
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 
 
@@ -79,8 +86,52 @@ def start_checkout() -> tuple[Response, int]:
     return jsonify(_checkout_json(result)), 200 if result.replayed else 201
 
 
+@payments_bp.get("/me/payment-methods")
+@authenticated
+def list_payment_methods() -> tuple[Response, int]:
+    cards = _payment_methods().list_cards(g.actor)
+    return jsonify({"items": [_card_json(card) for card in cards]}), 200
+
+
+@payments_bp.post("/me/payment-methods/setup-intents")
+@authenticated
+def start_setup_intent() -> tuple[Response, int]:
+    result = _payment_methods().start_setup(g.actor)
+    return (
+        jsonify(
+            {
+                "client_secret": result.client_secret,
+                "publishable_key": result.publishable_key,
+            }
+        ),
+        201,
+    )
+
+
+@payments_bp.delete("/me/payment-methods/<path:payment_method_id>")
+@authenticated
+def remove_payment_method(payment_method_id: str) -> tuple[Response, int]:
+    _payment_methods().remove_card(g.actor, payment_method_id=payment_method_id)
+    return Response(status=204), 204
+
+
 def _billing() -> BillingService:
     return current_app.extensions[BILLING_EXTENSION]
+
+
+def _payment_methods() -> PaymentMethodService:
+    return current_app.extensions[PAYMENT_METHODS_EXTENSION]
+
+
+def _card_json(card: SavedCard) -> dict[str, Any]:
+    return {
+        "id": card.id,
+        "brand": card.brand,
+        "last4": card.last4,
+        "exp_month": card.exp_month,
+        "exp_year": card.exp_year,
+        "is_default": card.is_default,
+    }
 
 
 def _parse(model: type[BaseModel]) -> Any:

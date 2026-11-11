@@ -22,6 +22,21 @@ _IDEMPOTENCY_KEY = {
 }
 
 
+_CARD_SCHEMA = {
+    "type": "object",
+    "required": ["id", "brand", "last4", "exp_month", "exp_year", "is_default"],
+    "additionalProperties": False,
+    "properties": {
+        "id": {"type": "string", "description": "Stripe PaymentMethod id (pm_...)"},
+        "brand": {"type": "string", "description": "Card brand, for example visa"},
+        "last4": {"type": "string"},
+        "exp_month": {"type": ["integer", "null"], "minimum": 1, "maximum": 12},
+        "exp_year": {"type": ["integer", "null"]},
+        "is_default": {"type": "boolean"},
+    },
+}
+
+
 def _problem(description: str) -> dict[str, Any]:
     return {"description": description, "content": _PROBLEM_CONTENT}
 
@@ -198,6 +213,106 @@ def payments_fragment() -> dict[str, Any]:
                         "503": _problem("Webhook secret not configured; the endpoint fails closed"),
                     },
                 }
+            },
+            "/api/v1/me/payment-methods": {
+                "get": {
+                    "tags": ["Payments"],
+                    "operationId": "listPaymentMethods",
+                    "summary": "List the caller's saved cards (owner only)",
+                    "description": (
+                        "Cards of the caller's Stripe customer, read from Stripe on each call. "
+                        "Only card-type methods are listed. No card data is stored by the "
+                        "server. A user without a customer gets an empty list and no provider "
+                        "call."
+                    ),
+                    "security": _BEARER,
+                    "responses": {
+                        "200": {
+                            "description": "Saved cards (possibly empty)",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "required": ["items"],
+                                        "properties": {
+                                            "items": {
+                                                "type": "array",
+                                                "items": _CARD_SCHEMA,
+                                            }
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "401": _problem("Missing or invalid bearer token"),
+                        "403": _problem("The caller may not manage saved cards"),
+                        "503": _problem("Payment provider not configured or unavailable"),
+                    },
+                },
+            },
+            "/api/v1/me/payment-methods/setup-intents": {
+                "post": {
+                    "tags": ["Payments"],
+                    "operationId": "createPaymentMethodSetupIntent",
+                    "summary": "Start saving a card without paying (owner only)",
+                    "description": (
+                        "Creates the caller's Stripe customer on first use, then a SetupIntent "
+                        "for off-session use. The browser confirms it with the client secret; "
+                        "the card is saved only when Stripe confirms the setup."
+                    ),
+                    "security": _BEARER,
+                    "responses": {
+                        "201": {
+                            "description": "Setup intent created",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "required": ["client_secret", "publishable_key"],
+                                        "additionalProperties": False,
+                                        "properties": {
+                                            "client_secret": {"type": "string"},
+                                            "publishable_key": {"type": "string"},
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "401": _problem("Missing or invalid bearer token"),
+                        "403": _problem("The caller may not manage saved cards"),
+                        "503": _problem(
+                            "Payment provider not configured or unavailable; nothing is stored"
+                        ),
+                    },
+                },
+            },
+            "/api/v1/me/payment-methods/{payment_method_id}": {
+                "delete": {
+                    "tags": ["Payments"],
+                    "operationId": "removePaymentMethod",
+                    "summary": "Remove one of the caller's saved cards (owner only)",
+                    "description": (
+                        "Detaches the card from the caller's Stripe customer. The server reads "
+                        "the card from Stripe first. A missing card and a card of another "
+                        "customer get the same 403."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "payment_method_id",
+                            "in": "path",
+                            "required": True,
+                            "description": "Stripe PaymentMethod id (pm_...)",
+                            "schema": {"type": "string", "pattern": "^pm_[A-Za-z0-9_]{1,100}$"},
+                        }
+                    ],
+                    "responses": {
+                        "204": {"description": "Card removed"},
+                        "401": _problem("Missing or invalid bearer token"),
+                        "403": _problem("Missing card, or a card that is not the caller's"),
+                        "503": _problem("Payment provider not configured or unavailable"),
+                    },
+                },
             },
         }
     }

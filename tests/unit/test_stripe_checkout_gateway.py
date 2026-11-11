@@ -23,6 +23,7 @@ REQUEST = CheckoutRequest(
     currency="USD",
     description="Factura MedicalBooking",
     reference="00000000-0000-0000-0000-000000000001",
+    customer_id="cus_test_patient_0001",
 )
 
 
@@ -64,6 +65,8 @@ def test_embedded_session_is_created_with_return_url_and_returns_its_client_secr
     assert "line_items%5B0%5D%5Bprice_data%5D%5Bunit_amount%5D=2550" in seen["body"]
     assert "line_items%5B0%5D%5Bprice_data%5D%5Bcurrency%5D=usd" in seen["body"]
     assert "mode=payment" in seen["body"]
+    assert "customer=cus_test_patient_0001" in seen["body"]
+    assert "payment_intent_data%5Bsetup_future_usage%5D=off_session" in seen["body"]
     assert "ui_mode=embedded_page" in seen["body"]
     assert "return_url=" in seen["body"]
     assert "%7BCHECKOUT_SESSION_ID%7D" in seen["body"]
@@ -176,3 +179,16 @@ def test_retrieve_without_secret_never_calls_the_provider():
     with pytest.raises(ProviderUnavailable):
         _gateway(handler, secret=None).retrieve_session("cs_test_9")
     assert calls == []
+
+
+def test_a_non_object_checkout_answer_keeps_its_original_failure_message():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[1, 2])
+
+    gateway = _gateway(handler)
+    with pytest.raises(ProviderUnavailable) as create_error:
+        gateway.create_session(REQUEST)
+    with pytest.raises(ProviderUnavailable) as retrieve_error:
+        gateway.retrieve_session("cs_test_9")
+    assert str(create_error.value) == "Stripe answered without a checkout session"
+    assert str(retrieve_error.value) == "Stripe answered without a checkout session"

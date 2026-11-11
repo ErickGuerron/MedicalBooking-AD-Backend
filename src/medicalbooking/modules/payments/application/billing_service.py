@@ -100,6 +100,7 @@ class CheckoutRequest:
     currency: str
     description: str
     reference: str
+    customer_id: str
 
 
 @dataclass(frozen=True)
@@ -162,16 +163,24 @@ class CheckoutGateway(Protocol):
     def retrieve_session(self, session_id: str) -> CheckoutSnapshot: ...
 
 
+class CustomerResolver(Protocol):
+    """The user's Stripe customer. Created on first need (see customers.CustomerDirectory)."""
+
+    def ensure(self, usuario_id: str) -> str: ...
+
+
 class BillingService:
     def __init__(
         self,
         store: BillingStore,
         gateway: CheckoutGateway,
         clock: Callable[[], datetime],
+        customers: CustomerResolver,
     ) -> None:
         self._store = store
         self._gateway = gateway
         self._clock = clock
+        self._customers = customers
 
     def create_invoice(self, actor: AccessProfile, *, cita_id: str) -> InvoiceRecord:
         _require(actor, PERM_INVOICE_CREATE)
@@ -301,12 +310,16 @@ class BillingService:
         *,
         replayed: bool,
     ) -> CheckoutStart:
+        # A customer failure leaves the attempt pending without a session: it is not rejected,
+        # so the next request resumes it and the customer is asked again.
+        customer_id = self._customers.ensure(invoice.paciente_user_id)
         request = CheckoutRequest(
             idempotency_key=idempotency_key,
             amount_cents=to_cents(invoice.total),
             currency=invoice.moneda,
             description="Factura MedicalBooking",
             reference=payment.id,
+            customer_id=customer_id,
         )
         try:
             session = self._gateway.create_session(request)

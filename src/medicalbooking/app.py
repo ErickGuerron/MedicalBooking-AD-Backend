@@ -37,8 +37,13 @@ from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocume
 from medicalbooking.modules.laboratory.presentation.openapi import laboratory_fragment
 from medicalbooking.modules.laboratory.presentation.routes import lab_bp
 from medicalbooking.modules.payments.application.billing_service import BillingService
+from medicalbooking.modules.payments.application.customers import CustomerDirectory
+from medicalbooking.modules.payments.application.payment_methods import PaymentMethodService
 from medicalbooking.modules.payments.application.webhook_service import StripeWebhookService
 from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
+from medicalbooking.modules.payments.infrastructure.customer_repositories import (
+    SqlStripeCustomerStore,
+)
 from medicalbooking.modules.payments.infrastructure.repositories import SqlPaymentsStore
 from medicalbooking.modules.payments.infrastructure.stripe_checkout import StripeCheckoutGateway
 from medicalbooking.modules.payments.presentation.openapi import payments_fragment
@@ -73,6 +78,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.patient_profile"] = patient_profile
     app.extensions["medicalbooking.payments_webhook"] = _build_payments_webhook(settings, engine)
     app.extensions["medicalbooking.billing"] = _build_billing(settings, engine)
+    app.extensions["medicalbooking.payment_methods"] = _build_payment_methods(settings, engine)
 
     app.register_blueprint(health_bp)
     app.register_blueprint(payments_bp)
@@ -160,16 +166,31 @@ def _build_billing(settings: Settings, engine: Any) -> BillingService:
 
     Return URLs point to the Flutter front end; a payment is confirmed only by the webhook.
     """
-    key = settings.stripe_secret_key.get_secret_value() if settings.stripe_secret_key else None
-    gateway = StripeCheckoutGateway(
-        secret_key=key,
-        return_url=f"{settings.flutter_front_url}/pago/retorno?session_id={{CHECKOUT_SESSION_ID}}",
-        publishable_key=settings.stripe_publishable_key,
-    )
+    gateway = _build_stripe_gateway(settings)
     return BillingService(
         store=SqlBillingStore(engine),
         gateway=gateway,
         clock=lambda: datetime.now(UTC),
+        customers=CustomerDirectory(store=SqlStripeCustomerStore(engine), gateway=gateway),
+    )
+
+
+def _build_payment_methods(settings: Settings, engine: Any) -> PaymentMethodService:
+    """Composition root for saved payment methods (/me/payment-methods). One Stripe gateway and
+    the same per-user customer mapping that checkout uses."""
+    gateway = _build_stripe_gateway(settings)
+    return PaymentMethodService(
+        gateway=gateway,
+        customers=CustomerDirectory(store=SqlStripeCustomerStore(engine), gateway=gateway),
+    )
+
+
+def _build_stripe_gateway(settings: Settings) -> StripeCheckoutGateway:
+    key = settings.stripe_secret_key.get_secret_value() if settings.stripe_secret_key else None
+    return StripeCheckoutGateway(
+        secret_key=key,
+        return_url=f"{settings.flutter_front_url}/pago/retorno?session_id={{CHECKOUT_SESSION_ID}}",
+        publishable_key=settings.stripe_publishable_key,
     )
 
 
