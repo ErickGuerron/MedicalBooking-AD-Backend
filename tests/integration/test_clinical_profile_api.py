@@ -135,3 +135,42 @@ def test_a_doctor_cannot_write_the_patient_profile_and_the_denial_is_audited(app
         )
         >= 1
     )
+
+
+def _get(app: Flask, headers: dict):
+    return app.test_client().get(URL, headers=headers)
+
+
+def test_a_new_patient_reads_an_empty_profile_so_the_client_knows_to_ask(app, engine) -> None:
+    patient = _user(engine, "PACIENTE")
+
+    response = _get(app, _token(app, patient))
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json() == {
+        "altitud_residencia_m": None,
+        "fumador": None,
+        "cigarrillos_dia": None,
+    }
+
+
+def test_the_patient_reads_back_what_they_declared(app, engine) -> None:
+    patient = _user(engine, "PACIENTE")
+    headers = _token(app, patient)
+    body = {"altitud_residencia_m": 2850, "fumador": True, "cigarrillos_dia": 5}
+    assert _put(app, headers, body).status_code == 200
+
+    response = _get(app, headers)
+
+    assert response.status_code == 200
+    assert response.get_json() == body
+
+
+def test_a_doctor_cannot_read_the_patient_profile_endpoint(app, engine) -> None:
+    doctor = _user(engine, "MEDICO")
+
+    assert _get(app, _token(app, doctor)).status_code == 403
+
+
+def test_reading_the_profile_needs_a_session(app) -> None:
+    assert app.test_client().get(URL).status_code == 401

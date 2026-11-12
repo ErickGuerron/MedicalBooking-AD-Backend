@@ -282,6 +282,48 @@ def clinical_fragment() -> dict[str, Any]:
                 }
             },
             "/api/v1/me/perfil-clinico": {
+                "get": {
+                    "tags": ["Clinical proposals"],
+                    "operationId": "readClinicalProfile",
+                    "summary": "Read own declared altitude of residence and smoking (patient)",
+                    "description": (
+                        "Returns what the patient declared with the PUT. A field is null until it is "
+                        "declared, so altitude or smoking null means the profile is not complete yet."
+                    ),
+                    "security": _BEARER,
+                    "responses": {
+                        "200": {
+                            "description": "The declared profile",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "required": [
+                                            "altitud_residencia_m",
+                                            "fumador",
+                                            "cigarrillos_dia",
+                                        ],
+                                        "properties": {
+                                            "altitud_residencia_m": {
+                                                "type": ["integer", "null"],
+                                                "minimum": 0,
+                                                "maximum": 8848,
+                                            },
+                                            "fumador": {"type": ["boolean", "null"]},
+                                            "cigarrillos_dia": {
+                                                "type": ["integer", "null"],
+                                                "minimum": 0,
+                                                "maximum": 200,
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        **_AUTH_ERRORS,
+                        "404": _problem("The user has no patient profile"),
+                    },
+                },
                 "put": {
                     "tags": ["Clinical proposals"],
                     "operationId": "saveClinicalProfile",
