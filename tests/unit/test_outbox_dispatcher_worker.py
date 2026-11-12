@@ -6,6 +6,7 @@ import sys
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import create_engine
 
 from medicalbooking.config import Settings
 from medicalbooking.modules.synchronization.application.dispatch_service import (
@@ -57,8 +58,13 @@ def test_worker_exits_non_zero_and_hides_details_when_the_database_fails(capsys)
     assert "secret" not in captured.out + captured.err
 
 
-def test_no_handler_is_wired_yet_so_the_worker_only_materializes() -> None:
-    assert build_handlers(Settings(sqlserver_database="MedicalBooking")) == []
+def test_only_the_notification_destination_is_wired() -> None:
+    # The engine is never used to connect here: the handler only stores it.
+    engine = create_engine("sqlite://")
+
+    codes = [handler.destination_code for handler in build_handlers(engine)]
+
+    assert codes == ["NOTIFICACIONES"]
 
 
 def test_configuration_errors_exit_non_zero_without_echoing_the_value(

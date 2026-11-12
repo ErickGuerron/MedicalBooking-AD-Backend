@@ -8,8 +8,8 @@ Exit code 0 means the cycle finished; 1 means it failed. Only counts are printed
 and handler errors may carry connection data, so only the error type is logged. Safe to run
 from several processes at once: deliveries are leased in SQL Server, never locked in memory.
 
-No handler is registered yet, so SUPABASE and MONGODB deliveries stay PENDIENTE until their
-handlers exist (E8). The notification handler is added in build_handlers.
+Only NOTIFICACIONES has a handler. SUPABASE and MONGODB deliveries stay PENDIENTE until their
+handlers exist (E8).
 """
 
 from __future__ import annotations
@@ -18,7 +18,11 @@ import logging
 import sys
 from datetime import UTC, datetime
 
+from sqlalchemy import Engine
+
 from medicalbooking.config import Settings
+from medicalbooking.modules.notifications.application.handler import NotificationOutboxHandler
+from medicalbooking.modules.notifications.infrastructure.repositories import SqlNotificationStore
 from medicalbooking.modules.synchronization.application.dispatch_service import (
     OutboxDispatchService,
 )
@@ -29,9 +33,14 @@ from medicalbooking.shared.infrastructure.database import create_database_engine
 logger = logging.getLogger(__name__)
 
 
-def build_handlers(settings: Settings) -> list[OutboxHandler]:
-    """Destination handlers wired into the dispatcher. Empty until a destination is ready."""
-    return []
+def build_handlers(engine: Engine) -> list[OutboxHandler]:
+    """Destination handlers wired into the dispatcher, one per ready destination."""
+    return [
+        NotificationOutboxHandler(
+            repository=SqlNotificationStore(engine),
+            clock=lambda: datetime.now(UTC),
+        ),
+    ]
 
 
 def run(service: OutboxDispatchService) -> int:
@@ -63,7 +72,7 @@ def main() -> int:
     try:
         service = OutboxDispatchService(
             store=SqlOutboxStore(engine),
-            handlers=build_handlers(settings),
+            handlers=build_handlers(engine),
             clock=lambda: datetime.now(UTC),
         )
         return run(service)

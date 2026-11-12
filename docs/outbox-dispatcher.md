@@ -43,9 +43,9 @@ handler call, successful or not. `ultimo_error` stores the exception class name 
 
 ## Destinations without a handler
 
-`SUPABASE` and `MONGODB` have rows materialized, but no handler is registered until E8. Their rows stay
-PENDIENTE with `intentos = 0`. `build_handlers` in `workers/outbox_dispatcher.py` is the only place
-to register a handler.
+`NOTIFICACIONES` is wired to the notification handler. `SUPABASE` and `MONGODB` have rows materialized,
+but no handler is registered until E8. Their rows stay PENDIENTE with `intentos = 0`.
+`build_handlers` in `workers/outbox_dispatcher.py` is the only place to register a handler.
 
 ## Guarantees and limits
 
