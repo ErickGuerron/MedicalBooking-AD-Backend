@@ -13,10 +13,10 @@ S7. Every behavior has tests: unit tests for rules and integration tests against
 S8. Documentation: help text of each new worker and a short section in docs/ for each. Do not change `docs/backend-status.md` in these units (the parent updates it at closure).
 
 ## Tasks
-T1. SOAP contract (S1, S2). Route: delegated writer (unit A). Status: pending. Commit: -
-T2. Notifications (S3, S4). Route: delegated writer (unit B). Status: pending. Commit: -
-T3. Outbox dispatcher (S5, S6). Route: delegated writer (unit C). Status: pending. Commit: -
-T4. Seam check: merge the three units, run the full suite once, RDD review if due, Risk line per commit. Route: inline (parent). Status: pending.
+T1. SOAP contract (S1, S2). Route: delegated writer (unit A). Status: implemented, pending verification. Commit: 38415d2, 0fdd362, 202c9df, b389398, acd4f6f
+T2. Notifications (S3, S4). Route: delegated writer (unit B). Status: implemented, pending verification. Commit: 34bd804, fec622c, 83be314, e80621b, c58ca3c, 06be8b1, 75fdc91
+T3. Outbox dispatcher (S5, S6). Route: delegated writer (unit C). Status: implemented, pending verification. Commit: f5362d1, 69b2ff5, b2753a0
+T4. Seam check: merge the three units, run the full suite once, RDD review if due, Risk line per commit. Route: inline (parent). Status: pending verification.
 
 Route declaration: T1, T2 and T3 are parallel units with disjoint edit surfaces, so they are delegated writers under the Writer trigger (a).
 Risk: T1 item 2 (new authenticated endpoint); T2 item 2 (sender credentials); T3 item 4 (concurrency).
@@ -27,3 +27,8 @@ L2 (parent): 1. = SOAP contract, 2. = notifications, 3. = outbox dispatcher (fro
 L3 (parent): decision, SOAP stack: hand-written WSDL and SOAP envelope handling, parsed with `defusedxml` (the only new dependency; stdlib XML parsers are unsafe on untrusted input). Spyne was rejected: heavy and unmaintained for Python 3.12. Revisit if the user prefers spyne.
 L4 (parent): shared prerequisite done inline before the fan-out: `tests/conftest.py` reads `MEDICALBOOKING_TEST_DATABASE`, so parallel test sessions do not drop each other's database.
 L5 (parent, open): Kafka replication conflicts with spec section 1 ("un broker de mensajería permanente" is out of scope). Not part of this feature; waiting for the user's decision.
+L6 (parent): decision, notifications destination is the seeded NOTIFICACIONES destination (migration 0022). Retry schedule 1-2-4-8 minutes, FALLIDA after 5 attempts. Lease: `siguiente_intento_en` moved to now+5min inside UPDLOCK,READPAST (no `bloqueado_hasta` column). Deviation from S6: the spec names `bloqueado_hasta`; the implementation uses `siguiente_intento_en` instead. S# text not edited.
+L7 (parent): develop merged (13d849b, PR #19) into this branch in merge commit 0a2fb63. Suite: 1167 passed, 1 skipped, 1 xfailed in 322 s.
+L8 (verifier, read-only, scratch copy at 0a2fb63): S1, S2, S3, S4, S5 PASS. S6 PASS with the L6 deviation (2 concurrent runs: 12 deliveries, each exactly once). S7 partial: RED not observed for every rule. S8 FAIL: `send_notifications --help` ran the real send path. Blocker.
+L9 (parent): fixed S8 with a RED test first (tests/unit/test_send_notifications_help.py fails before, passes after): `-h/--help` short-circuit like outbox_dispatcher. Focused suite 68 passed; ruff clean. Recheck limited to the blocker: real `--help` prints the help without configuration.
+L10 (user decision pending): the S6 deviation (`siguiente_intento_en` instead of `bloqueado_hasta`) is behaviorally sound; accept it or ask for the literal column.

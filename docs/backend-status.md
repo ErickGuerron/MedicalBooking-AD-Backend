@@ -13,11 +13,11 @@ Last verified: 1054 tests passing (1 xfail), `ruff check` and `ruff format --che
 | E1 | Identity, roles, permissions, ownership, lockout after 5 failures | Done | `2ab0fa5`, `806fe24`, `identity-e1` document |
 | E2 | Schedules and appointments: availability, idempotent booking, cancellation | Done | `41379ea`, `c80d756`, `scheduling-e2` document |
 | E3 | Laboratory: orders, manual results, medical review, PDF documents | Done | `136392a`, `72e0ab7`, `lab-orders-results-e3` document |
-| E4 | Payment hold expiration worker | Done. Payment checkout and webhook are **not** implemented (see Blocked) | `1ae6b50`, `fd05fa0`, `payment-expiration-e4` document |
+| E4 | Payment hold expiration worker; payment checkout and Stripe webhook; patient notifications (NOTIFICACIONES handler, retry worker, Brevo adapter behind a port) | Implemented in code. Stripe Sandbox and real Brevo sends are not verified (see Blocked) | `1ae6b50`, `fd05fa0`, `34bd804`, `06be8b1`, `payment-expiration-e4` document |
 | E5 | Clinical knowledge: ranges, rules, proposals, medical review | Done | `d598fb6`, `6dcdaf7`, `a25db27`, `3e07b29`, `clinical-knowledge-e5` document |
-| E6 | SOAP service `/soap/laboratory?wsdl`, OpenAPI, observability | OpenAPI done for every module. SOAP **not started** (waiting for approval of a dependency or a hand-written WSDL) | `docs/api/openapi.json` |
+| E6 | SOAP service `/soap/laboratory?wsdl`, OpenAPI, observability | Implemented: WSDL and `GetLaboratoryResultStatus` (minimal status, lab ownership rule). OpenAPI done for every module | `b389398`, `202c9df`, `38415d2`, `docs/api/openapi.json` |
 | E7 | Azure SQL, 4 instances on 2 VMs, load balancer, HTTPS | Not started. Needs Azure resources | `docs/deployment.md` |
-| E8 | Outbox to Supabase and MongoDB Atlas, read-only contingency | Not started. Needs Supabase and Atlas accounts | — |
+| E8 | Outbox to Supabase and MongoDB Atlas, read-only contingency | Pending. The outbox dispatcher is implemented (`f5362d1`, `69b2ff5`, `b2753a0`), but SUPABASE and MONGODB entries stay PENDIENTE until their handlers exist. Needs Supabase and Atlas accounts. Kafka is undecided and out of spec section 1 | `f5362d1`, `69b2ff5`, `b2753a0` |
 | E9 | Report, load and failure experiments, documentation | Partial: this documentation set and the experiment plan in `deployment.md` | `docs/` |
 | E10 | openFDA (optional, second phase) | Out of scope by decision | — |
 
