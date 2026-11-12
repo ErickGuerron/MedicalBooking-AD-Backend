@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # checkout with it. Checkout requires it, so no session is created without it.
     stripe_publishable_key: str | None = None
     brevo_api_key: SecretStr | None = None
+    # Owner connection of the Supabase Postgres project (session pooler). Used only by the
+    # Alembic chain in migrations_supabase; the runtime uses the reader and writer roles.
+    supabase_database_url: SecretStr | None = None
     mail_from: str | None = None
     mail_from_name: str = Field(default="MedicalBooking", min_length=1, max_length=70)
     # Absolute public URL of the email images (for example a public Supabase Storage folder).
