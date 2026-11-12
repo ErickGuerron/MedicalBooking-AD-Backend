@@ -304,6 +304,11 @@ class BillingService:
             raise ServiceUnavailable("Payment provider is unavailable") from error
 
     def _reopen_pending(self, invoice: InvoiceRecord, payment: PaymentRecord) -> CheckoutStart:
+        # A recorded session is reopened with the key that created it (its attempt number), so
+        # Stripe returns that same session and nothing new is recorded.
+        if payment.session_id is not None:
+            key = _attempt_number_key(payment, payment.reintentos_realizados)
+            return self._open_session(invoice, payment, key, replayed=True, retry=False)
         # Without a recorded failure the attempt's own key returns its existing session. After a
         # provider failure every retry sends a new key: Stripe would replay the failure otherwise.
         if payment.reintentos_realizados == 0 and not payment.retry_pending:
@@ -376,6 +381,14 @@ class BillingService:
         if not key:
             raise ServiceUnavailable("Payment provider is not configured")
         return key
+
+
+def _attempt_number_key(payment: PaymentRecord, retries_made: int) -> str:
+    """The key of the create call numbered `retries_made`: the attempt's own key for the first
+    call, then one derived key per retry."""
+    if retries_made == 0:
+        return payment.clave
+    return retry_key(payment.clave, retries_made)
 
 
 def _require(actor: AccessProfile, permission: str) -> None:

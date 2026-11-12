@@ -109,7 +109,10 @@ class FakeBillingStore:
     def record_session(self, pago_id, session_id, retries_made):
         self.sessions[pago_id] = session_id
         self.payments[pago_id] = replace(
-            self.payments[pago_id], reintentos_realizados=retries_made, proximo_reintento_en=None
+            self.payments[pago_id],
+            session_id=session_id,
+            reintentos_realizados=retries_made,
+            proximo_reintento_en=None,
         )
 
     def record_create_failure(self, pago_id, retries_made, next_retry_at, error_code):
@@ -426,6 +429,24 @@ def test_a_new_key_performs_the_due_retry_with_its_own_key_and_reuses_the_attemp
     (payment,) = store.payments.values()
     assert payment.reintentos_realizados == 1
     assert payment.proximo_reintento_en is None
+
+
+def test_reopening_a_retried_attempt_returns_its_recorded_session_without_creating_another():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    with pytest.raises(ServiceUnavailable):
+        _service(store, FakeGateway(fail=True)).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
+        )
+    gateway = FakeGateway()
+    first = _service(store, gateway).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0002"
+    )
+    again = _service(store, gateway).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0003"
+    )
+    assert again.client_secret == first.client_secret
+    assert len(gateway.sessions) == 1
 
 
 def test_five_failed_retries_exhaust_the_attempt_and_free_the_invoice_for_a_new_one():
