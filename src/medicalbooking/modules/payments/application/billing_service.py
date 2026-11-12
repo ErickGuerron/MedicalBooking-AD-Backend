@@ -26,10 +26,11 @@ from medicalbooking.modules.payments.domain.billing import (
 )
 from medicalbooking.modules.payments.domain.checkout_retry import (
     CHECKOUT_UNAVAILABLE_CODE,
+    MAX_CHECKOUT_RETRIES,
     next_retry_at,
     retry_key,
 )
-from medicalbooking.shared.domain.errors import Conflict, Forbidden, ServiceUnavailable
+from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ServiceUnavailable
 
 
 class ProviderUnavailable(Exception):
@@ -93,6 +94,7 @@ class PaymentRecord:
     reintentos_realizados: int = 0
     reintentos_agotados: bool = False
     proximo_reintento_en: datetime | None = None
+    ultimo_error_codigo: str | None = None
 
     @property
     def retry_pending(self) -> bool:
@@ -136,6 +138,17 @@ class CheckoutSnapshot:
 
 
 @dataclass(frozen=True)
+class CheckoutStatus:
+    pago_id: str
+    estado: str
+    reintentos_realizados: int
+    reintentos_maximos: int
+    reintentos_agotados: bool
+    ultimo_error_codigo: str | None
+    proximo_reintento_en: datetime | None
+
+
+@dataclass(frozen=True)
 class RetryRun:
     attempted: int
     succeeded: int
@@ -176,6 +189,8 @@ class BillingStore(Protocol):
     def cancel_pending_payment(self, pago_id: str) -> None: ...
 
     def find_due_checkout_retries(self, now: datetime, limit: int) -> list[PaymentRecord]: ...
+
+    def find_latest_payment_for_invoice(self, factura_id: str) -> PaymentRecord | None: ...
 
 
 class CheckoutGateway(Protocol):
@@ -356,6 +371,24 @@ class BillingService:
         if payment.estado != PAGO_PENDIENTE:
             raise Conflict("The payment attempt is no longer pending")
         return self._reopen_pending(invoice, payment, reintentar_ahora)
+
+    def checkout_status(self, actor: AccessProfile, *, factura_id: str) -> CheckoutStatus:
+        _require(actor, PERM_CHECKOUT)
+        invoice = self._store.find_invoice(str(factura_id))
+        if invoice is None or invoice.paciente_user_id != actor.user_id:
+            raise Forbidden("Access to this resource is not allowed")
+        payment = self._store.find_latest_payment_for_invoice(str(factura_id))
+        if payment is None:
+            raise NotFound("This invoice has no checkout attempt")
+        return CheckoutStatus(
+            pago_id=payment.id,
+            estado=payment.estado,
+            reintentos_realizados=payment.reintentos_realizados,
+            reintentos_maximos=MAX_CHECKOUT_RETRIES,
+            reintentos_agotados=payment.reintentos_agotados,
+            ultimo_error_codigo=payment.ultimo_error_codigo,
+            proximo_reintento_en=payment.proximo_reintento_en,
+        )
 
     def retry_due_checkouts(self, limit: int) -> RetryRun:
         """Run the scheduled retries that are due now (checkout-retry S5, S9). Each retry uses

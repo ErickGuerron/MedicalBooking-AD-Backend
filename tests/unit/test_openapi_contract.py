@@ -48,6 +48,7 @@ EXPECTED_PATHS = {
     "/api/v1/payments/webhook",
     "/api/v1/invoices",
     "/api/v1/payments/checkout",
+    "/api/v1/invoices/{factura_id}/checkout-status",
 }
 
 

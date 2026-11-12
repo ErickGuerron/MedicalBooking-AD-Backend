@@ -125,14 +125,22 @@ class FakeBillingStore:
                 reintentos_realizados=retries_made,
                 reintentos_agotados=True,
                 proximo_reintento_en=None,
+                ultimo_error_codigo=error_code,
             )
             return
         self.payments[pago_id] = replace(
-            payment, reintentos_realizados=retries_made, proximo_reintento_en=next_retry_at
+            payment,
+            reintentos_realizados=retries_made,
+            proximo_reintento_en=next_retry_at,
+            ultimo_error_codigo=error_code,
         )
 
     def find_pending_payment_for_invoice(self, factura_id):
         return self._pending_for(factura_id)
+
+    def find_latest_payment_for_invoice(self, factura_id):
+        latest = [p for p in self.payments.values() if p.factura_id == factura_id]
+        return latest[-1] if latest else None
 
     def find_due_checkout_retries(self, now, limit):
         due = [

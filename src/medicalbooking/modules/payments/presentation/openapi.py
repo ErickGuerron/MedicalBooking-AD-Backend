@@ -116,6 +116,66 @@ def payments_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/invoices/{factura_id}/checkout-status": {
+                "get": {
+                    "tags": ["Payments"],
+                    "operationId": "getCheckoutStatus",
+                    "summary": "Latest checkout attempt of an invoice (owner only)",
+                    "description": (
+                        "What the app shows while a checkout is failing: attempts made, the last "
+                        "error code and when the next automatic retry is due. Retries are run by "
+                        "the scheduled worker, or immediately with reintentar_ahora on checkout."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "factura_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Latest checkout attempt",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "pago_id": {"type": "string", "format": "uuid"},
+                                            "estado": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "PENDIENTE",
+                                                    "CONFIRMADO",
+                                                    "RECHAZADO",
+                                                    "CANCELADO",
+                                                ],
+                                            },
+                                            "reintentos_realizados": {
+                                                "type": "integer",
+                                                "minimum": 0,
+                                                "maximum": 5,
+                                            },
+                                            "reintentos_maximos": {"type": "integer", "const": 5},
+                                            "reintentos_agotados": {"type": "boolean"},
+                                            "ultimo_error_codigo": {"type": ["string", "null"]},
+                                            "proximo_reintento_en": {
+                                                "type": ["string", "null"],
+                                                "format": "date-time",
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "401": _problem("Missing or invalid bearer token"),
+                        "403": _problem("Not the owner, or the invoice does not exist"),
+                        "404": _problem("The invoice has no checkout attempt yet"),
+                    },
+                }
+            },
             "/api/v1/payments/checkout": {
                 "post": {
                     "tags": ["Payments"],
@@ -137,7 +197,15 @@ def payments_fragment() -> dict[str, Any]:
                                     "required": ["factura_id"],
                                     "additionalProperties": False,
                                     "properties": {
-                                        "factura_id": {"type": "string", "format": "uuid"}
+                                        "factura_id": {"type": "string", "format": "uuid"},
+                                        "reintentar_ahora": {
+                                            "type": "boolean",
+                                            "default": False,
+                                            "description": (
+                                                "Only for the explicit Reintentar ahora action."
+                                                "It runs one scheduled retry at once."
+                                            ),
+                                        },
                                     },
                                 }
                             }

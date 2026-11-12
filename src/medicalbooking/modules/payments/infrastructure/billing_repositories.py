@@ -131,7 +131,7 @@ class SqlBillingStore:
                 text(
                     "SELECT id, factura_id, clave_idempotencia, estado, "
                     "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
-                    "proximo_reintento_en FROM pagos "
+                    "proximo_reintento_en, ultimo_error_codigo FROM pagos "
                     "WHERE clave_idempotencia = :clave"
                 ),
                 {"clave": key},
@@ -144,7 +144,7 @@ class SqlBillingStore:
                 text(
                     "SELECT TOP (1) id, factura_id, clave_idempotencia, estado, "
                     "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
-                    "proximo_reintento_en FROM pagos "
+                    "proximo_reintento_en, ultimo_error_codigo FROM pagos "
                     "WHERE factura_id = :factura AND estado = 'PENDIENTE' "
                     "ORDER BY creado_en"
                 ),
@@ -191,13 +191,26 @@ class SqlBillingStore:
             created=True,
         )
 
+    def find_latest_payment_for_invoice(self, factura_id: str) -> PaymentRecord | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT TOP (1) id, factura_id, clave_idempotencia, estado, "
+                    "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
+                    "proximo_reintento_en, ultimo_error_codigo FROM pagos "
+                    "WHERE factura_id = :factura ORDER BY creado_en DESC"
+                ),
+                {"factura": factura_id},
+            ).first()
+        return _payment(row) if row is not None else None
+
     def find_due_checkout_retries(self, now: datetime, limit: int) -> list[PaymentRecord]:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT TOP (:limite) id, factura_id, clave_idempotencia, estado, "
                     "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
-                    "proximo_reintento_en FROM pagos "
+                    "proximo_reintento_en, ultimo_error_codigo FROM pagos "
                     "WHERE estado = 'PENDIENTE' AND stripe_checkout_session_id IS NULL "
                     "AND reintentos_agotados = 0 AND proximo_reintento_en <= :ahora "
                     "ORDER BY proximo_reintento_en"
@@ -291,6 +304,7 @@ def _payment(row: Row[Any]) -> PaymentRecord:
         reintentos_realizados=int(row.reintentos_realizados),
         reintentos_agotados=bool(row.reintentos_agotados),
         proximo_reintento_en=next_retry.replace(tzinfo=UTC) if next_retry is not None else None,
+        ultimo_error_codigo=row.ultimo_error_codigo,
     )
 
 
