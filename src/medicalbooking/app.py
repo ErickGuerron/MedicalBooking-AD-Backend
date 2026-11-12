@@ -31,6 +31,10 @@ from medicalbooking.modules.identity.infrastructure.security import (
 )
 from medicalbooking.modules.identity.presentation.openapi import identity_fragment
 from medicalbooking.modules.identity.presentation.routes import identity_bp
+from medicalbooking.modules.interoperability.application.laboratory_status import (
+    LaboratoryStatusService,
+)
+from medicalbooking.modules.interoperability.presentation.soap import soap_bp
 from medicalbooking.modules.laboratory.application.use_cases import LabService
 from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
 from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
@@ -71,6 +75,9 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
+    app.extensions["medicalbooking.laboratory_status"] = LaboratoryStatusService(
+        orders=app.extensions["medicalbooking.laboratory"], clock=_utc_now
+    )
     knowledge, proposals, shadow, patient_profile = _build_clinical(engine)
     app.extensions["medicalbooking.knowledge"] = knowledge
     app.extensions["medicalbooking.proposals"] = proposals
@@ -85,6 +92,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(identity_bp)
     app.register_blueprint(scheduling_bp)
     app.register_blueprint(lab_bp)
+    app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
     if settings.docs_enabled:
         register_api_docs(
