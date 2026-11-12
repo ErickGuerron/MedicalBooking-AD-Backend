@@ -25,3 +25,9 @@ class OutboxHandler(Protocol):
     destination_code: str
 
     def handle(self, event: OutboxEvent) -> None: ...
+
+
+class OutboxStore(Protocol):
+    """Persistence port for delivery rows (one row per event and active destination)."""
+
+    def materialize(self) -> int: ...
