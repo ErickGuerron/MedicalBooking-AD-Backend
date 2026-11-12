@@ -2,60 +2,20 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from medicalbooking.modules.payments.application.billing_service import NewPayment
 from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
+from tests.integration.checkout_support import new_id as _id
 
 pytestmark = pytest.mark.integration
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
-
-
-def _id() -> str:
-    return str(uuid.uuid4())
-
-
-def _seed_factura(conn: Connection) -> str:
-    usuario, paciente, factura = _id(), _id(), _id()
-    conn.execute(
-        text(
-            "INSERT INTO usuarios (id, email, nombre, apellido, creado_en, actualizado_en) "
-            "VALUES (:id, :email, N'Nombre', N'Apellido', SYSUTCDATETIME(), SYSUTCDATETIME())"
-        ),
-        {"id": usuario, "email": f"{usuario}@example.test"},
-    )
-    conn.execute(
-        text(
-            "INSERT INTO pacientes (id, usuario_id, creado_en) VALUES (:id, :u, SYSUTCDATETIME())"
-        ),
-        {"id": paciente, "u": usuario},
-    )
-    conn.execute(
-        text(
-            "INSERT INTO facturas (id, paciente_id, subtotal, impuestos, total, moneda, estado, "
-            "creada_en) VALUES (:id, :p, 25.50, 0, 25.50, 'USD', 'PENDIENTE', SYSUTCDATETIME())"
-        ),
-        {"id": factura, "p": paciente},
-    )
-    return factura
-
-
-@pytest.fixture
-def engine(migrated_engine: Engine) -> Engine:
-    return migrated_engine
-
-
-@pytest.fixture
-def factura(engine: Engine) -> str:
-    with engine.begin() as conn:
-        return _seed_factura(conn)
 
 
 def test_a_new_attempt_starts_with_no_retries_and_no_schedule(engine: Engine, factura: str) -> None:

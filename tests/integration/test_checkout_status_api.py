@@ -10,7 +10,11 @@ from flask import Flask
 from sqlalchemy import Engine
 
 from tests.integration import test_billing_api as billing_api
-from tests.integration.test_checkout_retry_api import FlakyGateway
+from tests.integration.checkout_support import (
+    FlakyGateway,
+    failing_checkout_provider,
+    invoiced_appointment,
+)
 
 app = billing_api.app
 engine = billing_api.engine
@@ -20,12 +24,8 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def failing_provider(app: Flask, engine: Engine) -> Iterator[FlakyGateway]:
-    gateway = FlakyGateway()
-    previous = app.extensions.get("medicalbooking.billing")
-    app.extensions["medicalbooking.billing"] = billing_api._billing(engine, gateway)
-    yield gateway
-    if previous is not None:
-        app.extensions["medicalbooking.billing"] = previous
+    with failing_checkout_provider(app, engine) as gateway:
+        yield gateway
 
 
 def _invoice(app: Flask, engine: Engine, headers, client) -> str:
@@ -36,11 +36,7 @@ def _invoice(app: Flask, engine: Engine, headers, client) -> str:
 def test_status_tells_the_app_the_failure_and_the_scheduled_retry(
     app, engine, failing_provider
 ) -> None:
-    headers, cita = billing_api._booked_appointment(app, engine)
-    client = app.test_client()
-    factura = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers).get_json()[
-        "id"
-    ]
+    headers, client, factura = invoiced_appointment(app, engine)
     failed = client.post(
         "/api/v1/payments/checkout",
         json={"factura_id": factura},
@@ -63,11 +59,7 @@ def test_status_tells_the_app_the_failure_and_the_scheduled_retry(
 def test_another_patient_gets_the_same_forbidden_as_for_a_missing_invoice(
     app, engine, failing_provider
 ) -> None:
-    headers, cita = billing_api._booked_appointment(app, engine)
-    client = app.test_client()
-    factura = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers).get_json()[
-        "id"
-    ]
+    headers, client, factura = invoiced_appointment(app, engine)
     intruder = billing_api._token(app, billing_api._user(engine, "PACIENTE"))
 
     foreign = client.get(f"/api/v1/invoices/{factura}/checkout-status", headers=intruder)
@@ -78,11 +70,7 @@ def test_another_patient_gets_the_same_forbidden_as_for_a_missing_invoice(
 
 
 def test_an_invoice_without_any_attempt_answers_not_found(app, engine, failing_provider) -> None:
-    headers, cita = billing_api._booked_appointment(app, engine)
-    client = app.test_client()
-    factura = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers).get_json()[
-        "id"
-    ]
+    headers, client, factura = invoiced_appointment(app, engine)
 
     status = client.get(f"/api/v1/invoices/{factura}/checkout-status", headers=headers)
 

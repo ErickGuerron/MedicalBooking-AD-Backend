@@ -5,38 +5,15 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 
-import pytest
-
-from medicalbooking.modules.payments.application.billing_service import BillingService
-from medicalbooking.shared.domain.errors import ServiceUnavailable
+from tests.unit.checkout_retry_support import failed_first_attempt as _failed_first_attempt
+from tests.unit.checkout_retry_support import service_at as _later
 from tests.unit.test_billing_service import (
     KEY,
     NOW,
     FakeCustomers,
     FakeGateway,
     _id,
-    _invoiced,
-    _patient,
-    _service,
 )
-
-
-def _later(minutes: int, store, gateway, customers=None) -> BillingService:
-    return BillingService(
-        store=store,
-        gateway=gateway,
-        clock=lambda: NOW + timedelta(minutes=minutes),
-        customers=customers or FakeCustomers(),
-    )
-
-
-def _failed_first_attempt(owner: str):
-    store, invoice = _invoiced(owner)
-    with pytest.raises(ServiceUnavailable):
-        _service(store, FakeGateway(fail=True)).start_checkout(
-            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
-        )
-    return store, invoice
 
 
 def test_a_due_retry_is_performed_with_its_own_key_and_recorded():

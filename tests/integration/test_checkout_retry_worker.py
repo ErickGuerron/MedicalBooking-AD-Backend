@@ -17,7 +17,11 @@ from medicalbooking.modules.payments.infrastructure.customer_repositories import
     SqlStripeCustomerStore,
 )
 from tests.integration import test_billing_api as billing_api
-from tests.integration.test_checkout_retry_api import FlakyGateway
+from tests.integration.checkout_support import (
+    FlakyGateway,
+    failing_checkout_provider,
+    invoiced_appointment,
+)
 from tests.integration.test_scheduling_api import _count
 
 app = billing_api.app
@@ -39,22 +43,14 @@ def _scheduler(engine: Engine, gateway, minutes_after_now: int) -> BillingServic
 
 @pytest.fixture
 def failing_provider(app: Flask, engine: Engine) -> Iterator[FlakyGateway]:
-    gateway = FlakyGateway()
-    previous = app.extensions.get("medicalbooking.billing")
-    app.extensions["medicalbooking.billing"] = billing_api._billing(engine, gateway)
-    yield gateway
-    if previous is not None:
-        app.extensions["medicalbooking.billing"] = previous
+    with failing_checkout_provider(app, engine) as gateway:
+        yield gateway
 
 
 def test_a_failed_create_becomes_a_session_when_the_scheduled_retry_runs(
     app, engine, failing_provider
 ) -> None:
-    headers, cita = billing_api._booked_appointment(app, engine)
-    client = app.test_client()
-    factura = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers).get_json()[
-        "id"
-    ]
+    headers, client, factura = invoiced_appointment(app, engine)
     key = f"checkout-{uuid.uuid4()}"
     first = client.post(
         "/api/v1/payments/checkout",

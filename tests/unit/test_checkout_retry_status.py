@@ -6,9 +6,9 @@ from datetime import timedelta
 
 import pytest
 
-from medicalbooking.shared.domain.errors import Forbidden, NotFound, ServiceUnavailable
+from medicalbooking.shared.domain.errors import Forbidden, NotFound
+from tests.unit.checkout_retry_support import failed_first_attempt as _failed_first_attempt
 from tests.unit.test_billing_service import (
-    KEY,
     NOW,
     FakeGateway,
     _id,
@@ -16,15 +16,6 @@ from tests.unit.test_billing_service import (
     _patient,
     _service,
 )
-
-
-def _failed_first_attempt(owner: str):
-    store, invoice = _invoiced(owner)
-    with pytest.raises(ServiceUnavailable):
-        _service(store, FakeGateway(fail=True)).start_checkout(
-            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
-        )
-    return store, invoice
 
 
 def test_status_shows_the_scheduled_retry_and_the_last_error():

@@ -242,6 +242,14 @@ def _service(
     )
 
 
+def _fail_first(store, owner, invoice):
+    """Make the first checkout of `invoice` fail at the provider."""
+    with pytest.raises(ServiceUnavailable):
+        _service(store, FakeGateway(fail=True)).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
+        )
+
+
 def _service_at(minutes: int, store: FakeBillingStore, gateway: FakeGateway) -> BillingService:
     """A service whose clock is `minutes` after NOW, so a scheduled retry is due."""
     return BillingService(
@@ -430,10 +438,7 @@ def test_unconfigured_provider_fails_closed_before_reserving_anything():
 def test_provider_failure_keeps_the_attempt_pending_with_the_first_retry_due():
     owner = _id()
     store, invoice = _invoiced(owner)
-    with pytest.raises(ServiceUnavailable):
-        _service(store, FakeGateway(fail=True)).start_checkout(
-            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
-        )
+    _fail_first(store, owner, invoice)
     assert store.rejected == set()
     assert store.sessions == {}
     (payment,) = store.payments.values()
@@ -445,10 +450,7 @@ def test_provider_failure_keeps_the_attempt_pending_with_the_first_retry_due():
 def test_a_new_key_performs_the_due_retry_with_its_own_key_and_reuses_the_attempt():
     owner = _id()
     store, invoice = _invoiced(owner)
-    with pytest.raises(ServiceUnavailable):
-        _service(store, FakeGateway(fail=True)).start_checkout(
-            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
-        )
+    _fail_first(store, owner, invoice)
     gateway = FakeGateway()
     result = _service_at(1, store, gateway).start_checkout(
         _patient(owner),
@@ -467,10 +469,7 @@ def test_a_new_key_performs_the_due_retry_with_its_own_key_and_reuses_the_attemp
 def test_reopening_a_retried_attempt_returns_its_recorded_session_without_creating_another():
     owner = _id()
     store, invoice = _invoiced(owner)
-    with pytest.raises(ServiceUnavailable):
-        _service(store, FakeGateway(fail=True)).start_checkout(
-            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
-        )
+    _fail_first(store, owner, invoice)
     gateway = FakeGateway()
     first = _service_at(1, store, gateway).start_checkout(
         _patient(owner),
@@ -594,10 +593,7 @@ def test_concurrent_new_key_that_loses_the_insert_race_reuses_the_winning_attemp
 def test_routine_reopen_while_a_retry_is_scheduled_never_calls_the_provider():
     owner = _id()
     store, invoice = _invoiced(owner)
-    with pytest.raises(ServiceUnavailable):
-        _service(store, FakeGateway(fail=True)).start_checkout(
-            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
-        )
+    _fail_first(store, owner, invoice)
     gateway = FakeGateway()
     service = _service(store, gateway)
     for number in range(2, 7):
@@ -616,10 +612,7 @@ def test_routine_reopen_while_a_retry_is_scheduled_never_calls_the_provider():
 def test_an_explicit_retry_now_performs_the_retry_and_reuses_the_attempt():
     owner = _id()
     store, invoice = _invoiced(owner)
-    with pytest.raises(ServiceUnavailable):
-        _service(store, FakeGateway(fail=True)).start_checkout(
-            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
-        )
+    _fail_first(store, owner, invoice)
     gateway = FakeGateway()
     result = _service_at(1, store, gateway).start_checkout(
         _patient(owner),

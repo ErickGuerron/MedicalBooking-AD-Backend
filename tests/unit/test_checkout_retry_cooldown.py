@@ -2,39 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 import pytest
 
-from medicalbooking.modules.payments.application.billing_service import BillingService
 from medicalbooking.shared.domain.errors import Conflict, ServiceUnavailable
+from tests.unit.checkout_retry_support import failed_first_attempt as _failed_at_now
+from tests.unit.checkout_retry_support import service_at as _at
 from tests.unit.test_billing_service import (
     KEY,
-    NOW,
-    FakeCustomers,
     FakeGateway,
     _id,
-    _invoiced,
     _patient,
 )
-
-
-def _at(minutes: float, store, gateway) -> BillingService:
-    return BillingService(
-        store=store,
-        gateway=gateway,
-        clock=lambda: NOW + timedelta(minutes=minutes),
-        customers=FakeCustomers(),
-    )
-
-
-def _failed_at_now(owner: str):
-    store, invoice = _invoiced(owner)
-    with pytest.raises(ServiceUnavailable):
-        _at(0, store, FakeGateway(fail=True)).start_checkout(
-            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
-        )
-    return store, invoice
 
 
 def test_a_manual_retry_right_after_a_failure_is_refused_and_calls_nothing():
