@@ -242,6 +242,16 @@ def _service(
     )
 
 
+def _service_at(minutes: int, store: FakeBillingStore, gateway: FakeGateway) -> BillingService:
+    """A service whose clock is `minutes` after NOW, so a scheduled retry is due."""
+    return BillingService(
+        store=store,
+        gateway=gateway,
+        clock=lambda: NOW + timedelta(minutes=minutes),
+        customers=FakeCustomers(),
+    )
+
+
 def _seeded(owner: str, **kwargs) -> tuple[FakeBillingStore, AppointmentBilling]:
     store = FakeBillingStore()
     appointment = _appointment(owner, **kwargs)
@@ -440,7 +450,7 @@ def test_a_new_key_performs_the_due_retry_with_its_own_key_and_reuses_the_attemp
             _patient(owner), factura_id=invoice.id, idempotency_key=KEY
         )
     gateway = FakeGateway()
-    result = _service(store, gateway).start_checkout(
+    result = _service_at(1, store, gateway).start_checkout(
         _patient(owner),
         factura_id=invoice.id,
         idempotency_key="checkout-key-0002",
@@ -462,7 +472,7 @@ def test_reopening_a_retried_attempt_returns_its_recorded_session_without_creati
             _patient(owner), factura_id=invoice.id, idempotency_key=KEY
         )
     gateway = FakeGateway()
-    first = _service(store, gateway).start_checkout(
+    first = _service_at(1, store, gateway).start_checkout(
         _patient(owner),
         factura_id=invoice.id,
         idempotency_key="checkout-key-0002",
@@ -486,7 +496,7 @@ def test_five_failed_retries_exhaust_the_attempt_and_free_the_invoice_for_a_new_
         )
     for number in range(1, 6):
         with pytest.raises(ServiceUnavailable):
-            _service(store, failing).start_checkout(
+            _service_at(number, store, failing).start_checkout(
                 _patient(owner),
                 factura_id=invoice.id,
                 idempotency_key=f"checkout-key-000{number + 1}",
@@ -611,7 +621,7 @@ def test_an_explicit_retry_now_performs_the_retry_and_reuses_the_attempt():
             _patient(owner), factura_id=invoice.id, idempotency_key=KEY
         )
     gateway = FakeGateway()
-    result = _service(store, gateway).start_checkout(
+    result = _service_at(1, store, gateway).start_checkout(
         _patient(owner),
         factura_id=invoice.id,
         idempotency_key="checkout-key-0002",

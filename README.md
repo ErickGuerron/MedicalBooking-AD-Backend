@@ -163,6 +163,8 @@ After the fifth failed retry the attempt is rejected and the patient can start a
 The patient sees the state in the app with `GET /api/v1/invoices/{factura_id}/checkout-status`.
 "Reintentar ahora" runs the next retry at once: send `reintentar_ahora: true` on
 `POST /api/v1/payments/checkout`. Without that flag a routine reopen never spends a retry.
+Patients can use it at most once a minute: a request sooner than one minute after the last
+failure answers 409 and calls no provider.
 
 ## Endpoints
 

@@ -27,6 +27,7 @@ from medicalbooking.modules.payments.domain.billing import (
 from medicalbooking.modules.payments.domain.checkout_retry import (
     CHECKOUT_UNAVAILABLE_CODE,
     MAX_CHECKOUT_RETRIES,
+    manual_retry_allowed,
     next_retry_at,
     retry_key,
 )
@@ -349,6 +350,10 @@ class BillingService:
         # must not spend one of the five retries, or a burst would exhaust them in seconds.
         if not reintentar_ahora:
             raise Conflict("A checkout retry is scheduled for this payment attempt")
+        if not manual_retry_allowed(
+            payment.reintentos_realizados, payment.proximo_reintento_en, self._clock()
+        ):
+            raise Conflict("Wait a minute after the last failure before retrying now")
         # After a provider failure every retry sends a new key: Stripe would replay it otherwise.
         return self._open_session(
             invoice,

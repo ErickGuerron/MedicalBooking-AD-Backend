@@ -22,6 +22,9 @@ _RETRY_GAPS = (
 
 CHECKOUT_UNAVAILABLE_CODE = "PROVEEDOR_NO_DISPONIBLE"
 
+# A patient may run a retry at once at most once per minute after the last failure.
+MANUAL_RETRY_COOLDOWN = timedelta(minutes=1)
+
 
 def next_retry_at(retries_made: int, failed_at: datetime) -> datetime | None:
     """When the next retry is due after `retries_made` retries have failed, or None when the
@@ -34,3 +37,10 @@ def next_retry_at(retries_made: int, failed_at: datetime) -> datetime | None:
 def retry_key(attempt_key: str, retry_number: int) -> str:
     """The Idempotency-Key sent to Stripe for retry number `retry_number` (1-based)."""
     return f"{attempt_key}:{retry_number}"
+
+
+def manual_retry_allowed(retries_made: int, next_due: datetime, now: datetime) -> bool:
+    """True when an immediate retry may run now. The last failure is the scheduled time minus
+    the gap that followed it, so no extra column is needed."""
+    last_failure = next_due - _RETRY_GAPS[retries_made]
+    return now >= last_failure + MANUAL_RETRY_COOLDOWN

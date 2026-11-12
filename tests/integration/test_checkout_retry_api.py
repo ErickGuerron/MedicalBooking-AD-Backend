@@ -7,7 +7,7 @@ from collections.abc import Iterator
 
 import pytest
 from flask import Flask
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from medicalbooking.modules.payments.application.billing_service import (
     CheckoutRequest,
@@ -94,6 +94,21 @@ def test_reintentar_ahora_runs_the_retry_with_its_own_key(app, engine, flaky) ->
     assert _checkout(client, headers, factura, key).status_code == 503
 
     flaky.failing = False
+    too_soon = _checkout(
+        client, headers, factura, f"checkout-{uuid.uuid4()}", reintentar_ahora=True
+    )
+    assert too_soon.status_code == 409
+    assert flaky.requests[-1].idempotency_key == key
+
+    # Simulate a minute passing: the last failure moves one minute back.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE pagos SET proximo_reintento_en = DATEADD(minute, -1, proximo_reintento_en) "
+                "WHERE factura_id = :f"
+            ),
+            {"f": factura},
+        )
     retried = _checkout(client, headers, factura, f"checkout-{uuid.uuid4()}", reintentar_ahora=True)
 
     assert retried.status_code == 200, retried.get_json()
