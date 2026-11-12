@@ -25,6 +25,7 @@ from medicalbooking.modules.payments.application.billing_service import (
 )
 from medicalbooking.modules.payments.application.customers import CustomerDirectory
 from medicalbooking.modules.payments.application.payment_methods import (
+    CardPage,
     CardSnapshot,
     PaymentMethodService,
     PaymentMethodSnapshot,
@@ -50,6 +51,7 @@ class StubStripe:
 
     def __init__(self) -> None:
         self.customers_created: list[str] = []
+        self.setup_keys: list[str] = []
         self.owners: dict[str, str | None] = {}
         self.cards: dict[str, list[CardSnapshot]] = {}
         self.detached: list[str] = []
@@ -63,11 +65,14 @@ class StubStripe:
         self.customers_created.append(idempotency_key)
         return customer
 
-    def create_setup_intent(self, customer_id: str) -> str:
+    def create_setup_intent(self, customer_id: str, idempotency_key: str) -> str:
+        self.setup_keys.append(idempotency_key)
         return f"seti_{customer_id}_secret"
 
-    def list_cards(self, customer_id: str) -> list[CardSnapshot]:
-        return list(self.cards.get(customer_id, []))
+    def list_cards(
+        self, customer_id: str, *, limit: int = 10, starting_after: str | None = None
+    ) -> CardPage:
+        return CardPage(cards=list(self.cards.get(customer_id, [])), has_more=False)
 
     def default_payment_method(self, customer_id: str) -> str | None:
         return None
@@ -236,13 +241,14 @@ def test_the_customer_mapping_allows_one_customer_per_user(migrated_engine: Engi
 
 SETUP = "/api/v1/me/payment-methods/setup-intents"
 CARDS = "/api/v1/me/payment-methods"
+SETUP_KEY = "integration-setup-key-0001"
 
 
 def test_listing_without_a_customer_is_empty_and_creates_no_customer(app, engine, stripe) -> None:
     usuario, headers = _patient_headers(app, engine)
     response = app.test_client().get(CARDS, headers=headers)
     assert response.status_code == 200
-    assert response.get_json() == {"items": []}
+    assert response.get_json() == {"items": [], "has_more": False, "next_cursor": None}
     assert stripe.customers_created == []
     assert _customer_rows(engine, usuario) == 0
 
@@ -250,8 +256,8 @@ def test_listing_without_a_customer_is_empty_and_creates_no_customer(app, engine
 def test_setup_intent_creates_one_customer_and_reuses_it(app, engine, stripe) -> None:
     usuario, headers = _patient_headers(app, engine)
     client = app.test_client()
-    first = client.post(SETUP, headers=headers)
-    second = client.post(SETUP, headers=headers)
+    first = client.post(SETUP, headers={**headers, "Idempotency-Key": SETUP_KEY})
+    second = client.post(SETUP, headers={**headers, "Idempotency-Key": SETUP_KEY})
     assert first.status_code == second.status_code == 201, first.get_json()
     assert first.get_json()["publishable_key"] == "pk_test_stub_publishable"
     assert stripe.customers_created == [f"customer-{usuario}"]
@@ -261,16 +267,29 @@ def test_setup_intent_creates_one_customer_and_reuses_it(app, engine, stripe) ->
 def test_listed_cards_come_from_stripe_for_the_stored_customer(app, engine, stripe) -> None:
     usuario, headers = _patient_headers(app, engine)
     client = app.test_client()
-    client.post(SETUP, headers=headers)
+    client.post(SETUP, headers={**headers, "Idempotency-Key": SETUP_KEY})
     customer = SqlStripeCustomerStore(engine).find(usuario)
     stripe.cards[customer] = [_card(PM_CARD)]
 
     response = client.get(CARDS, headers=headers)
 
     assert response.status_code == 200
-    items = response.get_json()["items"]
-    assert [item["id"] for item in items] == [PM_CARD]
-    assert set(items[0]) == {"id", "brand", "last4", "exp_month", "exp_year", "is_default"}
+    body = response.get_json()
+    assert [item["id"] for item in body["items"]] == [PM_CARD]
+    assert set(body["items"][0]) == {"id", "brand", "last4", "exp_month", "exp_year", "is_default"}
+    assert body["has_more"] is False
+    assert body["next_cursor"] is None
+
+
+def test_setup_without_an_idempotency_key_is_422_and_creates_no_customer(
+    app, engine, stripe
+) -> None:
+    usuario, headers = _patient_headers(app, engine)
+    response = app.test_client().post(SETUP, headers=headers)
+    assert response.status_code == 422
+    assert stripe.customers_created == []
+    assert stripe.setup_keys == []
+    assert _customer_rows(engine, usuario) == 0
 
 
 def test_checkout_opens_the_session_for_the_patients_customer(app, engine, stripe) -> None:
@@ -302,7 +321,7 @@ def test_checkout_opens_the_session_for_the_patients_customer(app, engine, strip
 def test_removing_an_own_card_is_204_and_detaches_it(app, engine, stripe) -> None:
     usuario, headers = _patient_headers(app, engine)
     client = app.test_client()
-    client.post(SETUP, headers=headers)
+    client.post(SETUP, headers={**headers, "Idempotency-Key": SETUP_KEY})
     stripe.owners[PM_CARD] = SqlStripeCustomerStore(engine).find(usuario)
 
     response = client.delete(f"{CARDS}/{PM_CARD}", headers=headers)
@@ -330,13 +349,13 @@ def test_a_doctor_cannot_manage_saved_cards(app, engine, stripe) -> None:
     headers = _token(app, _user(engine, "MEDICO"))
     client = app.test_client()
     assert client.get(CARDS, headers=headers).status_code == 403
-    assert client.post(SETUP, headers=headers).status_code == 403
+    assert client.post(SETUP, headers={**headers, "Idempotency-Key": SETUP_KEY}).status_code == 403
     assert client.delete(f"{CARDS}/{PM_CARD}", headers=headers).status_code == 403
     assert stripe.customers_created == []
 
 
 def test_setup_intent_without_a_provider_key_answers_503_and_stores_nothing(app, engine) -> None:
     usuario, headers = _patient_headers(app, engine)
-    response = app.test_client().post(SETUP, headers=headers)
+    response = app.test_client().post(SETUP, headers={**headers, "Idempotency-Key": SETUP_KEY})
     assert response.status_code == 503
     assert _customer_rows(engine, usuario) == 0

@@ -20,6 +20,7 @@ PUBLISHABLE = "pk_test_synthetic_publishable"
 RETURN_URL = "https://front.test/pago/retorno?session_id={CHECKOUT_SESSION_ID}"
 CUSTOMER = "cus_test_patient_0002"
 PAYMENT_METHOD = "pm_test_card_0002"
+SETUP_KEY = "setup-user-0002-client-key"
 
 
 def _gateway(handler, secret: str | None = SECRET) -> StripeCheckoutGateway:
@@ -31,6 +32,7 @@ def _gateway(handler, secret: str | None = SECRET) -> StripeCheckoutGateway:
         return_url=RETURN_URL,
         publishable_key=PUBLISHABLE,
         client=client,
+        sleep=lambda _seconds: None,
     )
 
 
@@ -90,7 +92,7 @@ def test_setup_intent_is_off_session_for_the_customer_and_returns_its_client_sec
             200, json={"id": "seti_test_1", "object": "setup_intent", "client_secret": "seti_s"}
         )
 
-    assert _gateway(handler).create_setup_intent(CUSTOMER) == "seti_s"
+    assert _gateway(handler).create_setup_intent(CUSTOMER, SETUP_KEY) == "seti_s"
     assert seen["method"] == "POST"
     assert seen["path"] == "/v1/setup_intents"
     assert seen["form"]["customer"] == [CUSTOMER]
@@ -98,12 +100,26 @@ def test_setup_intent_is_off_session_for_the_customer_and_returns_its_client_sec
     assert seen["form"]["automatic_payment_methods[enabled]"] == ["true"]
 
 
+def test_setup_intent_sends_the_idempotency_key_header_and_a_repeat_sends_the_same_value():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["Idempotency-Key"])
+        return httpx.Response(200, json={"id": "seti_test_3", "client_secret": "seti_s"})
+
+    gateway = _gateway(handler)
+    gateway.create_setup_intent(CUSTOMER, SETUP_KEY)
+    gateway.create_setup_intent(CUSTOMER, SETUP_KEY)
+
+    assert seen == [SETUP_KEY, SETUP_KEY]
+
+
 def test_setup_intent_without_client_secret_is_unavailable():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"id": "seti_test_2"})
 
     with pytest.raises(ProviderUnavailable):
-        _gateway(handler).create_setup_intent(CUSTOMER)
+        _gateway(handler).create_setup_intent(CUSTOMER, SETUP_KEY)
 
 
 # --- listing cards -------------------------------------------------------------
@@ -125,7 +141,7 @@ def test_cards_are_listed_as_card_type_for_the_customer():
             },
         )
 
-    cards = _gateway(handler).list_cards(CUSTOMER)
+    cards = _gateway(handler).list_cards(CUSTOMER, limit=10, starting_after=None).cards
 
     assert seen["method"] == "GET"
     assert seen["path"] == f"/v1/customers/{CUSTOMER}/payment_methods"
@@ -138,6 +154,44 @@ def test_cards_are_listed_as_card_type_for_the_customer():
     assert cards[0].exp_year == 2031
 
 
+def test_a_list_request_defaults_to_ten_cards_and_maps_the_page():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["limit"] = request.url.params.get("limit")
+        seen["starting_after"] = request.url.params.get("starting_after")
+        return httpx.Response(
+            200, json={"has_more": False, "data": [_card("pm_a", "visa", "4242", 1, 2030)]}
+        )
+
+    page = _gateway(handler).list_cards(CUSTOMER)
+
+    assert seen == {"limit": "10", "starting_after": None}
+    assert page.has_more is False
+    assert [card.id for card in page.cards] == ["pm_a"]
+
+
+def test_the_list_forwards_limit_and_starting_after_to_stripe():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["limit"] = request.url.params.get("limit")
+        seen["starting_after"] = request.url.params.get("starting_after")
+        return httpx.Response(200, json={"has_more": True, "data": []})
+
+    _gateway(handler).list_cards(CUSTOMER, limit=25, starting_after="pm_cursor_0001")
+
+    assert seen == {"limit": "25", "starting_after": "pm_cursor_0001"}
+
+
+@pytest.mark.parametrize("has_more", [True, False])
+def test_has_more_from_stripe_is_mapped_to_the_page(has_more):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"has_more": has_more, "data": []})
+
+    assert _gateway(handler).list_cards(CUSTOMER).has_more is has_more
+
+
 def test_a_list_entry_without_card_details_is_skipped():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -147,7 +201,7 @@ def test_a_list_entry_without_card_details_is_skipped():
             },
         )
 
-    cards = _gateway(handler).list_cards(CUSTOMER)
+    cards = _gateway(handler).list_cards(CUSTOMER, limit=10, starting_after=None).cards
     assert [card.id for card in cards] == ["pm_b"]
 
 
@@ -265,7 +319,7 @@ def test_no_method_reaches_the_provider_without_a_secret_key():
     with pytest.raises(ProviderUnavailable):
         gateway.create_customer("customer-x")
     with pytest.raises(ProviderUnavailable):
-        gateway.create_setup_intent(CUSTOMER)
+        gateway.create_setup_intent(CUSTOMER, SETUP_KEY)
     with pytest.raises(ProviderUnavailable):
         gateway.list_cards(CUSTOMER)
     with pytest.raises(ProviderUnavailable):

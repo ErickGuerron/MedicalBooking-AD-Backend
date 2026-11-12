@@ -4141,14 +4141,42 @@
     },
     "/api/v1/me/payment-methods": {
       "get": {
-        "description": "Cards of the caller's Stripe customer, read from Stripe on each call. Only card-type methods are listed. No card data is stored by the server. A user without a customer gets an empty list and no provider call.",
+        "description": "Cards of the caller's Stripe customer, read from Stripe on each call. Only card-type methods are listed. No card data is stored by the server. Pages of up to 100 cards; when has_more is true, pass next_cursor as starting_after to read the next page. A user without a customer gets an empty page and no provider call.",
         "operationId": "listPaymentMethods",
+        "parameters": [
+          {
+            "description": "Cards per page. Defaults to 10.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Cursor: the next_cursor of the previous page (a Stripe payment method id).",
+            "in": "query",
+            "name": "starting_after",
+            "required": false,
+            "schema": {
+              "pattern": "^pm_[A-Za-z0-9_]{1,100}$",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": false,
                   "properties": {
+                    "has_more": {
+                      "type": "boolean"
+                    },
                     "items": {
                       "items": {
                         "additionalProperties": false,
@@ -4193,16 +4221,25 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "next_cursor": {
+                      "description": "Id of the last item when has_more is true, otherwise null",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
-                    "items"
+                    "items",
+                    "has_more",
+                    "next_cursor"
                   ],
                   "type": "object"
                 }
               }
             },
-            "description": "Saved cards (possibly empty)"
+            "description": "One page of saved cards (possibly empty)"
           },
           "401": {
             "content": {
@@ -4224,6 +4261,16 @@
             },
             "description": "The caller may not manage saved cards"
           },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "limit outside 1 to 100, or an invalid starting_after"
+          },
           "503": {
             "content": {
               "application/problem+json": {
@@ -4240,7 +4287,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "List the caller's saved cards (owner only)",
+        "summary": "List the caller's saved cards (owner only, paged)",
         "tags": [
           "Payments"
         ]
@@ -4250,6 +4297,19 @@
       "post": {
         "description": "Creates the caller's Stripe customer on first use, then a SetupIntent for off-session use. The browser confirms it with the client secret; the card is saved only when Stripe confirms the setup.",
         "operationId": "createPaymentMethodSetupIntent",
+        "parameters": [
+          {
+            "description": "8 to 100 characters. Repeating the same key returns the same SetupIntent and client secret; the key is scoped to the caller.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 8,
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "201": {
             "content": {
@@ -4293,6 +4353,16 @@
               }
             },
             "description": "The caller may not manage saved cards"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid Idempotency-Key header"
           },
           "503": {
             "content": {

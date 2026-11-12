@@ -8,6 +8,8 @@ reaches the client.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
 
@@ -20,16 +22,22 @@ from medicalbooking.modules.payments.application.billing_service import (
     ProviderUnavailable,
 )
 from medicalbooking.modules.payments.application.payment_methods import (
+    CardPage,
     CardSnapshot,
     PaymentMethodSnapshot,
 )
+from medicalbooking.modules.payments.domain.payment_methods import DEFAULT_PAGE_LIMIT
 
 STRIPE_API_BASE = "https://api.stripe.com"
 CHECKOUT_PATH = "/v1/checkout/sessions"
 CUSTOMERS_PATH = "/v1/customers"
 SETUP_INTENTS_PATH = "/v1/setup_intents"
 PAYMENT_METHODS_PATH = "/v1/payment_methods"
-CARDS_PAGE_LIMIT = "100"
+
+# Every provider request goes through _perform, so this policy covers every Stripe call.
+# Retries are limited to requests that are safe to repeat: GET, or POST with an Idempotency-Key.
+MAX_PROVIDER_ATTEMPTS = 3
+BACKOFF_BASE_SECONDS = 0.5
 _NOT_AN_OBJECT = "Stripe answered a body that is not an object"
 _NO_CHECKOUT_SESSION = "Stripe answered without a checkout session"
 
@@ -44,11 +52,13 @@ class StripeCheckoutGateway:
         return_url: str,
         publishable_key: str | None = None,
         client: httpx.Client | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._secret_key = secret_key
         self._return_url = return_url
         self.publishable_key = publishable_key
         self._client = client or httpx.Client(base_url=STRIPE_API_BASE, timeout=10.0)
+        self._sleep = sleep
 
     def is_configured(self) -> bool:
         return bool(self._secret_key and self.publishable_key)
@@ -110,8 +120,9 @@ class StripeCheckoutGateway:
             raise ProviderUnavailable("Stripe answered without a customer")
         return customer_id
 
-    def create_setup_intent(self, customer_id: str) -> str:
-        """Create a SetupIntent to save a card without paying. Returns its client secret."""
+    def create_setup_intent(self, customer_id: str, idempotency_key: str) -> str:
+        """Create a SetupIntent to save a card without paying. Returns its client secret. The
+        key makes a repeat return the same SetupIntent and client secret."""
         body = self._send(
             "POST",
             SETUP_INTENTS_PATH,
@@ -120,17 +131,27 @@ class StripeCheckoutGateway:
                 "usage": "off_session",
                 "automatic_payment_methods[enabled]": "true",
             },
+            idempotency_key=idempotency_key,
         )
         client_secret = body.get("client_secret")
         if not isinstance(client_secret, str):
             raise ProviderUnavailable("Stripe answered without a setup intent")
         return client_secret
 
-    def list_cards(self, customer_id: str) -> list[CardSnapshot]:
+    def list_cards(
+        self,
+        customer_id: str,
+        *,
+        limit: int = DEFAULT_PAGE_LIMIT,
+        starting_after: str | None = None,
+    ) -> CardPage:
+        params = {"type": "card", "limit": str(limit)}
+        if starting_after is not None:
+            params["starting_after"] = starting_after
         body = self._send(
             "GET",
             f"{CUSTOMERS_PATH}/{quote(customer_id, safe='')}/payment_methods",
-            params={"type": "card", "limit": CARDS_PAGE_LIMIT},
+            params=params,
         )
         items = body.get("data")
         if not isinstance(items, list):
@@ -151,7 +172,7 @@ class StripeCheckoutGateway:
                     exp_year=_int_or_none(card.get("exp_year")),
                 )
             )
-        return cards
+        return CardPage(cards=cards, has_more=body.get("has_more") is True)
 
     def default_payment_method(self, customer_id: str) -> str | None:
         body = self._send("GET", f"{CUSTOMERS_PATH}/{quote(customer_id, safe='')}")
@@ -224,20 +245,38 @@ class StripeCheckoutGateway:
     ) -> dict[str, Any] | None:
         """Send one request and return its JSON object. With missing_ok, a 404 returns None
         (the object does not exist). Every other failure becomes ProviderUnavailable without
-        the provider body."""
+        the provider body.
+
+        Transient failures are retried up to MAX_PROVIDER_ATTEMPTS in total, with exponential
+        backoff. A request is retried only when it is safe to repeat: a GET, or a POST that
+        carries an Idempotency-Key. Detach carries no key, so it is never retried. A 409 is
+        retried only with a key, because it means a same-key request is still running."""
         if not self._secret_key:
             raise ProviderUnavailable("Stripe secret key is not configured")
         headers = {"Authorization": f"Bearer {self._secret_key}"}
         if idempotency_key is not None:
             headers["Idempotency-Key"] = idempotency_key
-        try:
-            response = self._client.request(method, path, data=data, params=params, headers=headers)
-        except httpx.HTTPError as error:
-            raise ProviderUnavailable("Stripe is unreachable") from error
-        if missing_ok and response.status_code == 404:
-            return None
-        if response.status_code >= 400:
-            raise ProviderUnavailable(f"Stripe answered {response.status_code}")
+        retryable = method == "GET" or idempotency_key is not None
+        for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
+            last_attempt = attempt == MAX_PROVIDER_ATTEMPTS
+            try:
+                response = self._client.request(
+                    method, path, data=data, params=params, headers=headers
+                )
+            except httpx.HTTPError as error:
+                if retryable and not last_attempt:
+                    self._sleep(_backoff_seconds(attempt))
+                    continue
+                raise ProviderUnavailable("Stripe is unreachable") from error
+            if missing_ok and response.status_code == 404:
+                return None
+            if response.status_code >= 400:
+                transient = _is_transient(response.status_code, keyed=idempotency_key is not None)
+                if retryable and transient and not last_attempt:
+                    self._sleep(_backoff_seconds(attempt))
+                    continue
+                raise ProviderUnavailable(f"Stripe answered {response.status_code}")
+            break
         try:
             body = response.json()
         except ValueError as error:
@@ -249,3 +288,18 @@ class StripeCheckoutGateway:
 
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _backoff_seconds(failed_attempt: int) -> float:
+    """0.5 s after the first failed attempt, 1.0 s after the second."""
+    return BACKOFF_BASE_SECONDS * 2 ** (failed_attempt - 1)
+
+
+def _is_transient(status: int, *, keyed: bool) -> bool:
+    """Stripe stores the first answer of a keyed POST, 5xx included, so repeating a keyed POST
+    after a 500 only replays the stored error. A 5xx is retried for GET requests alone."""
+    if status == 409:
+        return keyed
+    if status == 429:
+        return True
+    return status >= 500 and not keyed
