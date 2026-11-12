@@ -14,7 +14,7 @@ S8. ASSUMPTION: after 5 failed retries the attempt stays RECHAZADO with the exha
 S9. Retry schedule, decided by the user: the worker runs every minute and retries an attempt when its next retry time has passed. Gaps between retries: 1 min, 1 min, 2 min, 2 min, 5 min (about 11 min in total). The patient can also press "Reintentar ahora" in the app, which creates a fresh session immediately (same path as S7), without waiting for the worker.
 
 ## Tasks
-T1 | S6 | route: inline (migration + repository) | status: pending | commit: -
+T1 | S6 | route: inline (migration 0021, schema tests) | status: done (RED 3 failing, GREEN 24 passing; full suite 1023 passed, 1 xfailed) | commit: see git log
 T2 | S1, S2, S3, S8 | route: inline (domain rules in billing service) | status: pending | commit: -
 T3 | S4, S5 | route: inline (one-shot worker, same pattern as expire_holds) | status: pending | commit: -
 T4 | S4, S7 | route: inline (status endpoint fields, OpenAPI) | status: pending | commit: -
