@@ -130,7 +130,7 @@ def test_a_rejected_attempt_does_not_block_a_new_one(engine: Engine, factura: st
 def test_pending_lookup_returns_the_provider_session(engine: Engine, factura: str) -> None:
     store = SqlBillingStore(engine)
     created = store.reserve_payment(_payment(factura, "sess-key-0000001")).payment
-    store.record_session(created.id, "cs_test_sess_1")
+    store.record_session(created.id, "cs_test_sess_1", 0)
     found = store.find_pending_payment_for_invoice(factura)
     assert found is not None
     assert found.session_id == "cs_test_sess_1"

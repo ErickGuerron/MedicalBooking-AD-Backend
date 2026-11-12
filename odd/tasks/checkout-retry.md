@@ -15,7 +15,9 @@ S9. Retry schedule, decided by the user: the worker runs every minute and retrie
 
 ## Tasks
 T1 | S6 | route: inline (migration 0021, schema tests) | status: done (RED 3 failing, GREEN 24 passing; full suite 1023 passed, 1 xfailed) | commit: see git log
-T2 | S1, S2, S3, S8 | route: inline (domain rules in billing service) | status: pending | commit: -
+T2 | S1, S2, S3, S8 | route: inline (domain rules in checkout_retry.py, billing service, store) | status: done (unit RED 4 failing then GREEN; full suite 1033 passed, 1 xfailed) | commit: see git log
+   Behavior change (intended): a failed provider create keeps the attempt PENDIENTE with the next retry scheduled, instead of RECHAZADO. Tests 'provider failure marks rejected' and 'new key after rejected opens new attempt' were replaced by the retry expectations. The store integration tests were written after the SQL, so they are regression checks, not RED evidence.
+   Open before T6: differential check of shared checkout paths (_open_session, _replay, _reopen_pending) against the base commit, in a mktemp scratch copy.
 T3 | S4, S5 | route: inline (one-shot worker, same pattern as expire_holds) | status: pending | commit: -
 T4 | S4, S7 | route: inline (status endpoint fields, OpenAPI) | status: pending | commit: -
 T5 | all | docs: README worker section, OpenAPI regen, backend-status | status: pending | commit: -
@@ -27,4 +29,5 @@ Risk (draft): item 1 (changes state of payment attempts). Final Risk line set pe
 L1 (user, 2026-11-11, verbatim fragments): "reintentar cada cierto tiempo" for checkouts that failed; "que solo sea por la app y se notifique dentro, ... para que se le notifique si hubo un error y el numero de intentos que va realizando, dentro de la app"; decision B: state stored on pagos, exposed through status; option 1: stack on feature/payment-methods-hardening.
 L2 (parent): inspected code. Provider failure on create marks the attempt RECHAZADO (billing_service._open_session -> store.mark_rejected). Stripe 5xx on keyed POST is replayed, so retries need new keys (S3).
 L3 (parent): no in-app notification UI exists in the front (Flutter, Angular); the front team must build the notice from the status fields.
+L5 (parent, T2): retry counter counts retry calls only; the first failed create sets the schedule with gap 1 min; retry n uses key "<clave>:<n>"; a manual "Reintentar ahora" counts as a retry (assumption, confirm with user). Risk: item 1 (changes payment attempt state transitions). Independent verifier deferred to T6 (one run at feature end).
 L4 (user): "me parece mejor el reintentar ahorra, con los tiempos propuestos". Resolves S9 with the schedule above and the "Reintentar ahora" button. Constraint found: a seconds-level schedule needs a continuous worker, which breaks the one-shot pattern, so it was rejected.
