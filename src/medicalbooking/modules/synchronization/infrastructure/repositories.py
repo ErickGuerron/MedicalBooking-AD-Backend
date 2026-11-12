@@ -22,8 +22,11 @@ from medicalbooking.shared.infrastructure.sql_errors import retry_on_deadlock
 
 # The key-range hint on the NOT EXISTS probe makes two concurrent materializations
 # serialize instead of racing into the UQ (evento_id, destino_id).
+# OUTPUT returns one row per insert, so the count does not depend on the driver's rowcount,
+# which pyodbc reports as -1 when the server does not send a count.
 _MATERIALIZE = text(
     "INSERT INTO entregas_eventos (id, evento_id, destino_id, estado, intentos) "
+    "OUTPUT INSERTED.id "
     "SELECT NEWID(), ev.id, d.id, 'PENDIENTE', 0 "
     "FROM eventos_outbox AS ev "
     "CROSS JOIN destinos_sincronizacion AS d "
@@ -84,7 +87,7 @@ class SqlOutboxStore:
     def materialize(self) -> int:
         def work() -> int:
             with self._engine.begin() as conn:
-                return conn.execute(_MATERIALIZE).rowcount
+                return len(conn.execute(_MATERIALIZE).all())
 
         return retry_on_deadlock(work)
 
