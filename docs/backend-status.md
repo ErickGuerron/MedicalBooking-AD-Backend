@@ -3,7 +3,7 @@
 This page records what is delivered, what is blocked and why, and the decisions taken, phase by phase
 (spec section 11). It is updated with each phase. Commit hashes refer to `develop`.
 
-Last verified: 329 tests passing, `ruff check` and `ruff format --check` clean.
+Last verified: 1054 tests passing (1 xfail), `ruff check` and `ruff format --check` clean.
 
 ## Delivery by phase
 
@@ -26,6 +26,7 @@ Cross-cutting work delivered outside the phase list:
 - **Container fix (`bcdc52b`, PR #4):** gunicorn workers failed to boot because the storage folder
   was created under the root-owned `/app`. The folder is now created on first upload, and the
   image provides `/app/data/documents` owned by the application user.
+- **Checkout retry (branch `feature/checkout-retry`, stacked on PR #17):** a failed Stripe session creation stays pending with up to five retries at 1, 1, 2, 2 and 5 minutes, run by the one-shot worker `workers/retry_failed_checkouts`. The app reads the state from `GET /api/v1/invoices/{factura_id}/checkout-status` and can retry at once with `reintentar_ahora`. Feature document `odd/tasks/checkout-retry.md`. Not merged before PR #17.
 - **External knowledge importers (`7377cb7`, branch `feature/knowledge-importers`):** LOINC,
   MedlinePlus Connect, PubMed and ICD-11 as drafts, all or nothing. See `knowledge-import.md`.
 - **Candidate report and reviewed ranges (branch `feature/knowledge-importers`):** a JSON report of
