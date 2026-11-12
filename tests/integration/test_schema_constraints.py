@@ -236,6 +236,12 @@ def test_seed_reference_data_is_idempotent(db: Connection) -> None:
             db.execute(text(batch))
 
     roles = db.execute(text("SELECT COUNT(*) FROM roles")).scalar_one()
-    targets = db.execute(text("SELECT COUNT(*) FROM destinos_sincronizacion")).scalar_one()
     assert roles == 4
-    assert targets == 2
+    # Later migrations add destinations (NOTIFICACIONES), so check the seeded codes are present
+    # exactly once each instead of an exact total.
+    for code in ("SUPABASE", "MONGODB"):
+        count = db.execute(
+            text("SELECT COUNT(*) FROM destinos_sincronizacion WHERE codigo = :code"),
+            {"code": code},
+        ).scalar_one()
+        assert count == 1
