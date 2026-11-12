@@ -51,6 +51,9 @@ def run(dispatcher) -> int:
 
 
 def main() -> int:
+    if any(argument in ("-h", "--help") for argument in sys.argv[1:]):
+        print(__doc__)
+        return 0
     try:
         settings = Settings()
         engine = create_database_engine(settings)
