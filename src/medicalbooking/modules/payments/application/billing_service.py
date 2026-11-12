@@ -224,7 +224,12 @@ class BillingService:
         )
 
     def start_checkout(
-        self, actor: AccessProfile, *, factura_id: str, idempotency_key: str
+        self,
+        actor: AccessProfile,
+        *,
+        factura_id: str,
+        idempotency_key: str,
+        reintentar_ahora: bool = False,
     ) -> CheckoutStart:
         _require(actor, PERM_CHECKOUT)
         validate_idempotency_key(idempotency_key)
@@ -242,14 +247,14 @@ class BillingService:
 
         existing = self._store.find_payment_by_key(idempotency_key)
         if existing is not None:
-            return self._replay(existing, invoice, factura_id, idempotency_key)
+            return self._replay(existing, invoice, factura_id, idempotency_key, reintentar_ahora)
 
         # A new key never opens a second checkout while an attempt is still pending. Stripe is
         # asked first (read only): an open session is reopened, a paid one is reconciled, an
         # expired one is cancelled and the request falls through to a new attempt.
         pending = self._store.find_pending_payment_for_invoice(factura_id)
         if pending is not None:
-            resumed = self._resume_pending(invoice, pending)
+            resumed = self._resume_pending(invoice, pending, reintentar_ahora)
             if resumed is not None:
                 return resumed
 
@@ -266,22 +271,24 @@ class BillingService:
         if not reservation.created:
             # The unique index may hand back the attempt another request just committed.
             if reservation.payment.clave != idempotency_key:
-                return self._reopen_pending(invoice, reservation.payment)
-            return self._replay(reservation.payment, invoice, factura_id, idempotency_key)
+                return self._reopen_pending(invoice, reservation.payment, reintentar_ahora)
+            return self._replay(
+                reservation.payment, invoice, factura_id, idempotency_key, reintentar_ahora
+            )
         return self._open_session(
             invoice, reservation.payment, idempotency_key, replayed=False, retry=False
         )
 
     def _resume_pending(
-        self, invoice: InvoiceRecord, payment: PaymentRecord
+        self, invoice: InvoiceRecord, payment: PaymentRecord, reintentar_ahora: bool
     ) -> CheckoutStart | None:
         """Return the checkout to resume, raise when the invoice is settled, or None when the
         attempt was cancelled and a new one must open. Stripe failures change nothing."""
         if payment.session_id is None:
-            return self._reopen_pending(invoice, payment)
+            return self._reopen_pending(invoice, payment, reintentar_ahora)
         snapshot = self._retrieve(payment.session_id)
         if snapshot.status == "open":
-            return self._reopen_pending(invoice, payment)
+            return self._reopen_pending(invoice, payment, reintentar_ahora)
         if snapshot.status == "expired":
             self._store.cancel_pending_payment(payment.id)
             return None
@@ -303,16 +310,22 @@ class BillingService:
         except ProviderUnavailable as error:
             raise ServiceUnavailable("Payment provider is unavailable") from error
 
-    def _reopen_pending(self, invoice: InvoiceRecord, payment: PaymentRecord) -> CheckoutStart:
+    def _reopen_pending(
+        self, invoice: InvoiceRecord, payment: PaymentRecord, reintentar_ahora: bool
+    ) -> CheckoutStart:
         # A recorded session is reopened with the key that created it (its attempt number), so
         # Stripe returns that same session and nothing new is recorded.
         if payment.session_id is not None:
             key = _attempt_number_key(payment, payment.reintentos_realizados)
             return self._open_session(invoice, payment, key, replayed=True, retry=False)
-        # Without a recorded failure the attempt's own key returns its existing session. After a
-        # provider failure every retry sends a new key: Stripe would replay the failure otherwise.
+        # Without a recorded failure the attempt's own key returns its existing session.
         if payment.reintentos_realizados == 0 and not payment.retry_pending:
             return self._open_session(invoice, payment, payment.clave, replayed=True, retry=False)
+        # A scheduled retry runs only when the patient asks for it explicitly. A routine reopen
+        # must not spend one of the five retries, or a burst would exhaust them in seconds.
+        if not reintentar_ahora:
+            raise Conflict("A checkout retry is scheduled for this payment attempt")
+        # After a provider failure every retry sends a new key: Stripe would replay it otherwise.
         return self._open_session(
             invoice,
             payment,
@@ -327,12 +340,13 @@ class BillingService:
         invoice: InvoiceRecord,
         factura_id: str,
         idempotency_key: str,
+        reintentar_ahora: bool,
     ) -> CheckoutStart:
         if payment.factura_id != factura_id:
             raise Conflict("The Idempotency-Key was already used for another invoice")
         if payment.estado != PAGO_PENDIENTE:
             raise Conflict("The payment attempt is no longer pending")
-        return self._reopen_pending(invoice, payment)
+        return self._reopen_pending(invoice, payment, reintentar_ahora)
 
     def _open_session(
         self,

@@ -50,6 +50,8 @@ class CheckoutRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     factura_id: uuid.UUID
+    # True only for the patient's "Reintentar ahora" action: it runs a scheduled retry at once.
+    reintentar_ahora: bool = False
 
 
 @payments_bp.post("/payments/webhook")
@@ -83,6 +85,7 @@ def start_checkout() -> tuple[Response, int]:
         g.actor,
         factura_id=str(body.factura_id),
         idempotency_key=key,
+        reintentar_ahora=body.reintentar_ahora,
     )
     return jsonify(_checkout_json(result)), 200 if result.replayed else 201
 
