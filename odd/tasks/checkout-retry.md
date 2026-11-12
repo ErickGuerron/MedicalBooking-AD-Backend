@@ -20,8 +20,8 @@ T2 | S1, S2, S3, S8 | route: inline (domain rules in checkout_retry.py, billing 
    Open before T6: differential check of shared checkout paths (_open_session, _replay, _reopen_pending) against the base commit, in a mktemp scratch copy.
 T3 | S5, S9 | route: inline (retry_due_checkouts in billing service, worker workers/retry_failed_checkouts.py) | status: done (unit + SQL integration; suite 1047 passed, 1 xfailed) | commit: see git log
 T4 | S4, S7 | route: inline (GET /api/v1/invoices/{factura_id}/checkout-status, OpenAPI, reintentar_ahora documented) | status: done (unit + HTTP integration; suite green) | commit: see git log
-T5 | all | docs: README worker section, OpenAPI regen, backend-status | status: pending | commit: -
-T6 | S1-S8 | verification: independent verifier (Risk: item 1 payments state, item 2 security-adjacent credentials handling: none beyond existing keys) | status: pending
+T5 | all | docs: README (worker section, endpoints, reintentar_ahora), docs/backend-status.md, OpenAPI regenerated | status: done | commit: see git log
+T6 | S1-S9 | verification: TDD + SQL integration tests (native review skipped by user decision); differential check of shared checkout paths against base f70949c | status: done (suite 1054 passed, 1 xfailed; test_billing_api.py 6/6 on base and on HEAD) | commit: see git log
 
 Risk (draft): item 1 (changes state of payment attempts). Final Risk line set per commit.
 
@@ -33,3 +33,4 @@ L5 (parent, T2): retry counter counts retry calls only; the first failed create 
 L4 (user): "me parece mejor el reintentar ahorra, con los tiempos propuestos". Resolves S9 with the schedule above and the "Reintentar ahora" button. Constraint found: a seconds-level schedule needs a continuous worker, which breaks the one-shot pattern, so it was rejected.
 L6 (parent, T3): worker runs retry_due_checkouts(50) once per schedule; a due attempt whose invoice is no longer pending is cancelled; a customer failure during a scheduled retry counts as a failed retry (no endless loop). Retries use derived keys, so overlapping runs converge. build_billing made public in app.py for the worker. Native review skipped by user decision; verification is TDD + integration tests.
 L7 (parent, T4): the app had no way to read attempt state, so GET /api/v1/invoices/{factura_id}/checkout-status now returns estado, reintentos_realizados, reintentos_maximos, reintentos_agotados, ultimo_error_codigo and proximo_reintento_en. Same ownership rule as checkout (foreign and missing give the same 403); an invoice with no attempt answers 404. docs/api/openapi.json regenerated.
+L8 (parent, T5-T6): docs updated. Differential: tests/integration/test_billing_api.py run against base f70949c and HEAD: 6 passed on both, so the shared happy path, replay, key-reuse and no-key 503 behave the same. Open items: manual 'Reintentar ahora' clicks each spend a retry (no cooldown); PR #17 must merge before this branch merges; the native review was not run for this candidate (user decision).
