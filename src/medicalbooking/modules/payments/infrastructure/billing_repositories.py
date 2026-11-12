@@ -130,7 +130,8 @@ class SqlBillingStore:
             row = conn.execute(
                 text(
                     "SELECT id, factura_id, clave_idempotencia, estado, "
-                    "stripe_checkout_session_id FROM pagos "
+                    "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
+                    "proximo_reintento_en, ultimo_error_codigo FROM pagos "
                     "WHERE clave_idempotencia = :clave"
                 ),
                 {"clave": key},
@@ -142,7 +143,8 @@ class SqlBillingStore:
             row = conn.execute(
                 text(
                     "SELECT TOP (1) id, factura_id, clave_idempotencia, estado, "
-                    "stripe_checkout_session_id FROM pagos "
+                    "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
+                    "proximo_reintento_en, ultimo_error_codigo FROM pagos "
                     "WHERE factura_id = :factura AND estado = 'PENDIENTE' "
                     "ORDER BY creado_en"
                 ),
@@ -189,14 +191,66 @@ class SqlBillingStore:
             created=True,
         )
 
-    def record_session(self, pago_id: str, session_id: str) -> None:
+    def find_latest_payment_for_invoice(self, factura_id: str) -> PaymentRecord | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT TOP (1) id, factura_id, clave_idempotencia, estado, "
+                    "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
+                    "proximo_reintento_en, ultimo_error_codigo FROM pagos "
+                    "WHERE factura_id = :factura ORDER BY creado_en DESC"
+                ),
+                {"factura": factura_id},
+            ).first()
+        return _payment(row) if row is not None else None
+
+    def find_due_checkout_retries(self, now: datetime, limit: int) -> list[PaymentRecord]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT TOP (:limite) id, factura_id, clave_idempotencia, estado, "
+                    "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
+                    "proximo_reintento_en, ultimo_error_codigo FROM pagos "
+                    "WHERE estado = 'PENDIENTE' AND stripe_checkout_session_id IS NULL "
+                    "AND reintentos_agotados = 0 AND proximo_reintento_en <= :ahora "
+                    "ORDER BY proximo_reintento_en"
+                ),
+                {"limite": limit, "ahora": _utc_naive(now)},
+            ).all()
+        return [_payment(row) for row in rows]
+
+    def record_session(self, pago_id: str, session_id: str, retries_made: int) -> None:
         with self._engine.begin() as conn:
             conn.execute(
                 text(
-                    "UPDATE pagos SET stripe_checkout_session_id = :sesion "
+                    "UPDATE pagos SET stripe_checkout_session_id = :sesion, "
+                    "reintentos_realizados = :reintentos, proximo_reintento_en = NULL "
                     "WHERE id = :pago AND stripe_checkout_session_id IS NULL"
                 ),
-                {"sesion": session_id, "pago": pago_id},
+                {"sesion": session_id, "pago": pago_id, "reintentos": retries_made},
+            )
+
+    def record_create_failure(
+        self, pago_id: str, retries_made: int, next_retry_at: datetime | None, error_code: str
+    ) -> None:
+        # Exhausted (no next retry) attempts are rejected, which frees the invoice for a new
+        # attempt. The guard keeps a racing request from overwriting a session that now exists.
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE pagos SET reintentos_realizados = :reintentos, "
+                    "ultimo_error_codigo = :codigo, proximo_reintento_en = :proximo, "
+                    "reintentos_agotados = CASE WHEN :proximo IS NULL THEN 1 ELSE 0 END, "
+                    "estado = CASE WHEN :proximo IS NULL THEN 'RECHAZADO' ELSE estado END "
+                    "WHERE id = :pago AND estado = 'PENDIENTE' "
+                    "AND stripe_checkout_session_id IS NULL"
+                ),
+                {
+                    "reintentos": retries_made,
+                    "codigo": error_code,
+                    "proximo": _utc_naive(next_retry_at) if next_retry_at is not None else None,
+                    "pago": pago_id,
+                },
             )
 
     def mark_rejected(self, pago_id: str) -> None:
@@ -240,12 +294,17 @@ class SqlBillingStore:
 
 def _payment(row: Row[Any]) -> PaymentRecord:
     session_id = row.stripe_checkout_session_id
+    next_retry = row.proximo_reintento_en
     return PaymentRecord(
         session_id=str(session_id) if session_id is not None else None,
         id=str(row.id).lower(),
         factura_id=str(row.factura_id).lower(),
         clave=row.clave_idempotencia,
         estado=row.estado,
+        reintentos_realizados=int(row.reintentos_realizados),
+        reintentos_agotados=bool(row.reintentos_agotados),
+        proximo_reintento_en=next_retry.replace(tzinfo=UTC) if next_retry is not None else None,
+        ultimo_error_codigo=row.ultimo_error_codigo,
     )
 
 

@@ -24,7 +24,14 @@ from medicalbooking.modules.payments.domain.billing import (
     to_cents,
     validate_idempotency_key,
 )
-from medicalbooking.shared.domain.errors import Conflict, Forbidden, ServiceUnavailable
+from medicalbooking.modules.payments.domain.checkout_retry import (
+    CHECKOUT_UNAVAILABLE_CODE,
+    MAX_CHECKOUT_RETRIES,
+    manual_retry_allowed,
+    next_retry_at,
+    retry_key,
+)
+from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ServiceUnavailable
 
 
 class ProviderUnavailable(Exception):
@@ -85,6 +92,14 @@ class PaymentRecord:
     clave: str
     estado: str
     session_id: str | None = None
+    reintentos_realizados: int = 0
+    reintentos_agotados: bool = False
+    proximo_reintento_en: datetime | None = None
+    ultimo_error_codigo: str | None = None
+
+    @property
+    def retry_pending(self) -> bool:
+        return self.proximo_reintento_en is not None
 
 
 @dataclass(frozen=True)
@@ -124,6 +139,24 @@ class CheckoutSnapshot:
 
 
 @dataclass(frozen=True)
+class CheckoutStatus:
+    pago_id: str
+    estado: str
+    reintentos_realizados: int
+    reintentos_maximos: int
+    reintentos_agotados: bool
+    ultimo_error_codigo: str | None
+    proximo_reintento_en: datetime | None
+
+
+@dataclass(frozen=True)
+class RetryRun:
+    attempted: int
+    succeeded: int
+    failed: int
+
+
+@dataclass(frozen=True)
 class CheckoutStart:
     pago_id: str
     client_secret: str
@@ -144,13 +177,21 @@ class BillingStore(Protocol):
 
     def reserve_payment(self, payment: NewPayment) -> PaymentReservation: ...
 
-    def record_session(self, pago_id: str, session_id: str) -> None: ...
+    def record_session(self, pago_id: str, session_id: str, retries_made: int) -> None: ...
 
     def mark_rejected(self, pago_id: str) -> None: ...
+
+    def record_create_failure(
+        self, pago_id: str, retries_made: int, next_retry_at: datetime | None, error_code: str
+    ) -> None: ...
 
     def confirm_payment(self, pago_id: str, factura_id: str, now: datetime) -> None: ...
 
     def cancel_pending_payment(self, pago_id: str) -> None: ...
+
+    def find_due_checkout_retries(self, now: datetime, limit: int) -> list[PaymentRecord]: ...
+
+    def find_latest_payment_for_invoice(self, factura_id: str) -> PaymentRecord | None: ...
 
 
 class CheckoutGateway(Protocol):
@@ -208,7 +249,12 @@ class BillingService:
         )
 
     def start_checkout(
-        self, actor: AccessProfile, *, factura_id: str, idempotency_key: str
+        self,
+        actor: AccessProfile,
+        *,
+        factura_id: str,
+        idempotency_key: str,
+        reintentar_ahora: bool = False,
     ) -> CheckoutStart:
         _require(actor, PERM_CHECKOUT)
         validate_idempotency_key(idempotency_key)
@@ -226,14 +272,14 @@ class BillingService:
 
         existing = self._store.find_payment_by_key(idempotency_key)
         if existing is not None:
-            return self._replay(existing, invoice, factura_id, idempotency_key)
+            return self._replay(existing, invoice, factura_id, idempotency_key, reintentar_ahora)
 
         # A new key never opens a second checkout while an attempt is still pending. Stripe is
         # asked first (read only): an open session is reopened, a paid one is reconciled, an
         # expired one is cancelled and the request falls through to a new attempt.
         pending = self._store.find_pending_payment_for_invoice(factura_id)
         if pending is not None:
-            resumed = self._resume_pending(invoice, pending)
+            resumed = self._resume_pending(invoice, pending, reintentar_ahora)
             if resumed is not None:
                 return resumed
 
@@ -250,20 +296,24 @@ class BillingService:
         if not reservation.created:
             # The unique index may hand back the attempt another request just committed.
             if reservation.payment.clave != idempotency_key:
-                return self._reopen_pending(invoice, reservation.payment)
-            return self._replay(reservation.payment, invoice, factura_id, idempotency_key)
-        return self._open_session(invoice, reservation.payment, idempotency_key, replayed=False)
+                return self._reopen_pending(invoice, reservation.payment, reintentar_ahora)
+            return self._replay(
+                reservation.payment, invoice, factura_id, idempotency_key, reintentar_ahora
+            )
+        return self._open_session(
+            invoice, reservation.payment, idempotency_key, replayed=False, retry=False
+        )
 
     def _resume_pending(
-        self, invoice: InvoiceRecord, payment: PaymentRecord
+        self, invoice: InvoiceRecord, payment: PaymentRecord, reintentar_ahora: bool
     ) -> CheckoutStart | None:
         """Return the checkout to resume, raise when the invoice is settled, or None when the
         attempt was cancelled and a new one must open. Stripe failures change nothing."""
         if payment.session_id is None:
-            return self._reopen_pending(invoice, payment)
+            return self._reopen_pending(invoice, payment, reintentar_ahora)
         snapshot = self._retrieve(payment.session_id)
         if snapshot.status == "open":
-            return self._reopen_pending(invoice, payment)
+            return self._reopen_pending(invoice, payment, reintentar_ahora)
         if snapshot.status == "expired":
             self._store.cancel_pending_payment(payment.id)
             return None
@@ -285,9 +335,33 @@ class BillingService:
         except ProviderUnavailable as error:
             raise ServiceUnavailable("Payment provider is unavailable") from error
 
-    def _reopen_pending(self, invoice: InvoiceRecord, payment: PaymentRecord) -> CheckoutStart:
-        # Reopen with the attempt's own key so the provider returns its existing session.
-        return self._open_session(invoice, payment, payment.clave, replayed=True)
+    def _reopen_pending(
+        self, invoice: InvoiceRecord, payment: PaymentRecord, reintentar_ahora: bool
+    ) -> CheckoutStart:
+        # A recorded session is reopened with the key that created it (its attempt number), so
+        # Stripe returns that same session and nothing new is recorded.
+        if payment.session_id is not None:
+            key = _attempt_number_key(payment, payment.reintentos_realizados)
+            return self._open_session(invoice, payment, key, replayed=True, retry=False)
+        # Without a recorded failure the attempt's own key returns its existing session.
+        if payment.reintentos_realizados == 0 and not payment.retry_pending:
+            return self._open_session(invoice, payment, payment.clave, replayed=True, retry=False)
+        # A scheduled retry runs only when the patient asks for it explicitly. A routine reopen
+        # must not spend one of the five retries, or a burst would exhaust them in seconds.
+        if not reintentar_ahora:
+            raise Conflict("A checkout retry is scheduled for this payment attempt")
+        if not manual_retry_allowed(
+            payment.reintentos_realizados, payment.proximo_reintento_en, self._clock()
+        ):
+            raise Conflict("Wait a minute after the last failure before retrying now")
+        # After a provider failure every retry sends a new key: Stripe would replay it otherwise.
+        return self._open_session(
+            invoice,
+            payment,
+            retry_key(payment.clave, payment.reintentos_realizados + 1),
+            replayed=True,
+            retry=True,
+        )
 
     def _replay(
         self,
@@ -295,12 +369,67 @@ class BillingService:
         invoice: InvoiceRecord,
         factura_id: str,
         idempotency_key: str,
+        reintentar_ahora: bool,
     ) -> CheckoutStart:
         if payment.factura_id != factura_id:
             raise Conflict("The Idempotency-Key was already used for another invoice")
         if payment.estado != PAGO_PENDIENTE:
             raise Conflict("The payment attempt is no longer pending")
-        return self._open_session(invoice, payment, idempotency_key, replayed=True)
+        return self._reopen_pending(invoice, payment, reintentar_ahora)
+
+    def checkout_status(self, actor: AccessProfile, *, factura_id: str) -> CheckoutStatus:
+        _require(actor, PERM_CHECKOUT)
+        invoice = self._store.find_invoice(str(factura_id))
+        if invoice is None or invoice.paciente_user_id != actor.user_id:
+            raise Forbidden("Access to this resource is not allowed")
+        payment = self._store.find_latest_payment_for_invoice(str(factura_id))
+        if payment is None:
+            raise NotFound("This invoice has no checkout attempt")
+        return CheckoutStatus(
+            pago_id=payment.id,
+            estado=payment.estado,
+            reintentos_realizados=payment.reintentos_realizados,
+            reintentos_maximos=MAX_CHECKOUT_RETRIES,
+            reintentos_agotados=payment.reintentos_agotados,
+            ultimo_error_codigo=payment.ultimo_error_codigo,
+            proximo_reintento_en=payment.proximo_reintento_en,
+        )
+
+    def retry_due_checkouts(self, limit: int) -> RetryRun:
+        """Run the scheduled retries that are due now (checkout-retry S5, S9). Each retry uses
+        the key of its own number, so concurrent runs converge on the same provider session."""
+        if not self._gateway.is_configured():
+            raise ServiceUnavailable("Payment provider is not configured")
+        attempted = succeeded = failed = 0
+        for payment in self._store.find_due_checkout_retries(self._clock(), limit):
+            attempted += 1
+            invoice = self._store.find_invoice(payment.factura_id)
+            if invoice is None or invoice.estado != FACTURA_PENDIENTE:
+                self._store.cancel_pending_payment(payment.id)
+                continue
+            try:
+                self._open_session(
+                    invoice,
+                    payment,
+                    retry_key(payment.clave, payment.reintentos_realizados + 1),
+                    replayed=True,
+                    retry=True,
+                )
+            except ServiceUnavailable:
+                failed += 1
+            else:
+                succeeded += 1
+        return RetryRun(attempted=attempted, succeeded=succeeded, failed=failed)
+
+    def _record_create_failure(self, payment: PaymentRecord, retry: bool) -> None:
+        # The attempt stays pending with its next retry scheduled (checkout-retry S1, S8).
+        made = payment.reintentos_realizados + 1 if retry else payment.reintentos_realizados
+        self._store.record_create_failure(
+            payment.id,
+            made,
+            next_retry_at(made, self._clock()),
+            CHECKOUT_UNAVAILABLE_CODE,
+        )
 
     def _open_session(
         self,
@@ -309,10 +438,17 @@ class BillingService:
         idempotency_key: str,
         *,
         replayed: bool,
+        retry: bool,
     ) -> CheckoutStart:
         # A customer failure leaves the attempt pending without a session: it is not rejected,
         # so the next request resumes it and the customer is asked again.
-        customer_id = self._customers.ensure(invoice.paciente_user_id)
+        try:
+            customer_id = self._customers.ensure(invoice.paciente_user_id)
+        except ServiceUnavailable:
+            # A scheduled retry must count even when the customer step fails, or it never ends.
+            if retry:
+                self._record_create_failure(payment, retry)
+            raise
         request = CheckoutRequest(
             idempotency_key=idempotency_key,
             amount_cents=to_cents(invoice.total),
@@ -324,9 +460,10 @@ class BillingService:
         try:
             session = self._gateway.create_session(request)
         except ProviderUnavailable as error:
-            self._store.mark_rejected(payment.id)
+            self._record_create_failure(payment, retry)
             raise ServiceUnavailable("Payment provider is unavailable") from error
-        self._store.record_session(payment.id, session.id)
+        made = payment.reintentos_realizados + 1 if retry else payment.reintentos_realizados
+        self._store.record_session(payment.id, session.id, made)
         return CheckoutStart(
             pago_id=payment.id,
             client_secret=session.client_secret,
@@ -339,6 +476,14 @@ class BillingService:
         if not key:
             raise ServiceUnavailable("Payment provider is not configured")
         return key
+
+
+def _attempt_number_key(payment: PaymentRecord, retries_made: int) -> str:
+    """The key of the create call numbered `retries_made`: the attempt's own key for the first
+    call, then one derived key per retry."""
+    if retries_made == 0:
+        return payment.clave
+    return retry_key(payment.clave, retries_made)
 
 
 def _require(actor: AccessProfile, permission: str) -> None:

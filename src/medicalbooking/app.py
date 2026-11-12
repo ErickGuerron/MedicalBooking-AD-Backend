@@ -77,7 +77,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.shadow"] = shadow
     app.extensions["medicalbooking.patient_profile"] = patient_profile
     app.extensions["medicalbooking.payments_webhook"] = _build_payments_webhook(settings, engine)
-    app.extensions["medicalbooking.billing"] = _build_billing(settings, engine)
+    app.extensions["medicalbooking.billing"] = build_billing(settings, engine)
     app.extensions["medicalbooking.payment_methods"] = _build_payment_methods(settings, engine)
 
     app.register_blueprint(health_bp)
@@ -161,7 +161,7 @@ def _build_payments_webhook(settings: Settings, engine: Any) -> StripeWebhookSer
     )
 
 
-def _build_billing(settings: Settings, engine: Any) -> BillingService:
+def build_billing(settings: Settings, engine: Any) -> BillingService:
     """Composition root for billing (invoices and checkout). The Stripe key stays in the gateway.
 
     Return URLs point to the Flutter front end; a payment is confirmed only by the webhook.

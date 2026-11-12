@@ -145,6 +145,27 @@ uv run python -m medicalbooking.workers.expire_holds   # prints expired_holds=N,
 Schedule it every few minutes (cron, Windows Task Scheduler, or an Azure job). Running it
 from several processes at once is safe: each hold is claimed with row locks.
 
+## Checkout retry worker
+
+When Stripe cannot create a Checkout Session, the payment attempt stays pending and the
+retry is scheduled: 1, 1, 2, 2 and 5 minutes, five retries at most. A separate one-shot
+process runs the due retries; the API replicas never run it:
+
+```powershell
+uv run python -m medicalbooking.workers.retry_failed_checkouts   # prints checkout_retries attempted=N succeeded=M failed=K, exit 0 on success
+```
+
+Schedule it every minute. It only creates the Stripe session again (never a charge). Each
+retry uses its own Idempotency-Key (`<attempt key>:<retry number>`), so overlapping runs
+converge on the same session. An attempt whose invoice is no longer pending is cancelled.
+After the fifth failed retry the attempt is rejected and the patient can start a new one.
+
+The patient sees the state in the app with `GET /api/v1/invoices/{factura_id}/checkout-status`.
+"Reintentar ahora" runs the next retry at once: send `reintentar_ahora: true` on
+`POST /api/v1/payments/checkout`. Without that flag a routine reopen never spends a retry.
+Patients can use it at most once a minute: a request sooner than one minute after the last
+failure answers 409 and calls no provider.
+
 ## Endpoints
 
 All endpoints except login and health require `Authorization: Bearer <token>`.
@@ -163,8 +184,9 @@ Errors use `application/problem+json` with `correlation_id`.
 | `GET /api/v1/appointments?estado=&limit=&offset=` | List own appointments, or the doctor's agenda | Patients see their own; a doctor with a doctor profile sees the agenda; anyone else gets 403. Rows carry `id`, `estado`, `inicio` and `fin` only. Same paging rules as users |
 | `POST /api/v1/appointments/{id}/cancel` | Cancel an own appointment and release its slot | Missing and foreign appointments both return 403 |
 | `POST /api/v1/invoices` | Invoice an own active appointment (one detail line at the service price) | Body `{"cita_id"}`. Status `PENDIENTE`; one invoice per appointment (409). Missing and foreign appointments both return 403 |
-| `POST /api/v1/payments/checkout` | Start an embedded Stripe Checkout for an own pending invoice | Body `{"factura_id"}`, header `Idempotency-Key`. 201 new, 200 replay of the same key and invoice, 409 for another invoice. A new key on an invoice with a pending attempt first asks Stripe about that session (read only): open returns its checkout (200); paid reconciles the payment and the invoice to PAGADA and answers 409 without charging again; expired cancels the attempt and opens a new one (201). Stripe unreachable or an unexpected state answers 503 and changes nothing. Returns an embedded Checkout Session: `client_secret` (mounts the session in the browser) and `publishable_key`. The session belongs to the caller's Stripe customer (created on first use) and offers to save the card (`payment_intent_data[setup_future_usage]=off_session`). The session has no hosted URL. Its `return_url` is `FLUTTER_FRONT_URL/pago/retorno?session_id=...`. Payment is confirmed only by the verified webhook, never by the redirect. 503 when Stripe is not configured or unreachable |
+| `POST /api/v1/payments/checkout` | Start an embedded Stripe Checkout for an own pending invoice | Body `{"factura_id"}` plus optional `"reintentar_ahora"` (default false), header `Idempotency-Key`. With `reintentar_ahora` true a scheduled retry runs at once and uses one of its five retries; without it a pending attempt with a scheduled retry answers 409 and Stripe is not called. 201 new, 200 replay of the same key and invoice, 409 for another invoice. A new key on an invoice with a pending attempt first asks Stripe about that session (read only): open returns its checkout (200); paid reconciles the payment and the invoice to PAGADA and answers 409 without charging again; expired cancels the attempt and opens a new one (201). Stripe unreachable or an unexpected state answers 503 and changes nothing. Returns an embedded Checkout Session: `client_secret` (mounts the session in the browser) and `publishable_key`. The session belongs to the caller's Stripe customer (created on first use) and offers to save the card (`payment_intent_data[setup_future_usage]=off_session`). The session has no hosted URL. Its `return_url` is `FLUTTER_FRONT_URL/pago/retorno?session_id=...`. Payment is confirmed only by the verified webhook, never by the redirect. 503 when Stripe is not configured or unreachable |
 | `POST /api/v1/payments/webhook` | Stripe event (no JWT) | Signature over the raw body; duplicates are recorded once |
+| `GET /api/v1/invoices/{factura_id}/checkout-status` | Latest checkout attempt of an own invoice | Returns `pago_id`, `estado`, `reintentos_realizados`, `reintentos_maximos` (5), `reintentos_agotados`, `ultimo_error_codigo` and `proximo_reintento_en`. Foreign and missing invoices answer the same 403; an invoice without attempts answers 404. |
 | `GET /api/v1/me/payment-methods` | List the caller's saved cards, one page at a time | Requires `metodos_pago.gestionar` (patients). Read from Stripe on each call; items carry `id`, `brand`, `last4`, `exp_month`, `exp_year`, `is_default`. Query `limit` (1 to 100, default 10) and `starting_after` (a payment method id); anything else answers 422 before Stripe is called. Response `{items, has_more, next_cursor}`: `next_cursor` is the last item's id when `has_more` is true, otherwise null. No card data is stored, only the Stripe customer id in `stripe_clientes`. A user without a customer gets `{"items": []}` with no Stripe call |
 | `POST /api/v1/me/payment-methods/setup-intents` | Start saving a card without paying | Requires header `Idempotency-Key` (8 to 100 characters; missing or invalid answers 422 with no provider call or local write). Creates the caller's Stripe customer on first use (Idempotency-Key `customer-<usuario_id>`), then an off-session SetupIntent with Idempotency-Key `setup-<usuario_id>-<client key>`, so a repeat returns the same SetupIntent. Returns `client_secret` and `publishable_key` (201). 503 when Stripe is not configured or unreachable; nothing is stored |
 | `DELETE /api/v1/me/payment-methods/{payment_method_id}` | Remove one of the caller's saved cards | The card is read from Stripe first. Missing and foreign cards both answer 403 with the same body. 204 on success |

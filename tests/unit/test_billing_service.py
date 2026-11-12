@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -106,11 +106,53 @@ class FakeBillingStore:
         self.payments[payment.id] = record
         return PaymentReservation(payment=record, created=True)
 
-    def record_session(self, pago_id, session_id):
+    def record_session(self, pago_id, session_id, retries_made):
         self.sessions[pago_id] = session_id
+        self.payments[pago_id] = replace(
+            self.payments[pago_id],
+            session_id=session_id,
+            reintentos_realizados=retries_made,
+            proximo_reintento_en=None,
+        )
+
+    def record_create_failure(self, pago_id, retries_made, next_retry_at, error_code):
+        payment = self.payments[pago_id]
+        if next_retry_at is None:
+            self.rejected.add(pago_id)
+            self.payments[pago_id] = replace(
+                payment,
+                estado="RECHAZADO",
+                reintentos_realizados=retries_made,
+                reintentos_agotados=True,
+                proximo_reintento_en=None,
+                ultimo_error_codigo=error_code,
+            )
+            return
+        self.payments[pago_id] = replace(
+            payment,
+            reintentos_realizados=retries_made,
+            proximo_reintento_en=next_retry_at,
+            ultimo_error_codigo=error_code,
+        )
 
     def find_pending_payment_for_invoice(self, factura_id):
         return self._pending_for(factura_id)
+
+    def find_latest_payment_for_invoice(self, factura_id):
+        latest = [p for p in self.payments.values() if p.factura_id == factura_id]
+        return latest[-1] if latest else None
+
+    def find_due_checkout_retries(self, now, limit):
+        due = [
+            p
+            for p in self.payments.values()
+            if p.estado == "PENDIENTE"
+            and p.session_id is None
+            and not p.reintentos_agotados
+            and p.proximo_reintento_en is not None
+            and p.proximo_reintento_en <= now
+        ]
+        return due[:limit]
 
     def _pending_for(self, factura_id):
         return next(
@@ -197,6 +239,24 @@ def _service(
 ) -> BillingService:
     return BillingService(
         store=store, gateway=gateway, clock=lambda: NOW, customers=customers or FakeCustomers()
+    )
+
+
+def _fail_first(store, owner, invoice):
+    """Make the first checkout of `invoice` fail at the provider."""
+    with pytest.raises(ServiceUnavailable):
+        _service(store, FakeGateway(fail=True)).start_checkout(
+            _patient(owner), factura_id=invoice.id, idempotency_key=KEY
+        )
+
+
+def _service_at(minutes: int, store: FakeBillingStore, gateway: FakeGateway) -> BillingService:
+    """A service whose clock is `minutes` after NOW, so a scheduled retry is due."""
+    return BillingService(
+        store=store,
+        gateway=gateway,
+        clock=lambda: NOW + timedelta(minutes=minutes),
+        customers=FakeCustomers(),
     )
 
 
@@ -375,15 +435,85 @@ def test_unconfigured_provider_fails_closed_before_reserving_anything():
     assert store.reserve_calls == 0
 
 
-def test_provider_failure_marks_the_attempt_rejected_and_answers_unavailable():
+def test_provider_failure_keeps_the_attempt_pending_with_the_first_retry_due():
     owner = _id()
     store, invoice = _invoiced(owner)
+    _fail_first(store, owner, invoice)
+    assert store.rejected == set()
+    assert store.sessions == {}
+    (payment,) = store.payments.values()
+    assert payment.estado == "PENDIENTE"
+    assert payment.reintentos_realizados == 0
+    assert payment.proximo_reintento_en == NOW + timedelta(minutes=1)
+
+
+def test_a_new_key_performs_the_due_retry_with_its_own_key_and_reuses_the_attempt():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    _fail_first(store, owner, invoice)
+    gateway = FakeGateway()
+    result = _service_at(1, store, gateway).start_checkout(
+        _patient(owner),
+        factura_id=invoice.id,
+        idempotency_key="checkout-key-0002",
+        reintentar_ahora=True,
+    )
+    assert store.reserve_calls == 1
+    assert result.replayed is True
+    assert gateway.requests[-1].idempotency_key == f"{KEY}:1"
+    (payment,) = store.payments.values()
+    assert payment.reintentos_realizados == 1
+    assert payment.proximo_reintento_en is None
+
+
+def test_reopening_a_retried_attempt_returns_its_recorded_session_without_creating_another():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    _fail_first(store, owner, invoice)
+    gateway = FakeGateway()
+    first = _service_at(1, store, gateway).start_checkout(
+        _patient(owner),
+        factura_id=invoice.id,
+        idempotency_key="checkout-key-0002",
+        reintentar_ahora=True,
+    )
+    again = _service(store, gateway).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0003"
+    )
+    assert again.client_secret == first.client_secret
+    assert len(gateway.sessions) == 1
+
+
+def test_five_failed_retries_exhaust_the_attempt_and_free_the_invoice_for_a_new_one():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    failing = FakeGateway(fail=True)
+    keys_sent = []
     with pytest.raises(ServiceUnavailable):
-        _service(store, FakeGateway(fail=True)).start_checkout(
+        _service(store, failing).start_checkout(
             _patient(owner), factura_id=invoice.id, idempotency_key=KEY
         )
-    assert len(store.rejected) == 1
-    assert store.sessions == {}
+    for number in range(1, 6):
+        with pytest.raises(ServiceUnavailable):
+            _service_at(number, store, failing).start_checkout(
+                _patient(owner),
+                factura_id=invoice.id,
+                idempotency_key=f"checkout-key-000{number + 1}",
+                reintentar_ahora=True,
+            )
+        keys_sent.append(failing.requests[-1].idempotency_key)
+    assert keys_sent == [f"{KEY}:{n}" for n in range(1, 6)]
+    assert len(set(keys_sent)) == 5
+    (payment,) = store.payments.values()
+    assert payment.estado == "RECHAZADO"
+    assert payment.reintentos_agotados is True
+    assert payment.reintentos_realizados == 5
+    assert payment.proximo_reintento_en is None
+    fresh = _service(store, FakeGateway()).start_checkout(
+        _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0009"
+    )
+    assert fresh.replayed is False
+    assert store.reserve_calls == 2
 
 
 def test_short_idempotency_key_is_rejected():
@@ -460,18 +590,39 @@ def test_concurrent_new_key_that_loses_the_insert_race_reuses_the_winning_attemp
     assert [r.idempotency_key for r in gateway.requests] == ["winner-key-0001"]
 
 
-def test_new_key_after_the_pending_attempt_was_rejected_opens_a_new_attempt():
+def test_routine_reopen_while_a_retry_is_scheduled_never_calls_the_provider():
     owner = _id()
     store, invoice = _invoiced(owner)
-    service = _service(store, FakeGateway(fail=True))
-    with pytest.raises(ServiceUnavailable):
-        service.start_checkout(_patient(owner), factura_id=invoice.id, idempotency_key=KEY)
-    retry = _service(store, FakeGateway())
-    result = retry.start_checkout(
-        _patient(owner), factura_id=invoice.id, idempotency_key="checkout-key-0002"
+    _fail_first(store, owner, invoice)
+    gateway = FakeGateway()
+    service = _service(store, gateway)
+    for number in range(2, 7):
+        with pytest.raises(Conflict):
+            service.start_checkout(
+                _patient(owner),
+                factura_id=invoice.id,
+                idempotency_key=f"checkout-key-000{number}",
+            )
+    assert gateway.requests == []
+    (payment,) = store.payments.values()
+    assert payment.reintentos_realizados == 0
+    assert payment.estado == "PENDIENTE"
+
+
+def test_an_explicit_retry_now_performs_the_retry_and_reuses_the_attempt():
+    owner = _id()
+    store, invoice = _invoiced(owner)
+    _fail_first(store, owner, invoice)
+    gateway = FakeGateway()
+    result = _service_at(1, store, gateway).start_checkout(
+        _patient(owner),
+        factura_id=invoice.id,
+        idempotency_key="checkout-key-0002",
+        reintentar_ahora=True,
     )
-    assert result.replayed is False
-    assert store.reserve_calls == 2
+    assert result.replayed is True
+    assert store.reserve_calls == 1
+    assert gateway.requests[-1].idempotency_key == f"{KEY}:1"
 
 
 def test_replay_without_provider_creates_nothing_and_keeps_the_attempt_pending():

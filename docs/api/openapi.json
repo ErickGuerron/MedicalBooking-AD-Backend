@@ -2382,6 +2382,114 @@
         ]
       }
     },
+    "/api/v1/invoices/{factura_id}/checkout-status": {
+      "get": {
+        "description": "What the app shows while a checkout is failing: attempts made, the last error code and when the next automatic retry is due. Retries are run by the scheduled worker, or immediately with reintentar_ahora on checkout.",
+        "operationId": "getCheckoutStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "factura_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "estado": {
+                      "enum": [
+                        "PENDIENTE",
+                        "CONFIRMADO",
+                        "RECHAZADO",
+                        "CANCELADO"
+                      ],
+                      "type": "string"
+                    },
+                    "pago_id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "proximo_reintento_en": {
+                      "format": "date-time",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "reintentos_agotados": {
+                      "type": "boolean"
+                    },
+                    "reintentos_maximos": {
+                      "const": 5,
+                      "type": "integer"
+                    },
+                    "reintentos_realizados": {
+                      "maximum": 5,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "ultimo_error_codigo": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Latest checkout attempt"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not the owner, or the invoice does not exist"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The invoice has no checkout attempt yet"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Latest checkout attempt of an invoice (owner only)",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
     "/api/v1/knowledge/analytes": {
       "get": {
         "operationId": "listKnowledgeAnalytes",
@@ -4557,6 +4665,11 @@
                   "factura_id": {
                     "format": "uuid",
                     "type": "string"
+                  },
+                  "reintentar_ahora": {
+                    "default": false,
+                    "description": "Only for the explicit Reintentar ahora action.It runs one scheduled retry at once.",
+                    "type": "boolean"
                   }
                 },
                 "required": [

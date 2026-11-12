@@ -19,6 +19,7 @@ from medicalbooking.modules.identity.presentation.routes import authenticated
 from medicalbooking.modules.payments.application.billing_service import (
     BillingService,
     CheckoutStart,
+    CheckoutStatus,
     InvoiceRecord,
 )
 from medicalbooking.modules.payments.application.payment_methods import (
@@ -30,7 +31,7 @@ from medicalbooking.modules.payments.application.webhook_service import (
     WebhookNotConfigured,
 )
 from medicalbooking.modules.payments.domain.payment_methods import parse_page_limit
-from medicalbooking.shared.domain.errors import ValidationFailed
+from medicalbooking.shared.domain.errors import NotFound, ValidationFailed
 
 payments_bp = Blueprint("payments", __name__, url_prefix="/api/v1")
 
@@ -50,6 +51,8 @@ class CheckoutRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     factura_id: uuid.UUID
+    # True only for the patient's "Reintentar ahora" action: it runs a scheduled retry at once.
+    reintentar_ahora: bool = False
 
 
 @payments_bp.post("/payments/webhook")
@@ -83,8 +86,20 @@ def start_checkout() -> tuple[Response, int]:
         g.actor,
         factura_id=str(body.factura_id),
         idempotency_key=key,
+        reintentar_ahora=body.reintentar_ahora,
     )
     return jsonify(_checkout_json(result)), 200 if result.replayed else 201
+
+
+@payments_bp.get("/invoices/<factura_id>/checkout-status")
+@authenticated
+def checkout_status(factura_id: str) -> tuple[Response, int]:
+    try:
+        factura = uuid.UUID(factura_id)
+    except ValueError as error:
+        raise NotFound("This invoice has no checkout attempt") from error
+    status = _billing().checkout_status(g.actor, factura_id=str(factura))
+    return jsonify(_status_json(status)), 200
 
 
 @payments_bp.get("/me/payment-methods")
@@ -170,6 +185,22 @@ def _invoice_json(invoice: InvoiceRecord) -> dict[str, Any]:
         "total": str(invoice.total),
         "moneda": invoice.moneda,
     }
+
+
+def _status_json(status: CheckoutStatus) -> dict[str, Any]:
+    return {
+        "pago_id": status.pago_id,
+        "estado": status.estado,
+        "reintentos_realizados": status.reintentos_realizados,
+        "reintentos_maximos": status.reintentos_maximos,
+        "reintentos_agotados": status.reintentos_agotados,
+        "ultimo_error_codigo": status.ultimo_error_codigo,
+        "proximo_reintento_en": _iso(status.proximo_reintento_en),
+    }
+
+
+def _iso(moment) -> str | None:
+    return moment.isoformat() if moment is not None else None
 
 
 def _checkout_json(result: CheckoutStart) -> dict[str, Any]:

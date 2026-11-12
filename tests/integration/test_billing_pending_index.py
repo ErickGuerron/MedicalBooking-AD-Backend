@@ -2,49 +2,20 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from medicalbooking.modules.payments.application.billing_service import NewPayment
 from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
+from tests.integration.checkout_support import new_id as _id
 
 pytestmark = pytest.mark.integration
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
-
-
-def _id() -> str:
-    return str(uuid.uuid4())
-
-
-def _seed_factura(conn: Connection) -> str:
-    usuario, paciente, factura = _id(), _id(), _id()
-    conn.execute(
-        text(
-            "INSERT INTO usuarios (id, email, nombre, apellido, creado_en, actualizado_en) "
-            "VALUES (:id, :email, N'Nombre', N'Apellido', SYSUTCDATETIME(), SYSUTCDATETIME())"
-        ),
-        {"id": usuario, "email": f"{usuario}@example.test"},
-    )
-    conn.execute(
-        text(
-            "INSERT INTO pacientes (id, usuario_id, creado_en) VALUES (:id, :u, SYSUTCDATETIME())"
-        ),
-        {"id": paciente, "u": usuario},
-    )
-    conn.execute(
-        text(
-            "INSERT INTO facturas (id, paciente_id, subtotal, impuestos, total, moneda, estado, "
-            "creada_en) VALUES (:id, :p, 25.50, 0, 25.50, 'USD', 'PENDIENTE', SYSUTCDATETIME())"
-        ),
-        {"id": factura, "p": paciente},
-    )
-    return factura
 
 
 def _payment(factura: str, clave: str) -> NewPayment:
@@ -64,17 +35,6 @@ def _estados(engine: Engine, factura: str) -> list[str]:
             text("SELECT estado FROM pagos WHERE factura_id = :f"), {"f": factura}
         ).all()
     return [row.estado for row in rows]
-
-
-@pytest.fixture
-def engine(migrated_engine: Engine) -> Engine:
-    return migrated_engine
-
-
-@pytest.fixture
-def factura(engine: Engine) -> str:
-    with engine.begin() as conn:
-        return _seed_factura(conn)
 
 
 def test_the_index_exists_and_filters_on_pending(engine: Engine) -> None:
@@ -130,7 +90,7 @@ def test_a_rejected_attempt_does_not_block_a_new_one(engine: Engine, factura: st
 def test_pending_lookup_returns_the_provider_session(engine: Engine, factura: str) -> None:
     store = SqlBillingStore(engine)
     created = store.reserve_payment(_payment(factura, "sess-key-0000001")).payment
-    store.record_session(created.id, "cs_test_sess_1")
+    store.record_session(created.id, "cs_test_sess_1", 0)
     found = store.find_pending_payment_for_invoice(factura)
     assert found is not None
     assert found.session_id == "cs_test_sess_1"
