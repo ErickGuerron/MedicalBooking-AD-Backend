@@ -1,5 +1,5 @@
 Objective: retry the Stripe Checkout Session creation for payment attempts that failed because the provider was unavailable, and expose the retry state to the app.
-Branch: feature/checkout-retry (stacked on feature/payment-methods-hardening, PR #17; do not merge before #17).
+Branch: feature/checkout-retry, rebased on develop after PR #17 was merged (43a7ee8) and tested by the user.
 Delivery: ask-on-risk. Test runner: uv run pytest (SQL Server integration tests share one database; run serially).
 
 ## Specs
