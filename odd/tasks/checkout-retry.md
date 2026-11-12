@@ -11,7 +11,7 @@ S5. The retry runs as a one-shot worker in medicalbooking/workers, executed by a
 S6. Retry state lives on the payment attempt (pagos): retry count, last error code, next retry time. No notificaciones rows and no channel column.
 S7. The app never stores a checkout link. When the patient opens a pending payment, the app asks for a session through POST /payments/checkout, which creates a fresh session with a new key.
 S8. ASSUMPTION: after 5 failed retries the attempt stays RECHAZADO with the exhausted state visible in the status, and the patient can start a new checkout attempt from the app.
-S9. OPEN: the interval between retries ("cada cierto tiempo") is not decided. Propose a fixed backoff and confirm with the user before T3.
+S9. Retry schedule, decided by the user: the worker runs every minute and retries an attempt when its next retry time has passed. Gaps between retries: 1 min, 1 min, 2 min, 2 min, 5 min (about 11 min in total). The patient can also press "Reintentar ahora" in the app, which creates a fresh session immediately (same path as S7), without waiting for the worker.
 
 ## Tasks
 T1 | S6 | route: inline (migration + repository) | status: pending | commit: -
@@ -27,3 +27,4 @@ Risk (draft): item 1 (changes state of payment attempts). Final Risk line set pe
 L1 (user, 2026-11-11, verbatim fragments): "reintentar cada cierto tiempo" for checkouts that failed; "que solo sea por la app y se notifique dentro, ... para que se le notifique si hubo un error y el numero de intentos que va realizando, dentro de la app"; decision B: state stored on pagos, exposed through status; option 1: stack on feature/payment-methods-hardening.
 L2 (parent): inspected code. Provider failure on create marks the attempt RECHAZADO (billing_service._open_session -> store.mark_rejected). Stripe 5xx on keyed POST is replayed, so retries need new keys (S3).
 L3 (parent): no in-app notification UI exists in the front (Flutter, Angular); the front team must build the notice from the status fields.
+L4 (user): "me parece mejor el reintentar ahorra, con los tiempos propuestos". Resolves S9 with the schedule above and the "Reintentar ahora" button. Constraint found: a seconds-level schedule needs a continuous worker, which breaks the one-shot pattern, so it was rejected.
