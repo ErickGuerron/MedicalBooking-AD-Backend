@@ -134,6 +134,18 @@ class FakeBillingStore:
     def find_pending_payment_for_invoice(self, factura_id):
         return self._pending_for(factura_id)
 
+    def find_due_checkout_retries(self, now, limit):
+        due = [
+            p
+            for p in self.payments.values()
+            if p.estado == "PENDIENTE"
+            and p.session_id is None
+            and not p.reintentos_agotados
+            and p.proximo_reintento_en is not None
+            and p.proximo_reintento_en <= now
+        ]
+        return due[:limit]
+
     def _pending_for(self, factura_id):
         return next(
             (

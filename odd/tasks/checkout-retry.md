@@ -18,7 +18,7 @@ T1 | S6 | route: inline (migration 0021, schema tests) | status: done (RED 3 fai
 T2 | S1, S2, S3, S8 | route: inline (domain rules in checkout_retry.py, billing service, store) | status: done (unit RED 4 failing then GREEN; full suite 1033 passed, 1 xfailed) | commit: see git log
    Behavior change (intended): a failed provider create keeps the attempt PENDIENTE with the next retry scheduled, instead of RECHAZADO. Tests 'provider failure marks rejected' and 'new key after rejected opens new attempt' were replaced by the retry expectations. The store integration tests were written after the SQL, so they are regression checks, not RED evidence.
    Open before T6: differential check of shared checkout paths (_open_session, _replay, _reopen_pending) against the base commit, in a mktemp scratch copy.
-T3 | S4, S5 | route: inline (one-shot worker, same pattern as expire_holds) | status: pending | commit: -
+T3 | S5, S9 | route: inline (retry_due_checkouts in billing service, worker workers/retry_failed_checkouts.py) | status: done (unit + SQL integration; suite 1047 passed, 1 xfailed) | commit: see git log
 T4 | S4, S7 | route: inline (status endpoint fields, OpenAPI) | status: pending | commit: -
 T5 | all | docs: README worker section, OpenAPI regen, backend-status | status: pending | commit: -
 T6 | S1-S8 | verification: independent verifier (Risk: item 1 payments state, item 2 security-adjacent credentials handling: none beyond existing keys) | status: pending
@@ -31,3 +31,4 @@ L2 (parent): inspected code. Provider failure on create marks the attempt RECHAZ
 L3 (parent): no in-app notification UI exists in the front (Flutter, Angular); the front team must build the notice from the status fields.
 L5 (parent, T2): retry counter counts retry calls only; the first failed create sets the schedule with gap 1 min; retry n uses key "<clave>:<n>"; a manual "Reintentar ahora" counts as a retry (assumption, confirm with user). Risk: item 1 (changes payment attempt state transitions). Independent verifier deferred to T6 (one run at feature end).
 L4 (user): "me parece mejor el reintentar ahorra, con los tiempos propuestos". Resolves S9 with the schedule above and the "Reintentar ahora" button. Constraint found: a seconds-level schedule needs a continuous worker, which breaks the one-shot pattern, so it was rejected.
+L6 (parent, T3): worker runs retry_due_checkouts(50) once per schedule; a due attempt whose invoice is no longer pending is cancelled; a customer failure during a scheduled retry counts as a failed retry (no endless loop). Retries use derived keys, so overlapping runs converge. build_billing made public in app.py for the worker. Native review skipped by user decision; verification is TDD + integration tests.

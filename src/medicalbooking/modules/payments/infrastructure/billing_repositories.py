@@ -191,6 +191,21 @@ class SqlBillingStore:
             created=True,
         )
 
+    def find_due_checkout_retries(self, now: datetime, limit: int) -> list[PaymentRecord]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT TOP (:limite) id, factura_id, clave_idempotencia, estado, "
+                    "stripe_checkout_session_id, reintentos_realizados, reintentos_agotados, "
+                    "proximo_reintento_en FROM pagos "
+                    "WHERE estado = 'PENDIENTE' AND stripe_checkout_session_id IS NULL "
+                    "AND reintentos_agotados = 0 AND proximo_reintento_en <= :ahora "
+                    "ORDER BY proximo_reintento_en"
+                ),
+                {"limite": limit, "ahora": _utc_naive(now)},
+            ).all()
+        return [_payment(row) for row in rows]
+
     def record_session(self, pago_id: str, session_id: str, retries_made: int) -> None:
         with self._engine.begin() as conn:
             conn.execute(

@@ -133,3 +133,23 @@ def _factura_of(engine: Engine, pago_id: str) -> str:
                 text("SELECT factura_id FROM pagos WHERE id = :id"), {"id": pago_id}
             ).scalar_one()
         ).lower()
+
+
+def test_only_attempts_whose_retry_is_due_are_listed_for_the_worker(
+    migrated_engine: Engine, store: SqlBillingStore, attempt: str
+) -> None:
+    # The database is shared across tests, so only this test's attempt is asserted on.
+    store.record_create_failure(attempt, 0, NOW + timedelta(minutes=1), CHECKOUT_UNAVAILABLE_CODE)
+    assert attempt not in [p.id for p in store.find_due_checkout_retries(NOW, 500)]
+    due = {p.id: p for p in store.find_due_checkout_retries(NOW + timedelta(minutes=2), 500)}
+    assert attempt in due
+    assert due[attempt].proximo_reintento_en == (NOW + timedelta(minutes=1))
+
+
+def test_exhausted_or_answered_attempts_are_never_listed_for_retry(
+    migrated_engine: Engine, store: SqlBillingStore, attempt: str
+) -> None:
+    store.record_create_failure(attempt, 5, None, CHECKOUT_UNAVAILABLE_CODE)
+    assert attempt not in [
+        p.id for p in store.find_due_checkout_retries(NOW + timedelta(days=1), 500)
+    ]

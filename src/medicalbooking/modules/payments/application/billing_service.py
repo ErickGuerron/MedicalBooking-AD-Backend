@@ -136,6 +136,13 @@ class CheckoutSnapshot:
 
 
 @dataclass(frozen=True)
+class RetryRun:
+    attempted: int
+    succeeded: int
+    failed: int
+
+
+@dataclass(frozen=True)
 class CheckoutStart:
     pago_id: str
     client_secret: str
@@ -167,6 +174,8 @@ class BillingStore(Protocol):
     def confirm_payment(self, pago_id: str, factura_id: str, now: datetime) -> None: ...
 
     def cancel_pending_payment(self, pago_id: str) -> None: ...
+
+    def find_due_checkout_retries(self, now: datetime, limit: int) -> list[PaymentRecord]: ...
 
 
 class CheckoutGateway(Protocol):
@@ -348,6 +357,42 @@ class BillingService:
             raise Conflict("The payment attempt is no longer pending")
         return self._reopen_pending(invoice, payment, reintentar_ahora)
 
+    def retry_due_checkouts(self, limit: int) -> RetryRun:
+        """Run the scheduled retries that are due now (checkout-retry S5, S9). Each retry uses
+        the key of its own number, so concurrent runs converge on the same provider session."""
+        if not self._gateway.is_configured():
+            raise ServiceUnavailable("Payment provider is not configured")
+        attempted = succeeded = failed = 0
+        for payment in self._store.find_due_checkout_retries(self._clock(), limit):
+            attempted += 1
+            invoice = self._store.find_invoice(payment.factura_id)
+            if invoice is None or invoice.estado != FACTURA_PENDIENTE:
+                self._store.cancel_pending_payment(payment.id)
+                continue
+            try:
+                self._open_session(
+                    invoice,
+                    payment,
+                    retry_key(payment.clave, payment.reintentos_realizados + 1),
+                    replayed=True,
+                    retry=True,
+                )
+            except ServiceUnavailable:
+                failed += 1
+            else:
+                succeeded += 1
+        return RetryRun(attempted=attempted, succeeded=succeeded, failed=failed)
+
+    def _record_create_failure(self, payment: PaymentRecord, retry: bool) -> None:
+        # The attempt stays pending with its next retry scheduled (checkout-retry S1, S8).
+        made = payment.reintentos_realizados + 1 if retry else payment.reintentos_realizados
+        self._store.record_create_failure(
+            payment.id,
+            made,
+            next_retry_at(made, self._clock()),
+            CHECKOUT_UNAVAILABLE_CODE,
+        )
+
     def _open_session(
         self,
         invoice: InvoiceRecord,
@@ -359,7 +404,13 @@ class BillingService:
     ) -> CheckoutStart:
         # A customer failure leaves the attempt pending without a session: it is not rejected,
         # so the next request resumes it and the customer is asked again.
-        customer_id = self._customers.ensure(invoice.paciente_user_id)
+        try:
+            customer_id = self._customers.ensure(invoice.paciente_user_id)
+        except ServiceUnavailable:
+            # A scheduled retry must count even when the customer step fails, or it never ends.
+            if retry:
+                self._record_create_failure(payment, retry)
+            raise
         request = CheckoutRequest(
             idempotency_key=idempotency_key,
             amount_cents=to_cents(invoice.total),
@@ -371,15 +422,7 @@ class BillingService:
         try:
             session = self._gateway.create_session(request)
         except ProviderUnavailable as error:
-            # The attempt stays pending with its next retry scheduled (checkout-retry S1, S8).
-            made = payment.reintentos_realizados + 1 if retry else payment.reintentos_realizados
-            now = self._clock()
-            self._store.record_create_failure(
-                payment.id,
-                made,
-                next_retry_at(made, now),
-                CHECKOUT_UNAVAILABLE_CODE,
-            )
+            self._record_create_failure(payment, retry)
             raise ServiceUnavailable("Payment provider is unavailable") from error
         made = payment.reintentos_realizados + 1 if retry else payment.reintentos_realizados
         self._store.record_session(payment.id, session.id, made)
