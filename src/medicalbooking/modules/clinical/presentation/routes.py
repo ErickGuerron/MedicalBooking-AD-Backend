@@ -402,6 +402,13 @@ def get_shadow(order_id: uuid.UUID) -> tuple[Response, int]:
     return jsonify(_plain(asdict(report))), 200
 
 
+@clinical_bp.get("/me/perfil-clinico")
+@authenticated
+def read_clinical_profile() -> tuple[Response, int]:
+    """The patient's own declared profile, so a client knows whether it is already complete."""
+    return jsonify(asdict(_patient_profile().read(g.actor))), 200
+
+
 @clinical_bp.put("/me/perfil-clinico")
 @authenticated
 def save_clinical_profile() -> tuple[Response, int]:

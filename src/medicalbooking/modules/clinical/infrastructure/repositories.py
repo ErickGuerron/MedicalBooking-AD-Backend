@@ -533,6 +533,25 @@ class SqlClinicalStore:
         fumador = None if row.fumador is None else bool(row.fumador)
         return row.altitud_residencia_m, fumador, row.cigarrillos_dia
 
+    def own_clinical_profile(
+        self, usuario_id: str
+    ) -> tuple[int | None, bool | None, int | None] | None:
+        guid = _as_guid(usuario_id)
+        if guid is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT altitud_residencia_m, fumador, cigarrillos_dia "
+                    "FROM pacientes WHERE usuario_id = :u"
+                ),
+                {"u": guid},
+            ).first()
+        if row is None:
+            return None
+        fumador = None if row.fumador is None else bool(row.fumador)
+        return row.altitud_residencia_m, fumador, row.cigarrillos_dia
+
     def save_patient_clinical_profile(
         self,
         usuario_id: str,
