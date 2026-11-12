@@ -123,7 +123,7 @@ def _active_destinations(engine: Engine) -> int:
 
 
 def _service(engine: Engine) -> OutboxDispatchService:
-    return OutboxDispatchService(store=SqlOutboxStore(engine))
+    return OutboxDispatchService(store=SqlOutboxStore(engine), handlers=[], clock=lambda: NOW)
 
 
 def test_materialize_creates_one_pending_delivery_per_event_and_active_destination(
