@@ -49,6 +49,15 @@ class PatientProfileService:
             raise NotFound("No patient profile for this user")
         self._audit(actor, paciente_id, "OK")
 
+    def read(self, actor: AccessProfile) -> ClinicalProfile:
+        """The patient's own declared profile; fields stay None until they declare them."""
+        if PERM_EDIT not in actor.permissions:
+            raise Forbidden(_FORBIDDEN)
+        stored = self._store.own_clinical_profile(actor.user_id)
+        if stored is None:
+            raise NotFound("No patient profile for this user")
+        return ClinicalProfile(*stored)
+
     def _audit(self, actor: AccessProfile, paciente_id: str | None, resultado: str) -> None:
         self._store.record_audit(
             AuditEvent(

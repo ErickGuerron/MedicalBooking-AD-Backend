@@ -228,6 +228,12 @@ class ClinicalStore(Protocol):
         """Store the patient's own profile; return the patient id, or None without a patient."""
         ...
 
+    def own_clinical_profile(
+        self, usuario_id: str
+    ) -> tuple[int | None, bool | None, int | None] | None:
+        """The user's own (altitude, smoker, cigarettes per day); None without a patient."""
+        ...
+
     def record_shadow_snapshot(
         self,
         order_id: str,
