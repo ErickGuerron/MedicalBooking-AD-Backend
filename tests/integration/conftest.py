@@ -17,6 +17,11 @@ def engine(migrated_engine: Engine) -> Engine:
 
 @pytest.fixture
 def factura(engine: Engine) -> Iterator[str]:
-    """A pending invoice inserted directly into the migrated database."""
+    """A pending invoice inserted directly into the migrated database.
+
+    The insert is committed before the test starts. Holding it open across the test body made
+    the test's own connections wait on a lock that only the test's teardown could release.
+    """
     with engine.begin() as conn:
-        yield seed_factura(conn)
+        factura_id = seed_factura(conn)
+    yield factura_id

@@ -31,6 +31,21 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def _empty_outbox(migrated_engine: Engine) -> Iterator[None]:
+    """Start each test with an empty outbox, deleting dependents first (FK order).
+
+    The database is shared by the whole session. Every dispatch cycle materializes deliveries
+    for all outbox events, so events left by earlier tests fill the dispatcher's batch (50) and
+    push the event under test out of the claim.
+    """
+    with migrated_engine.begin() as conn:
+        conn.execute(text("DELETE FROM notificaciones WHERE evento_origen_id IS NOT NULL"))
+        conn.execute(text("DELETE FROM entregas_eventos"))
+        conn.execute(text("DELETE FROM eventos_outbox"))
+    yield
+
+
 class _Clock:
     def __init__(self, now: datetime) -> None:
         self.now = now

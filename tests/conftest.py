@@ -21,7 +21,7 @@ from medicalbooking.config import Settings
 from medicalbooking.shared.infrastructure.database import create_database_engine
 
 ROOT = Path(__file__).resolve().parents[1]
-# Parallel worktrees each set their own name so concurrent sessions never drop each other's database.
+# Parallel worktrees set their own name so sessions never drop each other's database.
 TEST_DATABASE = os.environ.get("MEDICALBOOKING_TEST_DATABASE", "MedicalBooking_test")
 # The name is interpolated into DROP DATABASE, so only plain identifiers are accepted.
 if not re.fullmatch(r"[A-Za-z0-9_]{1,100}", TEST_DATABASE):

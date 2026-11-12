@@ -14,11 +14,19 @@ import defusedxml.ElementTree as ET
 import pytest
 from flask import Flask
 from pydantic import SecretStr
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
-from tests.integration.test_lab_api import HB, _detail, _order_for, _result_body
+from tests.integration.test_lab_api import (
+    HB,
+    _create_order,
+    _detail,
+    _doctor,
+    _order_for,
+    _patient_id,
+    _result_body,
+)
 from tests.integration.test_scheduling_api import _token, _user
 
 pytestmark = pytest.mark.integration
@@ -27,6 +35,40 @@ KEY = "integration-signing-key-with-32+chars"
 ENDPOINT = "/soap/laboratory"
 NS_LAB = "urn:medicalbooking:laboratory:v1"
 FOREIGN_FAULT = "Order not available for this account"
+
+
+def _own_order(app, engine) -> tuple[str, str, str, dict[str, str]]:
+    """A fresh order on a private panel holding only the hemoglobin analyte.
+
+    The shared hemogram can gain mandatory analytes from other tests in the same session, which
+    would keep this order from completing. A private panel keeps its status independent of them.
+    """
+    with engine.begin() as conn:
+        panel = conn.execute(
+            text(
+                "INSERT INTO tipos_prueba_laboratorio (id, codigo, nombre, activo) "
+                "OUTPUT inserted.id VALUES (NEWID(), :c, N'Panel SOAP', 1)"
+            ),
+            {"c": f"SOAP-{uuid.uuid4().hex[:8]}"},
+        ).scalar_one()
+        conn.execute(
+            text(
+                "INSERT INTO conocimiento_pruebas_analitos (tipo_prueba_id, analito_id, "
+                "obligatorio, orden_presentacion) VALUES (:t, :a, 1, 1)"
+            ),
+            {"t": panel, "a": HB},
+        )
+    patient = _user(engine, "PACIENTE")
+    doctor = _doctor(engine)
+    headers = _token(app, doctor)
+    response = _create_order(
+        app.test_client(),
+        headers,
+        _patient_id(engine, patient),
+        [str(uuid.UUID(str(panel)))],
+    )
+    assert response.status_code == 201, response.get_json()
+    return response.get_json()["id"], patient, doctor, headers
 
 
 @pytest.fixture(scope="module")
@@ -91,7 +133,7 @@ def test_forged_token_gets_401_fault(app, engine) -> None:
 
 
 def test_patient_owner_gets_only_minimal_status(app, engine) -> None:
-    order_id, patient, doctor, doctor_headers = _order_for(app, engine)
+    order_id, patient, doctor, doctor_headers = _own_order(app, engine)
     client = app.test_client()
     lab_headers = _token(app, _user(engine, "LABORATORISTA"))
     detail = _detail(app, order_id, doctor_headers)
