@@ -13,7 +13,6 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
-
 from tests.integration.test_lab_api import _create_order, _doctor, _patient_id, _test_type
 from tests.integration.test_scheduling_api import _token, _user
 
