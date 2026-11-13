@@ -46,6 +46,7 @@ EXPECTED_PATHS = {
     "/api/v1/me/perfil-clinico",
     "/api/v1/clinical/proposals/{proposal_id}/reviews",
     "/api/v1/payments/webhook",
+    "/api/v1/payments/{pago_id}/refunds",
     "/api/v1/invoices",
     "/api/v1/payments/checkout",
     "/api/v1/invoices/{factura_id}/checkout-status",

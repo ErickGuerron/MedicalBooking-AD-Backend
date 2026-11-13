@@ -252,6 +252,94 @@ def payments_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/payments/{pago_id}/refunds": {
+                "post": {
+                    "tags": ["Payments"],
+                    "operationId": "requestRefund",
+                    "summary": "Request a refund of a cancelled, paid appointment (owner only)",
+                    "description": (
+                        "Refunds the whole payment when the patient cancelled the appointment "
+                        "before it started and no consultation was attended. One active refund "
+                        "per payment, at most two requests in 30 days, and only reason codes from "
+                        "the closed catalog. The amount is never taken from the client. The "
+                        "refund is PROCESADO only when the refund.updated webhook confirms it. "
+                        "A payment without a Stripe payment intent is refused. A provider error "
+                        "marks the refund FALLIDO and is not retried automatically."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "pago_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        },
+                        _IDEMPOTENCY_KEY,
+                    ],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["motivo_codigo"],
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "motivo_codigo": {
+                                            "type": "string",
+                                            "enum": [
+                                                "CANCELACION_PACIENTE",
+                                                "CANCELACION_MEDICO",
+                                                "ERROR_DE_COBRO",
+                                            ],
+                                        },
+                                        "motivo_texto": {"type": "string", "maxLength": 500},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Refund requested",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string", "format": "uuid"},
+                                            "pago_id": {"type": "string", "format": "uuid"},
+                                            "estado": {
+                                                "type": "string",
+                                                "enum": ["PENDIENTE", "FALLIDO"],
+                                            },
+                                            "monto": {"type": "string"},
+                                            "motivo_codigo": {"type": "string"},
+                                            "solicitado_en": {
+                                                "type": "string",
+                                                "format": "date-time",
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "200": {
+                            "description": "Replay of the same key: the stored refund",
+                        },
+                        "401": _problem("Missing or invalid bearer token"),
+                        "404": _problem("Not the owner, or the payment does not exist"),
+                        "409": _problem(
+                            "Refused by a rule: PAGO_NO_CONFIRMADO, CITA_NO_CANCELADA, "
+                            "CONSULTA_ATENDIDA, CANCELACION_TARDIA, REEMBOLSO_EXISTENTE, "
+                            "FUERA_DE_VENTANA, DEMASIADAS_SOLICITUDES, MOTIVO_INVALIDO or "
+                            "SIN_PAYMENT_INTENT (the code is the problem detail)"
+                        ),
+                        "422": _problem("Missing Idempotency-Key header or invalid body"),
+                        "502": _problem("Payment provider error; the refund is marked FALLIDO"),
+                    },
+                }
+            },
             "/api/v1/payments/webhook": {
                 "post": {
                     "tags": ["Payments"],

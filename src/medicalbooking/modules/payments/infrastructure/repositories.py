@@ -9,6 +9,7 @@ Parameterized SQL only.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -19,12 +20,25 @@ from sqlalchemy import Connection, Engine, text
 from medicalbooking.modules.payments.domain.webhook import (
     CONFIRMADO,
     DUPLICADO,
+    IGNORADO,
     PROCESADO,
     PagoSnapshot,
     PaymentChange,
+    RefundChange,
     decide,
 )
-from medicalbooking.modules.payments.infrastructure.billing_repositories import emit_pago_snapshot
+from medicalbooking.modules.payments.infrastructure.billing_repositories import (
+    emit_pago_snapshot,
+    emit_reembolso_snapshot,
+    set_payment_intent,
+)
+from medicalbooking.modules.payments.infrastructure.refund_finalization import (
+    finalize_reembolso,
+    find_reembolso_id,
+    mark_invoice_refunded,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_naive(moment: datetime) -> datetime:
@@ -41,31 +55,80 @@ class SqlPaymentsStore:
         with self._engine.begin() as conn:
             if self._already_recorded(conn, event_id):
                 return DUPLICADO
-            conn.execute(
-                text(
-                    "INSERT INTO stripe_eventos "
-                    "(id, stripe_event_id, tipo_evento, estado, intentos, recibido_en) "
-                    "VALUES (:id, :evento, :tipo, 'PENDIENTE', 1, :ahora)"
-                ),
-                {"id": str(uuid.uuid4()), "evento": event_id, "tipo": event_type, "ahora": now},
-            )
+            self._record_inbox(conn, event_id, event_type, now)
             pago = self._pago_for_session(conn, change.session_id)
+            if pago is not None and change.payment_intent is not None:
+                # NULL-guarded: a replay or a later event never overwrites the stored intent.
+                set_payment_intent(conn, pago.pago_id, change.payment_intent)
             decision = decide(change, pago)
             if decision.outcome == PROCESADO and pago is not None:
                 self._apply(conn, pago, decision.target_status or "", now)
-            conn.execute(
-                text(
-                    "UPDATE stripe_eventos SET estado = :estado, procesado_en = :ahora, "
-                    "error_detalle = :detalle WHERE stripe_event_id = :evento"
-                ),
-                {
-                    "estado": decision.outcome,
-                    "ahora": now,
-                    "detalle": decision.detail,
-                    "evento": event_id,
-                },
-            )
+            self._close_inbox(conn, event_id, decision.outcome, decision.detail, now)
             return decision.outcome
+
+    def process_refund(self, event_id: str, event_type: str, change: RefundChange) -> str:
+        """Finalize the reembolso of a refund.* event. Unknown refunds are ignored, unwritten."""
+        now = _utc_naive(self._clock())
+        with self._engine.begin() as conn:
+            if self._already_recorded(conn, event_id):
+                outcome = DUPLICADO
+            else:
+                reembolso_id = (
+                    find_reembolso_id(conn, change.refund_id) if change.refund_id else None
+                )
+                if reembolso_id is None:
+                    outcome = IGNORADO
+                else:
+                    outcome = self._finalize_refund(
+                        conn, event_id, event_type, reembolso_id, change, now
+                    )
+        logger.info("stripe refund event %s mapped to %s", event_type, outcome)
+        return outcome
+
+    @staticmethod
+    def _finalize_refund(
+        conn: Connection,
+        event_id: str,
+        event_type: str,
+        reembolso_id: str,
+        change: RefundChange,
+        now: datetime,
+    ) -> str:
+        SqlPaymentsStore._record_inbox(conn, event_id, event_type, now)
+        if change.target_status is None:
+            outcome, detail = IGNORADO, "evento sin cambio de reembolso"
+        elif finalize_reembolso(conn, reembolso_id, change.target_status, now):
+            if change.target_status == "PROCESADO":
+                mark_invoice_refunded(conn, reembolso_id)
+            emit_reembolso_snapshot(conn, reembolso_id, now)
+            outcome, detail = PROCESADO, None
+        else:
+            outcome, detail = IGNORADO, "reembolso ya no pendiente"
+        SqlPaymentsStore._close_inbox(conn, event_id, outcome, detail, now)
+        return outcome
+
+    @staticmethod
+    def _record_inbox(conn: Connection, event_id: str, event_type: str, now: datetime) -> None:
+        conn.execute(
+            text(
+                "INSERT INTO stripe_eventos "
+                "(id, stripe_event_id, tipo_evento, estado, intentos, recibido_en) "
+                "VALUES (:id, :evento, :tipo, 'PENDIENTE', 1, :ahora)"
+            ),
+            {"id": str(uuid.uuid4()), "evento": event_id, "tipo": event_type, "ahora": now},
+        )
+
+    @staticmethod
+    def _close_inbox(
+        conn: Connection, event_id: str, outcome: str, detail: str | None, now: datetime
+    ) -> None:
+        conn.execute(
+            text(
+                "UPDATE stripe_eventos SET estado = :estado, procesado_en = :ahora, "
+                "error_detalle = :detalle WHERE stripe_event_id = :evento"
+            ),
+            {"estado": outcome, "ahora": now, "detalle": detail, "evento": event_id},
+        )
 
     @staticmethod
     def _already_recorded(conn: Connection, event_id: str) -> bool:
