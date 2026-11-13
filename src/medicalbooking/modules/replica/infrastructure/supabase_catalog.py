@@ -24,9 +24,7 @@ def read_catalog(engine: Engine) -> CatalogSnapshot:
         permisos = tuple(
             (int(row.id), row.codigo, row.recurso, row.accion, row.descripcion)
             for row in conn.execute(
-                text(
-                    "SELECT id, codigo, recurso, accion, descripcion FROM permisos ORDER BY id"
-                )
+                text("SELECT id, codigo, recurso, accion, descripcion FROM permisos ORDER BY id")
             ).all()
         )
         links = tuple(

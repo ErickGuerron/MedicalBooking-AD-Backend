@@ -35,7 +35,7 @@ class FakeSink:
         self.committed.extend(self._staged)
         self.processed |= self._staged_processed
 
-    def mark_processed(self, event_id: str, consumer: str, tipo: str) -> bool:
+    def mark_processed(self, event_id: str, consumer: str, tipo: str, created_at: str) -> bool:
         if event_id in self.processed or event_id in self._staged_processed:
             return False
         self._staged_processed.add(event_id)
@@ -60,8 +60,8 @@ class FakeSink:
             "upsert_order", tuple(sorted((k, str(v)) for k, v in orden.items() if k != "detalles"))
         )
 
-    def upsert_detail(self, detalle_id, orden_id, estado):
-        self._write("upsert_detail", detalle_id, orden_id, estado)
+    def upsert_detail(self, detalle_id, orden_id, estado, tipo_prueba_id):
+        self._write("upsert_detail", detalle_id, orden_id, estado, tipo_prueba_id)
 
     def set_order_state(self, orden_id, estado):
         self._write("set_order_state", orden_id, estado)
@@ -164,7 +164,7 @@ def test_orden_creada_projects_the_order_and_its_detail_lines():
     apply_event(event, sink, consumer="replica-supabase")
 
     assert _names(sink) == ["upsert_order", "upsert_detail"]
-    assert sink.committed[1] == ("upsert_detail", DETAIL, ORDER, "PENDIENTE")
+    assert sink.committed[1] == ("upsert_detail", DETAIL, ORDER, "PENDIENTE", "t")
 
 
 def test_resultado_registrado_projects_detail_order_state_and_results():
