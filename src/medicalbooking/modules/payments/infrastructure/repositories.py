@@ -24,6 +24,7 @@ from medicalbooking.modules.payments.domain.webhook import (
     PaymentChange,
     decide,
 )
+from medicalbooking.modules.payments.infrastructure.billing_repositories import emit_pago_snapshot
 
 
 def _utc_naive(moment: datetime) -> datetime:
@@ -120,3 +121,6 @@ class SqlPaymentsStore:
                 ),
                 {"factura": pago.factura_id},
             )
+        emit_pago_snapshot(conn, pago.pago_id, now)
+
+    

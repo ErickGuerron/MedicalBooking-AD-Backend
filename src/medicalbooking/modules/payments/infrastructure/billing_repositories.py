@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Engine, Row, text
+from sqlalchemy import Connection, Engine, Row, text
 from sqlalchemy.exc import IntegrityError
 
 from medicalbooking.modules.payments.application.billing_service import (
@@ -209,6 +209,7 @@ class SqlBillingStore:
                         "creado": _utc_naive(payment.creado_en),
                     },
                 )
+                emit_pago_snapshot(conn, payment.id, _utc_naive(payment.creado_en))
         except IntegrityError as error:
             if not is_unique_violation(str(error.orig)):
                 raise
@@ -267,6 +268,7 @@ class SqlBillingStore:
                 ),
                 {"sesion": session_id, "pago": pago_id, "reintentos": retries_made},
             )
+            emit_pago_snapshot(conn, pago_id, _utc_naive(datetime.now(UTC)))
 
     def record_create_failure(
         self, pago_id: str, retries_made: int, next_retry_at: datetime | None, error_code: str
@@ -290,6 +292,7 @@ class SqlBillingStore:
                     "pago": pago_id,
                 },
             )
+            emit_pago_snapshot(conn, pago_id, _utc_naive(datetime.now(UTC)))
 
     def mark_rejected(self, pago_id: str) -> None:
         with self._engine.begin() as conn:
@@ -300,6 +303,7 @@ class SqlBillingStore:
                 ),
                 {"pago": pago_id},
             )
+            emit_pago_snapshot(conn, pago_id, _utc_naive(datetime.now(UTC)))
 
     def confirm_payment(self, pago_id: str, factura_id: str, now: datetime) -> None:
         # Same guarded updates as the verified webhook: a racing event changes nothing twice.
@@ -318,6 +322,7 @@ class SqlBillingStore:
                 ),
                 {"factura": factura_id},
             )
+            emit_pago_snapshot(conn, pago_id, _utc_naive(now))
 
     def cancel_pending_payment(self, pago_id: str) -> None:
         with self._engine.begin() as conn:
@@ -328,6 +333,7 @@ class SqlBillingStore:
                 ),
                 {"pago": pago_id},
             )
+            emit_pago_snapshot(conn, pago_id, _utc_naive(datetime.now(UTC)))
 
 
 def _payment(row: Row[Any]) -> PaymentRecord:
@@ -343,6 +349,45 @@ def _payment(row: Row[Any]) -> PaymentRecord:
         reintentos_agotados=bool(row.reintentos_agotados),
         proximo_reintento_en=next_retry.replace(tzinfo=UTC) if next_retry is not None else None,
         ultimo_error_codigo=row.ultimo_error_codigo,
+    )
+
+
+def emit_pago_snapshot(conn: Connection, pago_id: str, moment: datetime) -> None:
+    """Replica snapshot of a payment and its invoice, written with the change itself.
+
+    Gateway identifiers and idempotency keys are never read here, so they can never leave SQL.
+    The snapshot is read inside the caller's transaction, after the change.
+    """
+    row = conn.execute(
+        text(
+            "SELECT p.id, p.factura_id, p.estado, p.monto, p.moneda, p.creado_en, p.pagado_en, "
+            "f.paciente_id, f.estado AS factura_estado "
+            "FROM pagos AS p JOIN facturas AS f ON f.id = p.factura_id WHERE p.id = :p"
+        ),
+        {"p": pago_id},
+    ).one()
+    append_outbox(
+        conn,
+        "pago",
+        str(row.id),
+        "pago.actualizado",
+        {
+            "pago": {
+                "id": str(row.id).lower(),
+                "factura_id": str(row.factura_id).lower(),
+                "estado": row.estado,
+                "monto": str(row.monto),
+                "moneda": row.moneda.strip(),
+                "creado_en": row.creado_en.isoformat(),
+                "pagado_en": row.pagado_en.isoformat() if row.pagado_en else None,
+            },
+            "factura": {
+                "id": str(row.factura_id).lower(),
+                "paciente_id": str(row.paciente_id).lower(),
+                "estado": row.factura_estado,
+            },
+        },
+        moment,
     )
 
 
