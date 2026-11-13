@@ -7,7 +7,6 @@ outbox rows commit with the appointment or not at all. Parameterized SQL only.
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, datetime
 
@@ -26,6 +25,7 @@ from medicalbooking.modules.scheduling.application.ports import (
     ReserveStatus,
 )
 from medicalbooking.modules.scheduling.domain.policies import ACTIVE_STATES
+from medicalbooking.shared.infrastructure.outbox import append_outbox
 from medicalbooking.shared.infrastructure.sql_errors import is_unique_violation, retry_on_deadlock
 
 _BOOKED = "PENDIENTE_PAGO"
@@ -59,22 +59,51 @@ def _appointment(row) -> Appointment:
 
 
 def _outbox(
-    conn: Connection, appointment_id: str, version: int, event: str, payload: dict, now: datetime
+    conn: Connection, appointment_id: str, event: str, payload: dict, now: datetime
 ) -> None:
-    conn.execute(
+    """Each event takes the next version of its appointment (the outbox is unique per version)."""
+    append_outbox(conn, "cita", appointment_id, event, payload, now)
+
+
+def emit_cita_snapshot(conn: Connection, cita_id: str, moment: datetime) -> None:
+    """Replica snapshot of an appointment and its slot window, written with the change itself.
+
+    The booking's free text, the idempotency key and the row version are never read here, so
+    they can never leave SQL Server. The snapshot is read inside the caller's transaction, after
+    the change.
+    """
+    row = conn.execute(
         text(
-            "INSERT INTO eventos_outbox (id, agregado_tipo, agregado_id, tipo_evento, payload, "
-            "version_agregado, creado_en) "
-            "VALUES (:id, 'cita', :agregado, :tipo, :payload, :version, :ahora)"
+            "SELECT c.id, c.paciente_id, c.servicio_id, c.estado, c.reservada_en, "
+            "c.confirmada_en, c.cancelada_en, c.motivo_cancelacion_codigo, "
+            "c.motivo_cancelacion_texto, h.inicio_utc, h.fin_utc "
+            "FROM citas AS c JOIN horarios_disponibles AS h ON h.id = c.horario_id "
+            "WHERE c.id = :c"
         ),
+        {"c": cita_id},
+    ).one()
+    appointment_id = _canonical(row.id)
+    append_outbox(
+        conn,
+        "cita",
+        appointment_id,
+        "cita.actualizada",
         {
-            "id": str(uuid.uuid4()),
-            "agregado": appointment_id,
-            "tipo": event,
-            "payload": json.dumps(payload),
-            "version": version,
-            "ahora": now,
+            "cita": {
+                "id": appointment_id,
+                "paciente_id": _canonical(row.paciente_id),
+                "servicio_id": _canonical(row.servicio_id),
+                "estado": row.estado,
+                "reservada_en": row.reservada_en.isoformat(),
+                "confirmada_en": row.confirmada_en.isoformat() if row.confirmada_en else None,
+                "cancelada_en": row.cancelada_en.isoformat() if row.cancelada_en else None,
+                "motivo_cancelacion_codigo": row.motivo_cancelacion_codigo,
+                "motivo_cancelacion_texto": row.motivo_cancelacion_texto,
+                "inicio": row.inicio_utc.isoformat(),
+                "fin": row.fin_utc.isoformat(),
+            }
         },
+        moment,
     )
 
 
@@ -248,7 +277,6 @@ class SqlSchedulingStore:
                 _outbox(
                     conn,
                     appointment_id,
-                    1,
                     "cita.reservada",
                     {
                         "cita_id": appointment_id,
@@ -257,6 +285,7 @@ class SqlSchedulingStore:
                     },
                     _utc_naive(command.now),
                 )
+                emit_cita_snapshot(conn, appointment_id, _utc_naive(command.now))
         except IntegrityError as error:
             # Only a unique conflict (the active-slot index or the idempotency key lost a
             # race) is an expected answer. The transaction was rolled back: nothing was
@@ -291,16 +320,23 @@ class SqlSchedulingStore:
                 ),
                 {"id": command.appointment_id},
             ).first()
-            if row is None or _canonical(row.patient_user_id) != command.actor_user_id:
+            if row is None or not _may_cancel(conn, command, row):
                 return CancelOutcome(CancelStatus.NOT_FOUND_OR_FORBIDDEN, None)
             if row.estado not in ACTIVE_STATES:
                 return CancelOutcome(CancelStatus.NOT_CANCELLABLE, None)
             updated = conn.execute(
                 text(
-                    "UPDATE citas SET estado = :nuevo, cancelada_en = :ahora "
+                    "UPDATE citas SET estado = :nuevo, cancelada_en = :ahora, "
+                    "motivo_cancelacion_codigo = :codigo, motivo_cancelacion_texto = :texto "
                     "WHERE id = :id AND estado IN ('PENDIENTE_PAGO', 'CONFIRMADA')"
                 ),
-                {"nuevo": _CANCELLED, "ahora": now, "id": command.appointment_id},
+                {
+                    "nuevo": _CANCELLED,
+                    "ahora": now,
+                    "codigo": command.motivo_codigo,
+                    "texto": command.motivo_texto,
+                    "id": command.appointment_id,
+                },
             ).rowcount
             if updated != 1:
                 return CancelOutcome(CancelStatus.NOT_CANCELLABLE, None)
@@ -317,7 +353,6 @@ class SqlSchedulingStore:
             _outbox(
                 conn,
                 command.appointment_id,
-                2,
                 "cita.cancelada",
                 {
                     "cita_id": command.appointment_id,
@@ -326,12 +361,13 @@ class SqlSchedulingStore:
                 },
                 now,
             )
+            emit_cita_snapshot(conn, command.appointment_id, now)
         return CancelOutcome(
             CancelStatus.CANCELLED,
             Appointment(
                 id=_canonical(row.id),
                 key=row.clave_idempotencia,
-                patient_user_id=command.actor_user_id,
+                patient_user_id=_canonical(row.patient_user_id),
                 horario_id=_canonical(row.horario_id),
                 servicio_id=_canonical(row.servicio_id),
                 estado=_CANCELLED,
@@ -379,7 +415,6 @@ class SqlSchedulingStore:
                 _outbox(
                     conn,
                     appointment_id,
-                    2,
                     "cita.expirada",
                     {
                         "cita_id": appointment_id,
@@ -388,6 +423,7 @@ class SqlSchedulingStore:
                     },
                     moment,
                 )
+                emit_cita_snapshot(conn, appointment_id, moment)
         return len(overdue)
 
 
@@ -408,3 +444,19 @@ _APPOINTMENT_SELECT = (
     "c.expiracion_reserva, p.usuario_id AS patient_user_id "
     "FROM citas c JOIN pacientes p ON p.id = c.paciente_id "
 )
+# Doctor ownership of an appointment: citas -> horarios_disponibles -> agendas -> medicos.
+_AGENDA_OWNER = text(
+    "SELECT 1 FROM citas c JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
+    "WHERE c.id = :cita AND m.usuario_id = :usuario"
+)
+
+
+def _may_cancel(conn: Connection, command: CancelCommand, row) -> bool:
+    """The patient who owns the appointment, or the doctor whose agenda holds it."""
+    if not command.as_medico:
+        return _canonical(row.patient_user_id) == command.actor_user_id
+    owned = conn.execute(
+        _AGENDA_OWNER, {"cita": command.appointment_id, "usuario": command.actor_user_id}
+    ).first()
+    return owned is not None
