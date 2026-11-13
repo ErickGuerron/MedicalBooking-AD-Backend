@@ -160,7 +160,8 @@ def test_a_crash_before_the_offset_commit_replays_without_applying_twice():
 
         assert replayed == 0
         processed = _owner_one(
-            "SELECT COUNT(*) FROM replica.eventos_procesados WHERE evento_id = %s AND consumidor = %s",
+            "SELECT COUNT(*) FROM replica.eventos_procesados "
+            "WHERE evento_id = %s AND consumidor = %s",
             (str(event.id), consumer),
         )
         assert processed == 1
