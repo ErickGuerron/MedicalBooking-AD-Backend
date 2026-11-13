@@ -31,7 +31,7 @@ class RecordingReader:
     def __init__(self) -> None:
         self.calls: list[UUID] = []
 
-    def results_of(self, patient_id: UUID) -> PatientResults:
+    def results_of(self, patient_id: UUID, usuario_id: UUID) -> PatientResults:
         self.calls.append(patient_id)
         return PatientResults(patient_id=patient_id, orders=())
 
@@ -49,9 +49,9 @@ def test_the_audit_record_is_written_before_the_read():
             super().append(record)
 
     class OrderedReader(RecordingReader):
-        def results_of(self, patient_id):
+        def results_of(self, patient_id, usuario_id):
             order_of_events.append("read")
-            return super().results_of(patient_id)
+            return super().results_of(patient_id, usuario_id)
 
     _service(OrderedSink(), OrderedReader()).results_for(
         actor_id=ACTOR, patient_id=PATIENT, correlation_id=CORRELATION, ip="10.0.0.5"

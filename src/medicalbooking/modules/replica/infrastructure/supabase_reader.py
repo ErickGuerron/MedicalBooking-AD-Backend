@@ -12,7 +12,12 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from medicalbooking.modules.replica.application.fallback_read import PatientResults
+from medicalbooking.modules.replica.application.fallback_read import (
+    AccountNotActive,
+    PatientResults,
+)
+
+_ACCOUNT_STATE = "SELECT estado FROM replica.cuentas_acceso WHERE usuario_id = %s"
 
 _ORDERS_WITH_RESULTS = """
 SELECT o.id, o.fecha_orden, o.estado,
@@ -31,7 +36,7 @@ class SupabaseReplicaReader:
     def __init__(self, connect: Callable[[], Any]) -> None:
         self._connect = connect
 
-    def results_of(self, patient_id: UUID) -> PatientResults:
+    def results_of(self, patient_id: UUID, usuario_id: UUID) -> PatientResults:
         connection = self._connect()
         with connection.transaction():
             with connection.cursor() as cursor:
@@ -40,6 +45,11 @@ class SupabaseReplicaReader:
                 cursor.execute(
                     "SELECT set_config('app.paciente_id', %s, true)", (str(patient_id),)
                 )
+                cursor.execute(_ACCOUNT_STATE, (str(usuario_id),))
+                account = cursor.fetchone()
+                if account is None or account[0] != "ACTIVO":
+                    # Raised inside the transaction: nothing from the replica is returned.
+                    raise AccountNotActive("account not active in the replica")
                 cursor.execute(_ORDERS_WITH_RESULTS, (str(patient_id),))
                 rows = cursor.fetchall()
         return PatientResults(patient_id=patient_id, orders=_group(rows))

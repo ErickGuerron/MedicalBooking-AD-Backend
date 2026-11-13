@@ -14,6 +14,10 @@ from typing import Protocol
 from uuid import UUID
 
 
+class AccountNotActive(Exception):
+    """The account is missing, blocked or not active in the replica. Nothing is served."""
+
+
 class AuditUnavailable(Exception):
     """The audit store could not record the read; the read must not be served."""
 
@@ -53,7 +57,7 @@ class AuditSink(Protocol):
 
 
 class ReplicaReader(Protocol):
-    def results_of(self, patient_id: UUID) -> PatientResults: ...
+    def results_of(self, patient_id: UUID, usuario_id: UUID) -> PatientResults: ...
 
 
 class FallbackReadService:
@@ -86,4 +90,4 @@ class FallbackReadService:
                 ip_origen=ip,
             )
         )
-        return self._reader.results_of(patient_id)
+        return self._reader.results_of(patient_id, actor_id)
