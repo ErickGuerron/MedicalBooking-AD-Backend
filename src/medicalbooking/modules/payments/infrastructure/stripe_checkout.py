@@ -9,7 +9,8 @@ reaches the client.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
@@ -26,11 +27,22 @@ from medicalbooking.modules.payments.application.payment_methods import (
     CardSnapshot,
     PaymentMethodSnapshot,
 )
+from medicalbooking.modules.payments.application.refund_service import ProviderRejected
 from medicalbooking.modules.payments.domain.payment_methods import DEFAULT_PAGE_LIMIT
 
 STRIPE_API_BASE = "https://api.stripe.com"
 CHECKOUT_PATH = "/v1/checkout/sessions"
 CUSTOMERS_PATH = "/v1/customers"
+REFUNDS_PATH = "/v1/refunds"
+
+
+@dataclass(frozen=True)
+class StripeRefund:
+    id: str
+    status: str
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
 SETUP_INTENTS_PATH = "/v1/setup_intents"
 PAYMENT_METHODS_PATH = "/v1/payment_methods"
 
@@ -40,6 +52,8 @@ MAX_PROVIDER_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 0.5
 _NOT_AN_OBJECT = "Stripe answered a body that is not an object"
 _NO_CHECKOUT_SESSION = "Stripe answered without a checkout session"
+_NO_REFUND = "Stripe answered without a refund"
+_NO_REFUND_LIST = "Stripe answered without a refund list"
 
 
 class StripeCheckoutGateway:
@@ -102,6 +116,7 @@ class StripeCheckoutGateway:
         amount = body.get("amount_total")
         currency = body.get("currency")
         url = body.get("url")
+        intent = body.get("payment_intent")
         return CheckoutSnapshot(
             id=body["id"],
             url=url if isinstance(url, str) else None,
@@ -109,7 +124,70 @@ class StripeCheckoutGateway:
             payment_status=str(body.get("payment_status", "")),
             amount_cents=amount if isinstance(amount, int) else None,
             currency=currency.upper() if isinstance(currency, str) else None,
+            # Only a plain id string is kept: an expanded object or null reads as None.
+            payment_intent=intent if isinstance(intent, str) and intent else None,
         )
+
+    def create_refund(
+        self,
+        payment_intent_id: str,
+        amount_cents: int,
+        idempotency_key: str,
+        metadata: Mapping[str, str] | None = None,
+    ) -> StripeRefund:
+        """Refund a payment intent in full. The key is the id of the local refund request.
+        The POST is sent once: a transport failure or 5xx has an unknown outcome at Stripe, and
+        the caller decides (no automatic retry). Without a payment intent nothing is sent.
+        The metadata lets a later reconciliation find this refund by the local reembolso id."""
+        if not payment_intent_id:
+            raise ProviderUnavailable("refund refused: no payment intent recorded")
+        data = {"payment_intent": payment_intent_id, "amount": str(amount_cents)}
+        for name, value in (metadata or {}).items():
+            data[f"metadata[{name}]"] = value
+        body = self._send(
+            "POST",
+            REFUNDS_PATH,
+            data=data,
+            idempotency_key=idempotency_key,
+            retry=False,
+        )
+        refund = _refund_from(body)
+        if refund is None:
+            raise ProviderUnavailable(_NO_REFUND)
+        return refund
+
+    def get_refund(self, stripe_refund_id: str) -> StripeRefund:
+        """Read one refund by its Stripe id. Nothing is changed at the provider."""
+        body = self._send(
+            "GET",
+            f"{REFUNDS_PATH}/{quote(stripe_refund_id, safe='')}",
+            shape_error=_NO_REFUND,
+        )
+        refund = _refund_from(body)
+        if refund is None:
+            raise ProviderUnavailable(_NO_REFUND)
+        return refund
+
+    def list_refunds_for_payment_intent(self, payment_intent_id: str) -> list[StripeRefund]:
+        """Every refund of one payment intent, read page by page. Nothing is changed."""
+        refunds: list[StripeRefund] = []
+        starting_after: str | None = None
+        while True:
+            params = {"payment_intent": payment_intent_id, "limit": "100"}
+            if starting_after is not None:
+                params["starting_after"] = starting_after
+            body = self._send("GET", REFUNDS_PATH, params=params, shape_error=_NO_REFUND_LIST)
+            items = body.get("data")
+            if not isinstance(items, list):
+                raise ProviderUnavailable(_NO_REFUND_LIST)
+            refunds.extend(r for r in (_refund_from(item) for item in items) if r is not None)
+            last = items[-1] if items else None
+            last_id = last.get("id") if isinstance(last, dict) else None
+            if body.get("has_more") is not True or not isinstance(last_id, str):
+                return refunds
+            if last_id == starting_after:
+                raise ProviderUnavailable(_NO_REFUND_LIST)
+            starting_after = last_id
 
     def create_customer(self, idempotency_key: str) -> str:
         """Create the Stripe customer of one user. The key makes concurrent first requests
@@ -219,6 +297,7 @@ class StripeCheckoutGateway:
         params: dict[str, str] | None = None,
         idempotency_key: str | None = None,
         shape_error: str = _NOT_AN_OBJECT,
+        retry: bool = True,
     ) -> dict[str, Any]:
         body = self._perform(
             method,
@@ -227,6 +306,7 @@ class StripeCheckoutGateway:
             params=params,
             idempotency_key=idempotency_key,
             shape_error=shape_error,
+            retry=retry,
         )
         if body is None:
             raise ProviderUnavailable("Stripe answered without a body")
@@ -242,21 +322,24 @@ class StripeCheckoutGateway:
         idempotency_key: str | None = None,
         missing_ok: bool = False,
         shape_error: str = _NOT_AN_OBJECT,
+        retry: bool = True,
     ) -> dict[str, Any] | None:
         """Send one request and return its JSON object. With missing_ok, a 404 returns None
         (the object does not exist). Every other failure becomes ProviderUnavailable without
-        the provider body.
+        the provider body; a definite 4xx refusal becomes ProviderRejected, which is the only
+        failure that proves nothing was done (409 and 429 are not definite).
 
         Transient failures are retried up to MAX_PROVIDER_ATTEMPTS in total, with exponential
         backoff. A request is retried only when it is safe to repeat: a GET, or a POST that
         carries an Idempotency-Key. Detach carries no key, so it is never retried. A 409 is
-        retried only with a key, because it means a same-key request is still running."""
+        retried only with a key, because it means a same-key request is still running. A caller
+        with retry=False (a refund) sends the request exactly once."""
         if not self._secret_key:
             raise ProviderUnavailable("Stripe secret key is not configured")
         headers = {"Authorization": f"Bearer {self._secret_key}"}
         if idempotency_key is not None:
             headers["Idempotency-Key"] = idempotency_key
-        retryable = method == "GET" or idempotency_key is not None
+        retryable = retry and (method == "GET" or idempotency_key is not None)
         for attempt in range(1, MAX_PROVIDER_ATTEMPTS + 1):
             last_attempt = attempt == MAX_PROVIDER_ATTEMPTS
             try:
@@ -275,7 +358,10 @@ class StripeCheckoutGateway:
                 if retryable and transient and not last_attempt:
                     self._sleep(_backoff_seconds(attempt))
                     continue
-                raise ProviderUnavailable(f"Stripe answered {response.status_code}")
+                status = response.status_code
+                if 400 <= status < 500 and status not in (409, 429):
+                    raise ProviderRejected(f"Stripe refused the request ({status})")
+                raise ProviderUnavailable(f"Stripe answered {status}")
             break
         try:
             body = response.json()
@@ -288,6 +374,23 @@ class StripeCheckoutGateway:
 
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _refund_from(body: object) -> StripeRefund | None:
+    """A refund object with a string id and status; None when the shape does not match."""
+    if not isinstance(body, dict):
+        return None
+    refund_id = body.get("id")
+    status = body.get("status")
+    if not isinstance(refund_id, str) or not isinstance(status, str):
+        return None
+    raw = body.get("metadata")
+    metadata = (
+        {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
+        if isinstance(raw, dict)
+        else {}
+    )
+    return StripeRefund(id=refund_id, status=status, metadata=metadata)
 
 
 def _backoff_seconds(failed_attempt: int) -> float:

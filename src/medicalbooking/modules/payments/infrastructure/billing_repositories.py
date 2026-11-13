@@ -294,6 +294,10 @@ class SqlBillingStore:
             )
             emit_pago_snapshot(conn, pago_id, _utc_naive(datetime.now(UTC)))
 
+    def record_payment_intent(self, pago_id: str, payment_intent_id: str) -> None:
+        with self._engine.begin() as conn:
+            set_payment_intent(conn, pago_id, payment_intent_id)
+
     def mark_rejected(self, pago_id: str) -> None:
         with self._engine.begin() as conn:
             conn.execute(
@@ -352,6 +356,19 @@ def _payment(row: Row[Any]) -> PaymentRecord:
     )
 
 
+def set_payment_intent(conn: Connection, pago_id: str, payment_intent_id: str) -> None:
+    """Store the provider's payment intent id once, inside the caller's transaction. The NULL
+    guard makes a repeat (a redelivered webhook, a second event) change nothing. Deliberately
+    no outbox emission: provider identifiers never leave SQL (see emit_pago_snapshot)."""
+    conn.execute(
+        text(
+            "UPDATE pagos SET stripe_payment_intent_id = :intent "
+            "WHERE id = :pago AND stripe_payment_intent_id IS NULL"
+        ),
+        {"intent": payment_intent_id, "pago": pago_id},
+    )
+
+
 def emit_pago_snapshot(conn: Connection, pago_id: str, moment: datetime) -> None:
     """Replica snapshot of a payment and its invoice, written with the change itself.
 
@@ -378,6 +395,59 @@ def emit_pago_snapshot(conn: Connection, pago_id: str, moment: datetime) -> None
                 "estado": row.estado,
                 "monto": str(row.monto),
                 "moneda": row.moneda.strip(),
+                "creado_en": row.creado_en.isoformat(),
+                "pagado_en": row.pagado_en.isoformat() if row.pagado_en else None,
+            },
+            "factura": {
+                "id": str(row.factura_id).lower(),
+                "paciente_id": str(row.paciente_id).lower(),
+                "estado": row.factura_estado,
+            },
+        },
+        moment,
+    )
+
+
+def emit_reembolso_snapshot(conn: Connection, reembolso_id: str, moment: datetime) -> None:
+    """Replica snapshot of a refund, its payment and its invoice, written with the change itself.
+
+    Only the closed reason code is projected; the free-text reason, the provider's refund id and
+    the idempotency keys are never read here. Read inside the caller's transaction, after the
+    change.
+    """
+    row = conn.execute(
+        text(
+            "SELECT r.id, r.pago_id, r.monto, r.estado, r.solicitado_en, r.procesado_en, "
+            "r.motivo, p.factura_id, p.monto AS pago_monto, p.moneda, p.estado AS pago_estado, "
+            "p.creado_en, p.pagado_en, f.paciente_id, f.estado AS factura_estado "
+            "FROM reembolsos AS r "
+            "JOIN pagos AS p ON p.id = r.pago_id "
+            "JOIN facturas AS f ON f.id = p.factura_id "
+            "WHERE r.id = :r"
+        ),
+        {"r": reembolso_id},
+    ).one()
+    append_outbox(
+        conn,
+        "reembolso",
+        str(row.id),
+        "reembolso.actualizado",
+        {
+            "reembolso": {
+                "id": str(row.id).lower(),
+                "pago_id": str(row.pago_id).lower(),
+                "monto": str(row.monto),
+                "estado": row.estado,
+                "solicitado_en": row.solicitado_en.isoformat(),
+                "procesado_en": row.procesado_en.isoformat() if row.procesado_en else None,
+                "motivo_codigo": row.motivo,
+            },
+            "pago": {
+                "id": str(row.pago_id).lower(),
+                "factura_id": str(row.factura_id).lower(),
+                "monto": str(row.pago_monto),
+                "moneda": row.moneda.strip(),
+                "estado": row.pago_estado,
                 "creado_en": row.creado_en.isoformat(),
                 "pagado_en": row.pagado_en.isoformat() if row.pagado_en else None,
             },

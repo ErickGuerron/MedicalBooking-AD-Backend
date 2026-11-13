@@ -10,9 +10,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
+from medicalbooking.modules.payments.domain.refunds import REFUND_STATUS_OUTCOME
 from medicalbooking.shared.domain.errors import AppError
 
 TOLERANCE_SECONDS = 300
@@ -46,6 +47,16 @@ class PaymentChange:
     target_status: str | None
     amount_cents: int | None
     currency: str | None
+    # Provider payment intent id, set only by checkout.session.completed. Stored, never emitted.
+    payment_intent: str | None = None
+
+
+@dataclass(frozen=True)
+class RefundChange:
+    """What a Stripe refund event asks for: a reembolso outcome for one Stripe refund id."""
+
+    refund_id: str | None
+    target_status: str | None
 
 
 @dataclass(frozen=True)
@@ -120,13 +131,43 @@ def interpret_event(event: dict) -> PaymentChange:
     session = (event.get("data") or {}).get("object") or {}
     session_id = session.get("id")
     if event_type == "checkout.session.completed":
+        # The intent exists once the session completes, paid or not (async methods). It is
+        # recorded for the payment of this session, and the paid check decides the state only.
+        intent = _payment_intent(session)
         if session.get("payment_status") == "paid":
-            return _confirmation(session_id, session)
-        return PaymentChange(session_id, None, None, None)
+            return replace(_confirmation(session_id, session), payment_intent=intent)
+        return PaymentChange(session_id, None, None, None, payment_intent=intent)
     target = _TARGET_BY_EVENT.get(event_type)
     if target == CONFIRMADO:
         return _confirmation(session_id, session)
     return PaymentChange(session_id, target, None, None)
+
+
+def _payment_intent(session: dict) -> str | None:
+    """Only a plain id string is kept: an expanded object or a null field is not stored."""
+    value = session.get("payment_intent")
+    return value if isinstance(value, str) and value else None
+
+
+
+def refund_target_status(status: object) -> str | None:
+    """Map a Stripe refund status to the reembolso outcome; None means no change."""
+    if not isinstance(status, str):
+        return None
+    return REFUND_STATUS_OUTCOME.get(status)
+
+
+def interpret_refund_event(event: dict) -> RefundChange:
+    """Map a verified refund.* event to the reembolso change it requests, if any."""
+    data = event.get("data")
+    refund = data.get("object") if isinstance(data, dict) else None
+    if not isinstance(refund, dict):
+        return RefundChange(refund_id=None, target_status=None)
+    refund_id = refund.get("id")
+    return RefundChange(
+        refund_id=refund_id if isinstance(refund_id, str) else None,
+        target_status=refund_target_status(refund.get("status")),
+    )
 
 
 def _confirmation(session_id: str | None, session: dict) -> PaymentChange:

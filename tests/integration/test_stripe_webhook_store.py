@@ -54,19 +54,41 @@ def _seed_pago(conn: Connection, *, session_id: str, monto: str = "50.00") -> di
     return {"pago": pago, "factura": factura}
 
 
-def _event(event_type: str, session_id: str, amount: int = 5000, paid: bool = True) -> dict:
-    return {
-        "id": f"evt_{uuid.uuid4().hex}",
-        "type": event_type,
-        "data": {
-            "object": {
-                "id": session_id,
-                "payment_status": "paid" if paid else "unpaid",
-                "amount_total": amount,
-                "currency": "usd",
-            }
-        },
+def _event(
+    event_type: str,
+    session_id: str,
+    amount: int = 5000,
+    paid: bool = True,
+    payment_intent: str | None = None,
+) -> dict:
+    session: dict = {
+        "id": session_id,
+        "payment_status": "paid" if paid else "unpaid",
+        "amount_total": amount,
+        "currency": "usd",
     }
+    if payment_intent is not None:
+        session["payment_intent"] = payment_intent
+    return {"id": f"evt_{uuid.uuid4().hex}", "type": event_type, "data": {"object": session}}
+
+
+def _stored_intent(engine: Engine, ids: dict[str, str]) -> str | None:
+    with engine.connect() as conn:
+        return conn.execute(
+            text("SELECT stripe_payment_intent_id FROM pagos WHERE id = :id"),
+            {"id": ids["pago"]},
+        ).scalar_one()
+
+
+def _outbox_mentions(engine: Engine, needle: str) -> int:
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT COUNT(*) FROM eventos_outbox "
+                "WHERE CAST(payload AS NVARCHAR(MAX)) LIKE :needle"
+            ),
+            {"needle": f"%{needle}%"},
+        ).scalar_one()
 
 
 def _store(engine: Engine) -> SqlPaymentsStore:
@@ -173,3 +195,114 @@ def test_decimal_amount_is_compared_in_cents(migrated_engine: Engine) -> None:
 
     assert _process(migrated_engine, event) == "PROCESADO"
     assert Decimal("12.34") == Decimal("1234") / 100
+
+
+# --- payment_intent recorded from checkout.session.completed (refund prerequisite) -----------
+
+
+def _intent_id() -> str:
+    # Shared database and a filtered unique index: each test needs its own provider id.
+    return f"pi_test_{uuid.uuid4().hex[:16]}"
+
+
+def test_completed_checkout_records_the_intent_in_the_same_transaction(
+    migrated_engine: Engine,
+) -> None:
+    session = f"cs_test_{uuid.uuid4().hex}"
+    intent = _intent_id()
+    with migrated_engine.begin() as conn:
+        ids = _seed_pago(conn, session_id=session)
+    event = _event("checkout.session.completed", session, payment_intent=intent)
+
+    assert _process(migrated_engine, event) == "PROCESADO"
+
+    assert _stored_intent(migrated_engine, ids) == intent
+    assert _estados(migrated_engine, ids, event["id"]) == ("CONFIRMADO", "PAGADA", "PROCESADO")
+
+
+def test_a_redelivered_completed_event_changes_nothing(migrated_engine: Engine) -> None:
+    session = f"cs_test_{uuid.uuid4().hex}"
+    intent = _intent_id()
+    with migrated_engine.begin() as conn:
+        ids = _seed_pago(conn, session_id=session)
+    event = _event("checkout.session.completed", session, payment_intent=intent)
+    _process(migrated_engine, event)
+
+    assert _process(migrated_engine, event) == "DUPLICADO"
+    assert _stored_intent(migrated_engine, ids) == intent
+
+
+def test_a_different_later_event_never_overwrites_a_recorded_intent(
+    migrated_engine: Engine,
+) -> None:
+    session = f"cs_test_{uuid.uuid4().hex}"
+    first = _intent_id()
+    with migrated_engine.begin() as conn:
+        ids = _seed_pago(conn, session_id=session)
+    _process(migrated_engine, _event("checkout.session.completed", session, payment_intent=first))
+
+    other = _event("checkout.session.completed", session, payment_intent=_intent_id())
+    _process(migrated_engine, other)
+
+    assert _stored_intent(migrated_engine, ids) == first
+
+
+def test_an_unpaid_completed_session_still_records_its_intent_and_stays_pending(
+    migrated_engine: Engine,
+) -> None:
+    session = f"cs_test_{uuid.uuid4().hex}"
+    intent = _intent_id()
+    with migrated_engine.begin() as conn:
+        ids = _seed_pago(conn, session_id=session)
+    event = _event("checkout.session.completed", session, paid=False, payment_intent=intent)
+
+    _process(migrated_engine, event)
+
+    assert _stored_intent(migrated_engine, ids) == intent
+    assert _estados(migrated_engine, ids, event["id"]) == ("PENDIENTE", "PENDIENTE", "IGNORADO")
+
+
+def test_a_completed_event_without_intent_leaves_the_column_null(
+    migrated_engine: Engine,
+) -> None:
+    session = f"cs_test_{uuid.uuid4().hex}"
+    with migrated_engine.begin() as conn:
+        ids = _seed_pago(conn, session_id=session)
+    event = _event("checkout.session.completed", session)
+
+    _process(migrated_engine, event)
+
+    assert _stored_intent(migrated_engine, ids) is None
+
+
+def test_a_failed_confirmation_rolls_back_the_intent_too(
+    migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = f"cs_test_{uuid.uuid4().hex}"
+    intent = _intent_id()
+    with migrated_engine.begin() as conn:
+        ids = _seed_pago(conn, session_id=session)
+    event = _event("checkout.session.completed", session, payment_intent=intent)
+
+    def fail(conn, pago, target, now):  # noqa: ANN001, ANN202
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(SqlPaymentsStore, "_apply", staticmethod(fail))
+    with pytest.raises(RuntimeError):
+        _process(migrated_engine, event)
+    monkeypatch.undo()
+
+    assert _stored_intent(migrated_engine, ids) is None
+
+
+def test_the_intent_never_reaches_any_outbox_payload(migrated_engine: Engine) -> None:
+    session = f"cs_test_{uuid.uuid4().hex}"
+    intent = _intent_id()
+    with migrated_engine.begin() as conn:
+        _seed_pago(conn, session_id=session)
+    before = _outbox_mentions(migrated_engine, intent)
+
+    _process(migrated_engine, _event("checkout.session.completed", session, payment_intent=intent))
+
+    assert _outbox_mentions(migrated_engine, intent) == before == 0
+    assert _outbox_mentions(migrated_engine, session) == 0
