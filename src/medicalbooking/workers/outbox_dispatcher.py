@@ -27,20 +27,37 @@ from medicalbooking.modules.synchronization.application.dispatch_service import 
     OutboxDispatchService,
 )
 from medicalbooking.modules.synchronization.application.ports import OutboxHandler
+from medicalbooking.modules.synchronization.infrastructure.kafka_handler import KafkaOutboxHandler
+from medicalbooking.modules.synchronization.infrastructure.kafka_producer import (
+    build_kafka_producer,
+)
 from medicalbooking.modules.synchronization.infrastructure.repositories import SqlOutboxStore
 from medicalbooking.shared.infrastructure.database import create_database_engine
 
 logger = logging.getLogger(__name__)
 
 
-def build_handlers(engine: Engine) -> list[OutboxHandler]:
-    """Destination handlers wired into the dispatcher, one per ready destination."""
-    return [
+def build_handlers(
+    engine: Engine,
+    kafka_bootstrap: str | None = None,
+    kafka_topic: str = "medicalbooking.events",
+) -> list[OutboxHandler]:
+    """Destination handlers wired into the dispatcher, one per ready destination.
+
+    The KAFKA destination is wired only when a broker is configured. Without one its delivery
+    rows stay PENDIENTE, the same as the other destinations that have no handler yet.
+    """
+    handlers: list[OutboxHandler] = [
         NotificationOutboxHandler(
             repository=SqlNotificationStore(engine),
             clock=lambda: datetime.now(UTC),
         ),
     ]
+    if kafka_bootstrap:
+        handlers.append(
+            KafkaOutboxHandler(build_kafka_producer(kafka_bootstrap), topic=kafka_topic)
+        )
+    return handlers
 
 
 def run(service: OutboxDispatchService) -> int:
@@ -72,7 +89,11 @@ def main() -> int:
     try:
         service = OutboxDispatchService(
             store=SqlOutboxStore(engine),
-            handlers=build_handlers(engine),
+            handlers=build_handlers(
+                engine,
+                kafka_bootstrap=settings.kafka_bootstrap_servers,
+                kafka_topic=settings.kafka_topic,
+            ),
             clock=lambda: datetime.now(UTC),
         )
         return run(service)

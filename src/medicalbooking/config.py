@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     supabase_reader_database_url: SecretStr | None = None
     # Writer role of the Supabase replica, used only by the consumer and the catalog sync.
     supabase_writer_database_url: SecretStr | None = None
+    # Kafka broker of the replication topic. Without it the KAFKA outbox destination stays idle.
+    kafka_bootstrap_servers: str | None = None
+    kafka_topic: str = Field(default="medicalbooking.events", min_length=1, max_length=249)
     # Insert-only audit role on MongoDB Atlas (replica_auditor) and the database name.
     mongodb_auditor_uri: SecretStr | None = None
     mongodb_database: str | None = None
