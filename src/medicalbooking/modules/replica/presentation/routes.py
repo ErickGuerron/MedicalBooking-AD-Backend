@@ -8,34 +8,57 @@ is not configured is 503. Responses are problem+json through the shared error ha
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from functools import wraps
 from typing import Any
 from uuid import UUID
 
 from flask import Blueprint, current_app, g, jsonify, request
 
-from medicalbooking.modules.identity.presentation.routes import authenticated
 from medicalbooking.modules.replica.application.fallback_read import (
     AccessDenied,
     AccountNotActive,
     AuditUnavailable,
 )
-from medicalbooking.shared.domain.errors import Forbidden, ServiceUnavailable
+from medicalbooking.shared.domain.errors import Forbidden, ServiceUnavailable, Unauthenticated
 
 replica_bp = Blueprint("replica", __name__, url_prefix="/api/v1")
 
 
+def _authenticated_without_sql(view: Callable[..., Any]) -> Callable[..., Any]:
+    """Check the JWT signature only. The account itself is checked in the replica.
+
+    The regular @authenticated decorator loads the account from SQL Server, which is exactly
+    what is unavailable during the outage.
+    """
+
+    @wraps(view)
+    def wrapper(*args: Any, **kwargs: Any):
+        scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+        if scheme != "Bearer" or not token:
+            raise Unauthenticated("Authentication required")
+        try:
+            subject = current_app.extensions["medicalbooking.token_verifier"].subject_of(token)
+        except Exception as error:
+            raise Unauthenticated("Authentication required") from error
+        g.actor_id = UUID(str(subject))
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
 @replica_bp.get("/me/resultados-contingencia")
-@authenticated
+@_authenticated_without_sql
 def read_fallback_results():
     service = current_app.extensions.get("medicalbooking.fallback_read")
     if service is None:
         raise ServiceUnavailable("Fallback reads are not configured on this instance")
     try:
         result = service.results_for(
-            actor_id=UUID(str(g.actor.user_id)),
+            actor_id=g.actor_id,
             correlation_id=uuid.uuid4(),
             ip=request.remote_addr,
         )
