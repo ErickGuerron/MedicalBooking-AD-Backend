@@ -1010,7 +1010,14 @@ class SqlClinicalStore:
                 ),
                 {"e": new_state, "p": guid},
             )
-            _outbox(conn, guid, "propuesta.revisada", {"decision": decision}, moment, 2)
+            _outbox(
+                conn,
+                guid,
+                "propuesta.revisada",
+                _review_projection(conn, guid, decision, moment),
+                moment,
+                2,
+            )
         return "CREATED"
 
     def record_audit(self, event: AuditEvent) -> None:
@@ -1057,3 +1064,51 @@ def _outbox(
             "ahora": now,
         },
     )
+
+
+def _review_projection(conn: Connection, proposal_guid: str, decision: str, moment: datetime) -> dict:
+    """Replica snapshot of a reviewed proposal. Only ACEPTADA and CORREGIDA carry content.
+
+    A rejected proposal is projected as its state alone, so the replica removes what it holds.
+    The physician note (observacion_medica) is never projected.
+    """
+    row = conn.execute(
+        text(
+            "SELECT id, orden_id, estado, resumen_propuesto, conclusion_medica, revisado_en "
+            "FROM propuestas_clinicas WHERE id = :p"
+        ),
+        {"p": proposal_guid},
+    ).one()
+    shown = _DECISION_STATE[decision] != "RECHAZADA"
+    findings = (
+        conn.execute(
+            text(
+                "SELECT id, propuesta_id, tipo, explicacion, regla_version "
+                "FROM propuestas_hallazgos WHERE propuesta_id = :p"
+            ),
+            {"p": proposal_guid},
+        ).all()
+        if shown
+        else []
+    )
+    return {
+        "propuesta": {
+            "id": str(row.id).lower(),
+            "orden_id": str(row.orden_id).lower(),
+            "estado": row.estado,
+            "resumen_propuesto": row.resumen_propuesto if shown else None,
+            "conclusion_medica": row.conclusion_medica if shown else None,
+            "revisado_en": moment.isoformat(),
+        },
+        "hallazgos": [
+            {
+                "id": str(item.id).lower(),
+                "propuesta_id": str(item.propuesta_id).lower(),
+                "tipo": item.tipo,
+                "explicacion": item.explicacion,
+                "regla_version": item.regla_version,
+            }
+            for item in findings
+        ],
+        "decision": decision,
+    }
