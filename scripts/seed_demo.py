@@ -5,13 +5,14 @@ tables and writes with plain SQLAlchemy Core, so no dialect-specific SQL is used
 the application's use cases, so no outbox event is written and no replica (Supabase or Mongo)
 receives anything.
 
-    $env:DEMO_DATABASE_URL = "postgresql+psycopg://user:pass@host:5432/medicalbooking_demo"
-    uv run python scripts/seed_demo.py --confirm medicalbooking_demo \
+    $env:AZURE_DATABASE_URL = "mssql+pyodbc://..."   # or a PostgreSQL URL for local tests
+    uv run python scripts/seed_demo.py --confirm <exact database name> \
         --credentials-out C:\\secure\\demo-credentials.json
 
-Refuses to run when APP_ENV is production, when the database name is not the one passed to
---confirm or does not contain "demo", or when the credentials file would be written inside this
-repository. Running it twice adds nothing: accounts already seeded are detected and skipped.
+With APP_ENV=production the seed also needs --allow-production, so it never runs by accident.
+Refuses to run when --confirm does not match the database name, or when the credentials file
+would be written inside this repository. Running it twice adds nothing: accounts already seeded
+are detected and skipped.
 """
 
 from __future__ import annotations
@@ -50,18 +51,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--credentials-out", required=True, help="file outside this repository")
     parser.add_argument("--days", type=int, default=14, help="days of slots from today")
     parser.add_argument("--seed", type=int, default=20261113, help="Faker seed")
+    parser.add_argument(
+        "--allow-production",
+        action="store_true",
+        help="required when APP_ENV=production: the seed then writes demo accounts there",
+    )
     args = parser.parse_args(argv)
 
-    url = os.environ.get("DEMO_DATABASE_URL")
+    url = os.environ.get("AZURE_DATABASE_URL")
     if not url:
-        print("Set DEMO_DATABASE_URL to the demonstration database.", file=sys.stderr)
+        print("Set AZURE_DATABASE_URL to the target database.", file=sys.stderr)
         return 2
-    if os.environ.get("APP_ENV", "").lower() == "production":
-        print("Refusing to seed demo data with APP_ENV=production.", file=sys.stderr)
+    if os.environ.get("APP_ENV", "").lower() == "production" and not args.allow_production:
+        print("APP_ENV=production: pass --allow-production to seed demo accounts.", file=sys.stderr)
         return 2
     database = make_url(url).database or ""
-    if database != args.confirm or "demo" not in database.lower():
-        print("The database name must equal --confirm and contain 'demo'.", file=sys.stderr)
+    if database != args.confirm:
+        print("The database name must equal --confirm.", file=sys.stderr)
         return 2
     credentials_path = Path(args.credentials_out).resolve()
     if REPO_ROOT in credentials_path.parents or credentials_path == REPO_ROOT:
