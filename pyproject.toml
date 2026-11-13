@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.27,<1",
     "defusedxml>=0.7.1",
     "psycopg[binary]>=3.2,<4",
+    "pymongo>=4.8,<5",
 ]
 
 [dependency-groups]
