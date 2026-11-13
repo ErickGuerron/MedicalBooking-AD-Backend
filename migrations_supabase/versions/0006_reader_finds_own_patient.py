@@ -23,4 +23,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("Dropping the self-lookup policy would break patient resolution for the fallback read.")
+    raise NotImplementedError(
+        "Dropping the self-lookup policy would break patient resolution for the fallback read."
+    )

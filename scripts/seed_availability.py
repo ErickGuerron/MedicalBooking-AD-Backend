@@ -1,4 +1,6 @@
-"""Create bookable slots for every active doctor, from today until Sunday. Idempotent; never runs in production.
+"""Create bookable slots for every active doctor, from today until Sunday.
+
+Idempotent; never runs in production.
 
     uv run python scripts/seed_availability.py [--until YYYY-MM-DD] [--dry-run]
 
@@ -12,7 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 import uuid
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 
 from sqlalchemy import text
 
@@ -44,8 +46,8 @@ def build_slots(
             if start > now_utc:
                 slots.append(
                     (
-                        start.astimezone(timezone.utc).replace(tzinfo=None),
-                        (start + step).astimezone(timezone.utc).replace(tzinfo=None),
+                        start.astimezone(UTC).replace(tzinfo=None),
+                        (start + step).astimezone(UTC).replace(tzinfo=None),
                     )
                 )
             start += step
@@ -55,7 +57,9 @@ def build_slots(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--until", type=date.fromisoformat, help="last day, default the coming Sunday")
+    parser.add_argument(
+        "--until", type=date.fromisoformat, help="last day, default the coming Sunday"
+    )
     parser.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     args = parser.parse_args()
 
@@ -64,7 +68,7 @@ def main() -> int:
         print("Refusing to seed availability in production.", file=sys.stderr)
         return 2
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     today = now.astimezone(BRANCH_TZ).date()
     last_day = args.until or next_sunday(today)
     if last_day < today:
@@ -74,10 +78,16 @@ def main() -> int:
     engine = create_database_engine(settings)
     with engine.begin() as conn:
         doctors = conn.execute(
-            text("SELECT id, duracion_cita_min FROM medicos WHERE activo = 1 ORDER BY registro_profesional")
+            text(
+                "SELECT id, duracion_cita_min FROM medicos "
+                "WHERE activo = 1 ORDER BY registro_profesional"
+            )
         ).all()
         if not doctors:
-            print("No active doctors. Run scripts/seed_synthetic.py or create one first.", file=sys.stderr)
+            print(
+                "No active doctors. Run scripts/seed_synthetic.py or create one first.",
+                file=sys.stderr,
+            )
             return 1
         branch_id = _get_or_create(conn, "sedes", "nombre", BRANCH_NAME, {})
         added = 0
@@ -95,7 +105,8 @@ def main() -> int:
                     text(
                         "INSERT INTO horarios_disponibles (id, agenda_id, inicio_utc, fin_utc) "
                         "SELECT :id, :a, :s, :e WHERE NOT EXISTS ("
-                        "SELECT 1 FROM horarios_disponibles WHERE agenda_id = :a AND inicio_utc = :s)"
+                        "SELECT 1 FROM horarios_disponibles "
+                        "WHERE agenda_id = :a AND inicio_utc = :s)"
                     ),
                     {"id": str(uuid.uuid4()), "a": agenda_id, "s": start, "e": end},
                 ).rowcount
@@ -105,10 +116,15 @@ def main() -> int:
 
 
 def _get_or_create(conn, table: str, column: str, value: str, parent: dict[str, str]) -> str:
-    """Id of the row named `value` (under the same parent), inserting it when absent."""
+    """Id of the row named `value` (under the same parent), inserting it when absent.
+
+    `table`, `column` and the parent keys are fixed names written in this script, never user
+    input, so building the SQL with them is safe.
+    """
     where = "".join(f" AND {key} = :{key}" for key in parent)
     row = conn.execute(
-        text(f"SELECT id FROM {table} WHERE {column} = :v{where}"), {"v": value, **parent}
+        text(f"SELECT id FROM {table} WHERE {column} = :v{where}"),  # noqa: S608
+        {"v": value, **parent},
     ).first()
     if row:
         return str(row.id)
@@ -116,7 +132,7 @@ def _get_or_create(conn, table: str, column: str, value: str, parent: dict[str, 
     columns = "".join(f", {key}" for key in parent)
     params = "".join(f", :{key}" for key in parent)
     conn.execute(
-        text(f"INSERT INTO {table} (id, {column}{columns}) VALUES (:id, :v{params})"),
+        text(f"INSERT INTO {table} (id, {column}{columns}) VALUES (:id, :v{params})"),  # noqa: S608
         {"id": new_id, "v": value, **parent},
     )
     return new_id
