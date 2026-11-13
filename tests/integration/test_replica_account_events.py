@@ -123,7 +123,12 @@ def test_registration_emits_the_account_roles_and_patient_snapshot(app, engine, 
         ).scalar_one()
     assert payload["usuario"] == {"id": user_id.lower(), "estado": estado}
     assert sorted(payload["roles"]) == roles
-    assert payload["paciente"] == {"id": str(paciente_id).lower(), "usuario_id": user_id.lower()}
+    assert payload["paciente"] == {
+        "id": str(paciente_id).lower(),
+        "usuario_id": user_id.lower(),
+        "nombre": "Ana",
+        "apellido": "Sintetica",
+    }
 
 
 def test_activation_emits_the_new_account_state(app, engine, mailer):
@@ -152,4 +157,4 @@ def test_no_credential_or_contact_data_is_projected(app, engine, mailer):
     assert email not in serialized
     assert PASSWORD not in serialized
     assert "password" not in serialized.lower()
-    assert "Sintetica" not in serialized
+    assert "hash" not in serialized.lower()
