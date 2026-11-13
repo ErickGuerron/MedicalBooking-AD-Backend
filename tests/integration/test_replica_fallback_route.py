@@ -141,3 +141,21 @@ def test_without_a_configured_replica_the_route_answers_503(app, engine):
     response = app.test_client().get(ROUTE, headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 503
+
+
+def test_the_route_answers_while_sql_server_cannot_authenticate(app, engine, monkeypatch):
+    """Contingency: the JWT is checked without SQL Server; the replica decides the rest."""
+    from medicalbooking.modules.identity.application.use_cases import IdentityService
+
+    def sql_is_down(self, token):
+        raise RuntimeError("SQL Server unreachable")
+
+    monkeypatch.setattr(IdentityService, "authenticate_token", sql_is_down)
+    patient = uuid.uuid4()
+    _with(app, FakeFallback(outcome=PatientResults(patient_id=patient, orders=())))
+    token, _ = _paciente_token(app, engine)
+
+    response = app.test_client().get(ROUTE, headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.get_json()["paciente_id"] == str(patient)

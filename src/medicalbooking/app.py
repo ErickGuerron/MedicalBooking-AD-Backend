@@ -84,6 +84,10 @@ def create_app(settings: Settings | None = None) -> Flask:
         orders=app.extensions["medicalbooking.laboratory"], clock=_utc_now
     )
     app.extensions["medicalbooking.fallback_read"] = _build_fallback_read(settings)
+    app.extensions["medicalbooking.token_verifier"] = JwtTokenIssuer(
+        settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None,
+        settings.jwt_access_ttl_minutes,
+    )
     knowledge, proposals, shadow, patient_profile = _build_clinical(engine)
     app.extensions["medicalbooking.knowledge"] = knowledge
     app.extensions["medicalbooking.proposals"] = proposals
