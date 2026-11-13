@@ -18,6 +18,10 @@ class AccountNotActive(Exception):
     """The account is missing, blocked or not active in the replica. Nothing is served."""
 
 
+class AccessDenied(Exception):
+    """The account lacks the own-results permission, or the patient is not its own."""
+
+
 class AuditUnavailable(Exception):
     """The audit store could not record the read; the read must not be served."""
 
