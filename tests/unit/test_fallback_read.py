@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 
 from medicalbooking.modules.replica.application.fallback_read import (
+    AccessDenied,
     AuditRecord,
     AuditUnavailable,
     FallbackReadService,
@@ -16,66 +17,98 @@ CORRELATION = UUID("33333333-3333-3333-3333-333333333333")
 NOW = datetime(2026, 11, 12, 18, 0, tzinfo=UTC)
 
 
+class Log:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+
 class RecordingSink:
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, log: Log, fail: bool = False) -> None:
         self.records: list[AuditRecord] = []
+        self._log = log
         self._fail = fail
 
     def append(self, record: AuditRecord) -> None:
+        self._log.events.append("audit")
         if self._fail:
             raise AuditUnavailable("audit store down")
         self.records.append(record)
 
 
 class RecordingReader:
-    def __init__(self) -> None:
-        self.calls: list[UUID] = []
+    def __init__(self, log: Log) -> None:
+        self.calls: list[tuple[UUID, UUID]] = []
+        self._log = log
 
     def results_of(self, patient_id: UUID, usuario_id: UUID) -> PatientResults:
-        self.calls.append(patient_id)
+        self._log.events.append("read")
+        self.calls.append((patient_id, usuario_id))
         return PatientResults(patient_id=patient_id, orders=())
 
 
-def _service(sink, reader) -> FallbackReadService:
-    return FallbackReadService(sink=sink, reader=reader, clock=lambda: NOW)
+class RecordingResolver:
+    def __init__(self, log: Log, deny: bool = False) -> None:
+        self.calls: list[UUID] = []
+        self._log = log
+        self._deny = deny
+
+    def patient_for(self, usuario_id: UUID) -> UUID:
+        self._log.events.append("resolve")
+        self.calls.append(usuario_id)
+        if self._deny:
+            raise AccessDenied("no own-results permission")
+        return PATIENT
 
 
-def test_the_audit_record_is_written_before_the_read():
-    order_of_events: list[str] = []
-
-    class OrderedSink(RecordingSink):
-        def append(self, record):
-            order_of_events.append("audit")
-            super().append(record)
-
-    class OrderedReader(RecordingReader):
-        def results_of(self, patient_id, usuario_id):
-            order_of_events.append("read")
-            return super().results_of(patient_id, usuario_id)
-
-    _service(OrderedSink(), OrderedReader()).results_for(
-        actor_id=ACTOR, patient_id=PATIENT, correlation_id=CORRELATION, ip="10.0.0.5"
+def _service(log: Log, *, sink=None, reader=None, resolver=None) -> FallbackReadService:
+    return FallbackReadService(
+        sink=sink or RecordingSink(log),
+        reader=reader or RecordingReader(log),
+        resolver=resolver or RecordingResolver(log),
+        clock=lambda: NOW,
     )
 
-    assert order_of_events == ["audit", "read"]
+
+def test_the_patient_is_resolved_then_audited_then_read():
+    log = Log()
+
+    _service(log).results_for(actor_id=ACTOR, correlation_id=CORRELATION, ip="10.0.0.5")
+
+    assert log.events == ["resolve", "audit", "read"]
+
+
+def test_a_denied_patient_is_never_audited_as_authorized_nor_read():
+    log = Log()
+    reader = RecordingReader(log)
+    sink = RecordingSink(log)
+
+    with pytest.raises(AccessDenied):
+        _service(
+            log, sink=sink, reader=reader, resolver=RecordingResolver(log, deny=True)
+        ).results_for(actor_id=ACTOR, correlation_id=CORRELATION, ip=None)
+
+    assert sink.records == []
+    assert reader.calls == []
 
 
 def test_a_failed_audit_rejects_the_read_and_never_touches_the_replica():
-    reader = RecordingReader()
+    log = Log()
+    reader = RecordingReader(log)
 
     with pytest.raises(AuditUnavailable):
-        _service(RecordingSink(fail=True), reader).results_for(
-            actor_id=ACTOR, patient_id=PATIENT, correlation_id=CORRELATION, ip="10.0.0.5"
+        _service(log, sink=RecordingSink(log, fail=True), reader=reader).results_for(
+            actor_id=ACTOR, correlation_id=CORRELATION, ip="10.0.0.5"
         )
 
     assert reader.calls == []
 
 
 def test_the_audit_record_has_only_the_allowed_fields_and_no_clinical_values():
-    sink = RecordingSink()
+    log = Log()
+    sink = RecordingSink(log)
 
-    _service(sink, RecordingReader()).results_for(
-        actor_id=ACTOR, patient_id=PATIENT, correlation_id=CORRELATION, ip="10.0.0.5"
+    _service(log, sink=sink).results_for(
+        actor_id=ACTOR, correlation_id=CORRELATION, ip="10.0.0.5"
     )
 
     record = sink.records[0]
@@ -98,12 +131,13 @@ def test_the_audit_record_has_only_the_allowed_fields_and_no_clinical_values():
     assert record.fecha_evento == NOW
 
 
-def test_the_results_come_back_when_the_audit_is_written():
-    reader = RecordingReader()
+def test_the_read_uses_the_resolved_patient_and_the_actor_account():
+    log = Log()
+    reader = RecordingReader(log)
 
-    result = _service(RecordingSink(), reader).results_for(
-        actor_id=ACTOR, patient_id=PATIENT, correlation_id=CORRELATION, ip=None
+    result = _service(log, reader=reader).results_for(
+        actor_id=ACTOR, correlation_id=CORRELATION, ip=None
     )
 
     assert result.patient_id == PATIENT
-    assert reader.calls == [PATIENT]
+    assert reader.calls == [(PATIENT, ACTOR)]

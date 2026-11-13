@@ -52,6 +52,11 @@ from medicalbooking.modules.payments.infrastructure.repositories import SqlPayme
 from medicalbooking.modules.payments.infrastructure.stripe_checkout import StripeCheckoutGateway
 from medicalbooking.modules.payments.presentation.openapi import payments_fragment
 from medicalbooking.modules.payments.presentation.routes import payments_bp
+from medicalbooking.modules.replica.infrastructure.factory import (
+    ReplicaConfigError,
+    build_fallback_read_service,
+)
+from medicalbooking.modules.replica.presentation.routes import replica_bp
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
@@ -78,6 +83,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.laboratory_status"] = LaboratoryStatusService(
         orders=app.extensions["medicalbooking.laboratory"], clock=_utc_now
     )
+    app.extensions["medicalbooking.fallback_read"] = _build_fallback_read(settings)
     knowledge, proposals, shadow, patient_profile = _build_clinical(engine)
     app.extensions["medicalbooking.knowledge"] = knowledge
     app.extensions["medicalbooking.proposals"] = proposals
@@ -94,6 +100,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(lab_bp)
     app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
+    app.register_blueprint(replica_bp)
     if settings.docs_enabled:
         register_api_docs(
             app,
@@ -268,3 +275,11 @@ def _register_error_handlers(app: Flask) -> None:
     def _unexpected_error(error: Exception) -> tuple[Response, int]:
         app.logger.exception("unhandled error", extra={"correlation_id": g.get("correlation_id")})
         return _problem(500, "Internal Server Error", "Unexpected error. Use correlation_id.")
+
+
+def _build_fallback_read(settings: Settings):
+    """Fallback reads from the replicas; None when the replica settings are incomplete."""
+    try:
+        return build_fallback_read_service(settings)
+    except ReplicaConfigError:
+        return None

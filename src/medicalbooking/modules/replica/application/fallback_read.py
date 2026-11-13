@@ -1,8 +1,13 @@
 """Patient results served from the read replicas during a SQL Server outage (spec 8.3, S8).
 
-The audit record is written before the replica is read. If the audit cannot be written,
-the read is rejected and the replica is never touched (fail closed). Only identifiers and
-the outcome are audited, never clinical values.
+Order of a fallback read, and why:
+1. The patient is resolved from the account: the account must be ACTIVO and hold the
+   own-results permission. Nothing about the patient is read before this check.
+2. The audit record is written. If it cannot be written, the read is rejected (fail closed).
+3. Only then the results are read from the replica, which checks the same rule again.
+
+A denied request is never audited as authorized. Only identifiers and the outcome are
+audited, never clinical values.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ class AccountNotActive(Exception):
 
 
 class AccessDenied(Exception):
-    """The account lacks the own-results permission, or the patient is not its own."""
+    """The account lacks the own-results permission, or no patient belongs to it."""
 
 
 class AuditUnavailable(Exception):
@@ -60,6 +65,10 @@ class AuditSink(Protocol):
     def append(self, record: AuditRecord) -> None: ...
 
 
+class PatientResolver(Protocol):
+    def patient_for(self, usuario_id: UUID) -> UUID: ...
+
+
 class ReplicaReader(Protocol):
     def results_of(self, patient_id: UUID, usuario_id: UUID) -> PatientResults: ...
 
@@ -69,19 +78,16 @@ class FallbackReadService:
         self,
         sink: AuditSink,
         reader: ReplicaReader,
+        resolver: PatientResolver,
         clock: Callable[[], datetime],
     ) -> None:
         self._sink = sink
         self._reader = reader
+        self._resolver = resolver
         self._clock = clock
 
-    def results_for(
-        self,
-        actor_id: UUID,
-        patient_id: UUID,
-        correlation_id: UUID,
-        ip: str | None,
-    ) -> PatientResults:
+    def results_for(self, actor_id: UUID, correlation_id: UUID, ip: str | None) -> PatientResults:
+        patient_id = self._resolver.patient_for(actor_id)
         self._sink.append(
             AuditRecord(
                 fecha_evento=self._clock(),
