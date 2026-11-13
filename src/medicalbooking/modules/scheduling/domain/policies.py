@@ -76,7 +76,7 @@ def validate_approval_reason(texto: str | None) -> None:
     if texto is None or not texto.strip():
         raise ValidationFailed(APPROVAL_REASON_REQUIRED)
     if len(texto.encode("utf-16-le")) > 2 * MOTIVO_TEXTO_MAX:
-        raise ValidationFailed("Invalid approval reason: at most 1500 characters")
+        raise ValidationFailed(APPROVAL_REASON_INVALID)
 
 
 def is_cancellable(state: str) -> bool:
@@ -85,6 +85,7 @@ def is_cancellable(state: str) -> bool:
 
 PERM_REVIEW_CANCELLATIONS = "citas.revisar_cancelaciones"
 APPROVAL_REASON_REQUIRED = "MOTIVO_APROBACION_REQUERIDO"
+APPROVAL_REASON_INVALID = "MOTIVO_APROBACION_INVALIDO"
 MAX_DOCTOR_CANCELLATIONS_PER_MONTH = 3
 DOCTOR_CANCEL_MIN_NOTICE = timedelta(hours=24)
 LIMITE_CANCELACION_MEDICO = "LIMITE_CANCELACION_MEDICO"

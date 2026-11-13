@@ -12,7 +12,9 @@ from medicalbooking.modules.scheduling.domain.policies import (
     MAX_DOCTOR_CANCELLATIONS_PER_MONTH,
     doctor_cancellation_blockers,
     month_bounds,
+    validate_approval_reason,
 )
+from medicalbooking.shared.domain.errors import ValidationFailed
 
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 FAR_SLOT = NOW + timedelta(days=5)
@@ -53,6 +55,21 @@ def test_quota_and_notice_both_block_and_report_both() -> None:
         LIMITE_CANCELACION_MEDICO,
         CANCELACION_MEDICO_FUERA_DE_PLAZO,
     )
+
+
+def test_just_under_24_hours_is_late_and_exactly_24_hours_is_allowed() -> None:
+    slot = NOW + timedelta(hours=24)
+    assert doctor_cancellation_blockers(now=NOW, slot_start=slot, cancellations_this_month=0) == ()
+    just_under = slot - timedelta(seconds=1)
+    assert CANCELACION_MEDICO_FUERA_DE_PLAZO in doctor_cancellation_blockers(
+        now=NOW, slot_start=just_under, cancellations_this_month=0
+    )
+
+
+def test_approval_reason_limit_counts_utf16_units() -> None:
+    validate_approval_reason("\U0001f600" * 750)
+    with pytest.raises(ValidationFailed, match="MOTIVO_APROBACION_INVALIDO"):
+        validate_approval_reason("\U0001f600" * 751)
 
 
 def test_past_slot_is_late() -> None:
