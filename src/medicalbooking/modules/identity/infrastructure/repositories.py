@@ -312,7 +312,12 @@ class SqlUserDirectory:
                         "paciente": (
                             None
                             if paciente_id is None
-                            else {"id": paciente_id, "usuario_id": str(new_user.user_id)}
+                            else {
+                                "id": paciente_id,
+                                "usuario_id": str(new_user.user_id),
+                                "nombre": new_user.first_name,
+                                "apellido": new_user.last_name,
+                            }
                         ),
                     },
                     datetime.now(UTC).replace(tzinfo=None),
