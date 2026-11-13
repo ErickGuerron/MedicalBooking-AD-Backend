@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     # Owner connection of the Supabase Postgres project (session pooler). Used only by the
     # Alembic chain in migrations_supabase; the runtime uses the reader and writer roles.
     supabase_database_url: SecretStr | None = None
+    # Read-only role of the Supabase replica, used by the fallback reads during an outage.
+    supabase_reader_database_url: SecretStr | None = None
+    # Insert-only audit role on MongoDB Atlas (replica_auditor) and the database name.
+    mongodb_auditor_uri: SecretStr | None = None
+    mongodb_database: str | None = None
     mail_from: str | None = None
     mail_from_name: str = Field(default="MedicalBooking", min_length=1, max_length=70)
     # Absolute public URL of the email images (for example a public Supabase Storage folder).
