@@ -169,6 +169,107 @@ class _Transaction:
         )
         self._cur.execute("DELETE FROM replica.propuestas_clinicas WHERE id = %s", (propuesta_id,))
 
+    def upsert_invoice(self, factura: dict[str, Any]) -> None:
+        self._cur.execute(
+            "INSERT INTO replica.facturas (id, paciente_id, cita_id, numero_factura, subtotal, "
+            "impuestos, total, moneda, estado, creada_en) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET estado = excluded.estado",
+            (
+                factura["id"],
+                factura["paciente_id"],
+                factura["cita_id"],
+                factura["numero_factura"],
+                factura["subtotal"],
+                factura["impuestos"],
+                factura["total"],
+                factura["moneda"],
+                factura["estado"],
+                factura["creada_en"],
+            ),
+        )
+
+    def upsert_invoice_detail(self, detalle: dict[str, Any], factura_id: str) -> None:
+        self._cur.execute(
+            "INSERT INTO replica.facturas_detalle (id, factura_id, servicio_id, descripcion, "
+            "cantidad, precio_unitario, subtotal) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (
+                detalle["id"],
+                factura_id,
+                detalle["servicio_id"],
+                detalle["descripcion"],
+                detalle["cantidad"],
+                detalle["precio_unitario"],
+                detalle["subtotal"],
+            ),
+        )
+
+    def set_invoice_state(self, factura_id: str, estado: str) -> None:
+        self._cur.execute(
+            "UPDATE replica.facturas SET estado = %s WHERE id = %s", (estado, factura_id)
+        )
+        if self._cur.rowcount == 0:
+            raise LookupError("invoice not projected yet; retry after its creation event")
+
+    def upsert_payment(self, pago: dict[str, Any]) -> None:
+        self._cur.execute(
+            "INSERT INTO replica.pagos (id, factura_id, monto, moneda, estado, creado_en, "
+            "pagado_en) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO UPDATE SET "
+            "estado = excluded.estado, pagado_en = excluded.pagado_en",
+            (
+                pago["id"],
+                pago["factura_id"],
+                pago["monto"],
+                pago["moneda"],
+                pago["estado"],
+                pago["creado_en"],
+                pago.get("pagado_en"),
+            ),
+        )
+
+    def upsert_refund(self, reembolso: dict[str, Any]) -> None:
+        self._cur.execute(
+            "INSERT INTO replica.reembolsos (id, pago_id, monto, estado, solicitado_en, "
+            "procesado_en, motivo_codigo) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET estado = excluded.estado, "
+            "procesado_en = excluded.procesado_en",
+            (
+                reembolso["id"],
+                reembolso["pago_id"],
+                reembolso["monto"],
+                reembolso["estado"],
+                reembolso["solicitado_en"],
+                reembolso.get("procesado_en"),
+                reembolso["motivo_codigo"],
+            ),
+        )
+
+    def upsert_cita(self, cita: dict[str, Any]) -> None:
+        self._cur.execute(
+            "INSERT INTO replica.citas (id, paciente_id, servicio_id, estado, reservada_en, "
+            "confirmada_en, cancelada_en, motivo_cancelacion_codigo, motivo_cancelacion_texto, "
+            "inicio, fin) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET estado = excluded.estado, "
+            "confirmada_en = excluded.confirmada_en, cancelada_en = excluded.cancelada_en, "
+            "motivo_cancelacion_codigo = excluded.motivo_cancelacion_codigo, "
+            "motivo_cancelacion_texto = excluded.motivo_cancelacion_texto, "
+            "inicio = excluded.inicio, fin = excluded.fin",
+            (
+                cita["id"],
+                cita["paciente_id"],
+                cita["servicio_id"],
+                cita["estado"],
+                cita["reservada_en"],
+                cita.get("confirmada_en"),
+                cita.get("cancelada_en"),
+                cita.get("motivo_cancelacion_codigo"),
+                cita.get("motivo_cancelacion_texto"),
+                cita["inicio"],
+                cita["fin"],
+            ),
+        )
+
 
 class SupabaseProjectionSink:
     def __init__(self, connect: Callable[[], Any]) -> None:

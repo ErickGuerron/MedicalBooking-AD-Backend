@@ -76,10 +76,88 @@ def _propuesta_revisada(envelope: dict[str, Any], tx: Any) -> None:
         tx.delete_proposal(propuesta["id"])
 
 
+_FACTURA_FIELDS = (
+    "id",
+    "paciente_id",
+    "cita_id",
+    "numero_factura",
+    "subtotal",
+    "impuestos",
+    "total",
+    "moneda",
+    "estado",
+    "creada_en",
+)
+_DETALLE_FIELDS = ("id", "servicio_id", "descripcion", "cantidad", "precio_unitario", "subtotal")
+_PAGO_FIELDS = ("id", "factura_id", "monto", "moneda", "estado", "creado_en", "pagado_en")
+_REEMBOLSO_FIELDS = (
+    "id",
+    "pago_id",
+    "monto",
+    "estado",
+    "solicitado_en",
+    "procesado_en",
+    "motivo_codigo",
+)
+
+
+def _pick(source: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    """Only the replica's own columns: gateway identifiers and keys never reach the sink."""
+    return {name: source.get(name) for name in fields}
+
+
+def _factura_creada(envelope: dict[str, Any], tx: Any) -> None:
+    payload = envelope["payload"]
+    factura = payload["factura"]
+    tx.upsert_invoice(_pick(factura, _FACTURA_FIELDS))
+    for detalle in payload.get("detalles", []):
+        tx.upsert_invoice_detail(_pick(detalle, _DETALLE_FIELDS), factura["id"])
+
+
+def _project_payment(payload: dict[str, Any], tx: Any) -> None:
+    factura = payload["factura"]
+    tx.set_invoice_state(factura["id"], factura["estado"])
+    tx.upsert_payment(_pick(payload["pago"], _PAGO_FIELDS))
+
+
+def _pago_actualizado(envelope: dict[str, Any], tx: Any) -> None:
+    _project_payment(envelope["payload"], tx)
+
+
+def _reembolso_actualizado(envelope: dict[str, Any], tx: Any) -> None:
+    payload = envelope["payload"]
+    _project_payment(payload, tx)
+    tx.upsert_refund(_pick(payload["reembolso"], _REEMBOLSO_FIELDS))
+
+
+_CITA_FIELDS = (
+    "id",
+    "paciente_id",
+    "servicio_id",
+    "estado",
+    "reservada_en",
+    "confirmada_en",
+    "cancelada_en",
+    "motivo_cancelacion_codigo",
+    "motivo_cancelacion_texto",
+    "inicio",
+    "fin",
+)
+
+
+def _cita_actualizada(envelope: dict[str, Any], tx: Any) -> None:
+    """A snapshot is the full state of the appointment: the replica keeps only its own columns."""
+    tx.upsert_cita(_pick(envelope["payload"]["cita"], _CITA_FIELDS))
+
+
 _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
     "usuario.creado": _usuario_creado,
     "usuario.activado": _usuario_activado,
     "orden_laboratorio.creada": _orden_creada,
     "resultado_laboratorio.registrado": _resultado_registrado,
     "propuesta.revisada": _propuesta_revisada,
+    "factura.creada": _factura_creada,
+    "pago.actualizado": _pago_actualizado,
+    "reembolso.actualizado": _reembolso_actualizado,
+    "cita.actualizada": _cita_actualizada,
 }
