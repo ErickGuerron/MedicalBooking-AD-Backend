@@ -24,6 +24,7 @@ from medicalbooking.modules.payments.application.billing_service import (
     PaymentReservation,
 )
 from medicalbooking.shared.domain.errors import Conflict
+from medicalbooking.shared.infrastructure.outbox import append_outbox
 from medicalbooking.shared.infrastructure.sql_errors import is_unique_violation
 
 
@@ -78,6 +79,7 @@ class SqlBillingStore:
                         "cita": invoice.cita_id,
                     },
                 )
+                detalle_id = str(uuid.uuid4())
                 conn.execute(
                     text(
                         "INSERT INTO facturas_detalle (id, factura_id, servicio_id, descripcion, "
@@ -86,12 +88,48 @@ class SqlBillingStore:
                         "FROM citas AS c WHERE c.id = :cita"
                     ),
                     {
-                        "detalle": str(uuid.uuid4()),
+                        "detalle": detalle_id,
                         "id": invoice.id,
                         "descripcion": invoice.descripcion,
                         "precio": invoice.subtotal,
                         "cita": invoice.cita_id,
                     },
+                )
+                # Replica snapshot: the invoice and its detail line. No contact data.
+                paciente_row = conn.execute(
+                    text("SELECT paciente_id, servicio_id FROM citas WHERE id = :c"),
+                    {"c": invoice.cita_id},
+                ).one()
+                append_outbox(
+                    conn,
+                    "factura",
+                    str(invoice.id),
+                    "factura.creada",
+                    {
+                        "factura": {
+                            "id": str(invoice.id).lower(),
+                            "paciente_id": str(paciente_row.paciente_id).lower(),
+                            "cita_id": str(invoice.cita_id).lower(),
+                            "numero_factura": invoice.numero_factura,
+                            "subtotal": str(invoice.subtotal),
+                            "impuestos": str(invoice.impuestos),
+                            "total": str(invoice.total),
+                            "moneda": invoice.moneda,
+                            "estado": "PENDIENTE",
+                            "creada_en": _utc_naive(invoice.creada_en).isoformat(),
+                        },
+                        "detalles": [
+                            {
+                                "id": detalle_id,
+                                "servicio_id": str(paciente_row.servicio_id).lower(),
+                                "descripcion": invoice.descripcion,
+                                "cantidad": 1,
+                                "precio_unitario": str(invoice.subtotal),
+                                "subtotal": str(invoice.subtotal),
+                            }
+                        ],
+                    },
+                    _utc_naive(invoice.creada_en),
                 )
         except IntegrityError as error:
             if is_unique_violation(str(error.orig)):
