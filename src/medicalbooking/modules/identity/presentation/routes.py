@@ -34,6 +34,8 @@ class CreateUserRequest(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     roles: list[str] = Field(min_length=1, max_length=4)
+    # Required when roles includes MEDICO; ignored for other roles.
+    registro_profesional: str | None = Field(default=None, max_length=80)
 
 
 def _service() -> IdentityService:
@@ -160,6 +162,7 @@ def create_user() -> tuple[Response, int]:
         first_name=body.first_name,
         last_name=body.last_name,
         roles=body.roles,
+        professional_registration=body.registro_profesional,
     )
     return jsonify(id=user_id), 201
 

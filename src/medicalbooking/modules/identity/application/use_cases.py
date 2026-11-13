@@ -40,9 +40,10 @@ PATIENT_ROLE = "PACIENTE"
 REGISTRATION_ACCEPTED = "If the address can receive an account, we sent an activation link to it."
 VERIFICATION_FAILED = "The activation link is invalid, already used, or expired."
 _log = logging.getLogger("medicalbooking.identity")
-# Roles that can be assigned through the API in E1. MEDICO needs a professional
-# registration profile, which is out of scope for this slice.
-ASSIGNABLE_ROLES = frozenset({"PACIENTE", "LABORATORISTA", "ADMINISTRADOR"})
+# Roles that an administrator can assign. A MEDICO also needs a professional registration,
+# which create_user requires and stores in the same transaction as the account.
+ASSIGNABLE_ROLES = frozenset({"PACIENTE", "LABORATORISTA", "ADMINISTRADOR", "MEDICO"})
+PROFESSIONAL_ROLE = "MEDICO"
 MIN_PASSWORD_LENGTH = 12
 
 
@@ -186,6 +187,7 @@ class IdentityService:
         first_name: str,
         last_name: str,
         roles: list[str],
+        professional_registration: str | None = None,
     ) -> str:
         if PERM_USERS_ADMIN not in actor.permissions:
             raise Forbidden("Access to this resource is not allowed")
@@ -197,6 +199,7 @@ class IdentityService:
             raise ValidationFailed(
                 "Roles must be one or more of: " + ", ".join(sorted(ASSIGNABLE_ROLES))
             )
+        registration = _professional_registration(unique_roles, professional_registration)
 
         user_id = str(uuid.uuid4())
         self._directory.create_user(
@@ -207,6 +210,7 @@ class IdentityService:
                 last_name=last_name,
                 password_hash=self._hasher.hash(password),
                 roles=unique_roles,
+                professional_registration=registration,
             )
         )
         return user_id
@@ -220,6 +224,16 @@ class IdentityService:
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _professional_registration(roles: tuple[str, ...], registration: str | None) -> str | None:
+    """Required for a MEDICO and kept only for a MEDICO; other roles ignore the field."""
+    if PROFESSIONAL_ROLE not in roles:
+        return None
+    value = (registration or "").strip()
+    if not value:
+        raise ValidationFailed("A MEDICO account needs a registro_profesional")
+    return value
 
 
 def _token_hash(token: str) -> str:

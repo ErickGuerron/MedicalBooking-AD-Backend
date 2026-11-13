@@ -5,10 +5,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from medicalbooking.modules.identity.application.ports import (
+    DEFAULT_APPOINTMENT_MINUTES,
     AccessProfile,
     CredentialRecord,
     NewUser,
@@ -290,6 +291,8 @@ class SqlUserDirectory:
                             ),
                             {"id": paciente_id, "u": new_user.user_id},
                         )
+                if new_user.professional_registration is not None:
+                    _insert_medico(conn, new_user)
                 if verification is not None:
                     token_hash, valid_hours = verification
                     conn.execute(
@@ -325,3 +328,19 @@ class SqlUserDirectory:
         except IntegrityError:
             # Unique email, or a concurrent request created the same account first.
             raise Conflict("An account with this email already exists") from None
+
+
+def _insert_medico(conn: Connection, new_user: NewUser) -> None:
+    """The clinician profile, written in the account's transaction so both exist or neither."""
+    conn.execute(
+        text(
+            "INSERT INTO medicos (id, usuario_id, registro_profesional, duracion_cita_min, activo) "
+            "VALUES (:id, :u, :registro, :minutos, 1)"
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "u": new_user.user_id,
+            "registro": new_user.professional_registration,
+            "minutos": DEFAULT_APPOINTMENT_MINUTES,
+        },
+    )

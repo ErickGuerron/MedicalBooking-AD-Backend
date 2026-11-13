@@ -213,8 +213,8 @@ def test_create_user_enforces_password_length_and_role_domain() -> None:
             last_name="X",
             roles=["ROOT"],
         )
-    with pytest.raises(ValidationFailed):
-        # MEDICO needs a professional profile, which this slice does not create.
+    with pytest.raises(ValidationFailed, match="registro_profesional"):
+        # A doctor cannot exist without a professional registration.
         service.create_user(
             admin,
             email="n@x.test",
@@ -223,6 +223,56 @@ def test_create_user_enforces_password_length_and_role_domain() -> None:
             last_name="X",
             roles=["MEDICO"],
         )
+
+
+def test_create_user_refuses_a_doctor_with_a_blank_registration() -> None:
+    service, directory, _ = _service()
+
+    with pytest.raises(ValidationFailed, match="registro_profesional"):
+        service.create_user(
+            _actor(OWNER, ADMIN_PERMS),
+            email="m@x.test",
+            password="long-enough-pass",
+            first_name="M",
+            last_name="X",
+            roles=["MEDICO"],
+            professional_registration="   ",
+        )
+    assert directory.created == []
+
+
+def test_create_user_passes_the_trimmed_registration_for_a_doctor() -> None:
+    service, directory, _ = _service()
+
+    service.create_user(
+        _actor(OWNER, ADMIN_PERMS),
+        email="m@x.test",
+        password="long-enough-pass",
+        first_name="M",
+        last_name="X",
+        roles=["MEDICO"],
+        professional_registration=" MP-1234 ",
+    )
+
+    created = directory.created[0]
+    assert created.roles == ("MEDICO",)
+    assert created.professional_registration == "MP-1234"
+
+
+def test_create_user_ignores_the_registration_for_other_roles() -> None:
+    service, directory, _ = _service()
+
+    service.create_user(
+        _actor(OWNER, ADMIN_PERMS),
+        email="p@x.test",
+        password="long-enough-pass",
+        first_name="P",
+        last_name="X",
+        roles=["PACIENTE"],
+        professional_registration="MP-1234",
+    )
+
+    assert directory.created[0].professional_registration is None
 
 
 def test_create_user_stores_hash_never_the_plain_password() -> None:
