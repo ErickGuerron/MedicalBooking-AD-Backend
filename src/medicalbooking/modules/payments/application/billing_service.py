@@ -136,6 +136,7 @@ class CheckoutSnapshot:
     payment_status: str
     amount_cents: int | None
     currency: str | None
+    payment_intent: str | None = None
 
 
 @dataclass(frozen=True)

@@ -161,6 +161,36 @@ def test_retrieve_is_a_read_only_get_for_the_session_and_maps_its_state():
     assert snapshot.currency == "USD"
 
 
+def test_retrieve_exposes_the_payment_intent_id_when_stripe_reports_one():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "cs_test_pi",
+                "status": "complete",
+                "payment_status": "paid",
+                "payment_intent": "pi_test_synthetic_0001",
+            },
+        )
+
+    snapshot = _gateway(handler).retrieve_session("cs_test_pi")
+
+    assert snapshot.payment_intent == "pi_test_synthetic_0001"
+
+
+def test_payment_intent_is_none_when_absent_or_not_a_plain_id():
+    # An expanded object or a null field is not an id we can store, so it reads as None.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "cs_test_pi", "payment_intent": {"id": "pi_x"}})
+
+    assert _gateway(handler).retrieve_session("cs_test_pi").payment_intent is None
+
+    def absent(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "cs_test_pi"})
+
+    assert _gateway(absent).retrieve_session("cs_test_pi").payment_intent is None
+
+
 def test_retrieve_failure_becomes_unavailable_without_leaking_the_body():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={"error": {"message": f"oops {SECRET}"}})

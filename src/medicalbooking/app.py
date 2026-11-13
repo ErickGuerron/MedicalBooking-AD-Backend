@@ -51,7 +51,10 @@ from medicalbooking.modules.payments.infrastructure.customer_repositories import
 from medicalbooking.modules.payments.infrastructure.repositories import SqlPaymentsStore
 from medicalbooking.modules.payments.infrastructure.stripe_checkout import StripeCheckoutGateway
 from medicalbooking.modules.payments.presentation.openapi import payments_fragment
-from medicalbooking.modules.payments.presentation.routes import payments_bp
+from medicalbooking.modules.payments.presentation.routes import (
+    auto_refund_after_cancel,
+    payments_bp,
+)
 from medicalbooking.modules.replica.infrastructure.factory import (
     ReplicaConfigError,
     build_fallback_read_service,
@@ -104,6 +107,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(lab_bp)
     app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
+    app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
     app.register_blueprint(replica_bp)
     if settings.docs_enabled:
         register_api_docs(

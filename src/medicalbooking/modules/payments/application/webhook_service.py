@@ -4,10 +4,22 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import Protocol
 
 from medicalbooking.modules.payments.application.ports import WebhookStore
-from medicalbooking.modules.payments.domain.webhook import interpret_event, verify_signature
+from medicalbooking.modules.payments.domain.webhook import (
+    RefundChange,
+    interpret_event,
+    interpret_refund_event,
+    verify_signature,
+)
 from medicalbooking.shared.domain.errors import AppError, ServiceUnavailable
+
+
+class PaymentsEventStore(WebhookStore, Protocol):
+    def process_refund(self, event_id: str, event_type: str, change: RefundChange) -> str:
+        """Finalize the reembolso of a refund.* event. Returns the outcome for the response."""
+        ...
 
 
 class InvalidPayload(AppError):
@@ -24,7 +36,7 @@ class WebhookNotConfigured(ServiceUnavailable):
 class StripeWebhookService:
     def __init__(
         self,
-        store: WebhookStore,
+        store: PaymentsEventStore,
         secret: str | None,
         clock: Callable[[], int],
     ) -> None:
@@ -37,6 +49,10 @@ class StripeWebhookService:
             raise WebhookNotConfigured("Stripe webhook secret is not configured")
         verify_signature(payload, header, self._secret, now=self._clock())
         event = _parse_event(payload)
+        if event["type"].startswith("refund."):
+            return self._store.process_refund(
+                event["id"], event["type"], interpret_refund_event(event)
+            )
         return self._store.process(event["id"], event["type"], interpret_event(event))
 
 
