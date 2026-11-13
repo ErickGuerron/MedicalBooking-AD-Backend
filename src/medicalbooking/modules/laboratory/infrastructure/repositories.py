@@ -183,16 +183,35 @@ class SqlLabStore:
                     "obs": command.observaciones,
                 },
             )
+            detalles = []
             for test_id in command.tipo_prueba_ids:
+                detalle_id = str(uuid.uuid4())
                 conn.execute(
                     text(
                         "INSERT INTO ordenes_laboratorio_detalle (id, orden_id, tipo_prueba_id, "
                         "estado) VALUES (:id, :o, :t, 'PENDIENTE')"
                     ),
-                    {"id": str(uuid.uuid4()), "o": command.order_id, "t": test_id},
+                    {"id": detalle_id, "o": command.order_id, "t": test_id},
                 )
+                detalles.append(
+                    {"id": detalle_id, "tipo_prueba_id": test_id, "estado": "PENDIENTE"}
+                )
+            # Replica snapshot: the order and its detail lines. Observations stay in SQL Server.
+            snapshot = {
+                "id": command.order_id,
+                "paciente_id": command.paciente_id,
+                "medico_id": command.medico_id,
+                "fecha_orden": now.isoformat(),
+                "prioridad": command.prioridad,
+                "estado": "SOLICITADA",
+                "detalles": detalles,
+            }
             _outbox(
-                conn, command.order_id, "orden_laboratorio.creada", {"estado": "SOLICITADA"}, now
+                conn,
+                command.order_id,
+                "orden_laboratorio.creada",
+                {"estado": "SOLICITADA", "orden": snapshot},
+                now,
             )
         order = self.get_order(command.order_id)
         assert order is not None
