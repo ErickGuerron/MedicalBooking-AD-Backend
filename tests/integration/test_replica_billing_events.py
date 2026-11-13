@@ -17,6 +17,7 @@ from sqlalchemy import Engine, text
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
 from tests.integration.test_billing_api import _booked_appointment
+from tests.integration.test_replica_payment_events import _checkout
 
 pytestmark = pytest.mark.integration
 
@@ -98,3 +99,31 @@ def test_the_invoice_patient_is_the_patient_of_the_appointment(app, engine) -> N
         ).scalar_one()
     assert payload["factura"]["paciente_id"] == str(paciente).lower()
     assert uuid.UUID(payload["factura"]["paciente_id"])
+
+
+def test_the_payment_snapshot_keeps_its_existing_keys(app, engine) -> None:
+    """Pins the pago.actualizado keys the replica projects, so the refund events cannot drift it."""
+    _headers, _factura, pago = _checkout(app, engine)
+    with engine.connect() as conn:
+        payload = json.loads(
+            conn.execute(
+                text(
+                    "SELECT TOP 1 payload FROM eventos_outbox WHERE agregado_tipo = 'pago' "
+                    "AND agregado_id = :p AND tipo_evento = 'pago.actualizado' "
+                    "ORDER BY version_agregado DESC"
+                ),
+                {"p": pago},
+            ).scalar_one()
+        )
+
+    assert set(payload) == {"pago", "factura"}
+    assert set(payload["pago"]) == {
+        "id",
+        "factura_id",
+        "estado",
+        "monto",
+        "moneda",
+        "creado_en",
+        "pagado_en",
+    }
+    assert set(payload["factura"]) == {"id", "paciente_id", "estado"}

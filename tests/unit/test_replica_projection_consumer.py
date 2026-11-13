@@ -80,6 +80,24 @@ class FakeSink:
     def delete_proposal(self, propuesta_id):
         self._write("delete_proposal", propuesta_id)
 
+    def upsert_invoice(self, factura):
+        self._write("upsert_invoice", dict(factura))
+
+    def upsert_invoice_detail(self, detalle, factura_id):
+        self._write("upsert_invoice_detail", dict(detalle), factura_id)
+
+    def set_invoice_state(self, factura_id, estado):
+        self._write("set_invoice_state", factura_id, estado)
+
+    def upsert_payment(self, pago):
+        self._write("upsert_payment", dict(pago))
+
+    def upsert_refund(self, reembolso):
+        self._write("upsert_refund", dict(reembolso))
+
+    def upsert_cita(self, cita):
+        self._write("upsert_cita", dict(cita))
+
 
 def _envelope(event_type: str, aggregate_type: str, aggregate_id: str, payload: dict) -> dict:
     return {
@@ -267,3 +285,256 @@ def test_an_unknown_event_type_is_ignored_without_writes():
     apply_event(event, sink, consumer="replica-supabase")
 
     assert sink.committed == []
+
+
+FACTURA = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+DETALLE_FACTURA = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+CITA = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+SERVICIO = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+PAGO = "f0f0f0f0-f0f0-4f0f-8f0f-f0f0f0f0f0f0"
+REEMBOLSO = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
+FORBIDDEN = ("stripe", "clave")
+
+FACTURA_KEYS = {
+    "id",
+    "paciente_id",
+    "cita_id",
+    "numero_factura",
+    "subtotal",
+    "impuestos",
+    "total",
+    "moneda",
+    "estado",
+    "creada_en",
+}
+PAGO_KEYS = {"id", "factura_id", "monto", "moneda", "estado", "creado_en", "pagado_en"}
+REEMBOLSO_KEYS = {
+    "id",
+    "pago_id",
+    "monto",
+    "estado",
+    "solicitado_en",
+    "procesado_en",
+    "motivo_codigo",
+}
+
+
+def _factura(estado: str) -> dict:
+    return {
+        "id": FACTURA,
+        "paciente_id": PATIENT,
+        "cita_id": CITA,
+        "numero_factura": "FAC-000001",
+        "subtotal": "25.00",
+        "impuestos": "0.00",
+        "total": "25.00",
+        "moneda": "USD",
+        "estado": estado,
+        "creada_en": "2026-11-12T18:00:00",
+    }
+
+
+def _pago(estado: str) -> dict:
+    return {
+        "id": PAGO,
+        "factura_id": FACTURA,
+        "monto": "25.00",
+        "moneda": "USD",
+        "estado": estado,
+        "creado_en": "2026-11-12T18:00:00",
+        "pagado_en": None if estado == "PENDIENTE" else "2026-11-12T18:05:00",
+    }
+
+
+def _no_forbidden_writes(sink: FakeSink) -> None:
+    rendered = repr(sink.committed).lower()
+    for word in FORBIDDEN:
+        assert word not in rendered, f"a write carried a '{word}' key"
+
+
+def test_factura_creada_projects_the_invoice_and_its_detail_line():
+    sink = FakeSink()
+    detalle = {
+        "id": DETALLE_FACTURA,
+        "servicio_id": SERVICIO,
+        "descripcion": "Consulta",
+        "cantidad": 1,
+        "precio_unitario": "25.00",
+        "subtotal": "25.00",
+    }
+    event = _envelope(
+        "factura.creada",
+        "factura",
+        FACTURA,
+        {"factura": _factura("PENDIENTE"), "detalles": [detalle]},
+    )
+
+    assert apply_event(event, sink, consumer="replica-supabase") is True
+
+    assert _names(sink) == ["upsert_invoice", "upsert_invoice_detail"]
+    invoice = sink.committed[0][1]
+    assert set(invoice) == FACTURA_KEYS
+    assert invoice["estado"] == "PENDIENTE"
+    assert sink.committed[1] == ("upsert_invoice_detail", detalle, FACTURA)
+    _no_forbidden_writes(sink)
+
+
+def test_pago_actualizado_projects_the_payment_and_the_invoice_state():
+    sink = FakeSink()
+    event = _envelope(
+        "pago.actualizado",
+        "pago",
+        PAGO,
+        {
+            "pago": _pago("CONFIRMADO"),
+            "factura": {"id": FACTURA, "paciente_id": PATIENT, "estado": "PAGADA"},
+        },
+    )
+
+    apply_event(event, sink, consumer="replica-supabase")
+
+    assert _names(sink) == ["set_invoice_state", "upsert_payment"]
+    assert sink.committed[0] == ("set_invoice_state", FACTURA, "PAGADA")
+    payment = sink.committed[1][1]
+    assert set(payment) == PAGO_KEYS
+    assert payment["estado"] == "CONFIRMADO"
+    _no_forbidden_writes(sink)
+
+
+def test_reembolso_actualizado_projects_the_refund_its_payment_and_its_invoice():
+    sink = FakeSink()
+    # A snapshot that carried gateway keys by mistake must not reach the replica.
+    reembolso = {
+        "id": REEMBOLSO,
+        "pago_id": PAGO,
+        "monto": "25.00",
+        "estado": "PROCESADO",
+        "solicitado_en": "2026-11-12T18:00:00",
+        "procesado_en": "2026-11-12T19:00:00",
+        "motivo_codigo": "CANCELACION_PACIENTE",
+        "stripe_refund_id": "re_test_must_not_leak",
+    }
+    pago = {**_pago("CONFIRMADO"), "clave_idempotencia": "must-not-leak"}
+    event = _envelope(
+        "reembolso.actualizado",
+        "reembolso",
+        REEMBOLSO,
+        {
+            "reembolso": reembolso,
+            "pago": pago,
+            "factura": {"id": FACTURA, "paciente_id": PATIENT, "estado": "REEMBOLSADA"},
+        },
+    )
+
+    assert apply_event(event, sink, consumer="replica-supabase") is True
+
+    assert _names(sink) == ["set_invoice_state", "upsert_payment", "upsert_refund"]
+    assert sink.committed[0] == ("set_invoice_state", FACTURA, "REEMBOLSADA")
+    assert set(sink.committed[1][1]) == PAGO_KEYS
+    refund = sink.committed[2][1]
+    assert set(refund) == REEMBOLSO_KEYS
+    assert refund["estado"] == "PROCESADO"
+    _no_forbidden_writes(sink)
+
+
+CITA_KEYS = {
+    "id",
+    "paciente_id",
+    "servicio_id",
+    "estado",
+    "reservada_en",
+    "confirmada_en",
+    "cancelada_en",
+    "motivo_cancelacion_codigo",
+    "motivo_cancelacion_texto",
+    "inicio",
+    "fin",
+}
+CITA_PAYLOAD_EXTRA = {
+    "motivo": "Dolor de pecho desde ayer",
+    "clave_idempotencia": "must-not-leak",
+    "version_fila": "AAAAAAAAAAE=",
+    "horario_id": "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
+    "expiracion_reserva": "2026-11-12T18:15:00",
+}
+
+
+def _cita(estado: str, **reason) -> dict:
+    cita = {
+        "id": CITA,
+        "paciente_id": PATIENT,
+        "servicio_id": SERVICIO,
+        "estado": estado,
+        "reservada_en": "2026-11-12T18:00:00",
+        "confirmada_en": None,
+        "cancelada_en": None,
+        "motivo_cancelacion_codigo": None,
+        "motivo_cancelacion_texto": None,
+        "inicio": "2026-11-15T10:00:00",
+        "fin": "2026-11-15T10:30:00",
+    }
+    cita.update(reason)
+    return cita
+
+
+def test_cita_actualizada_projects_only_the_replica_columns():
+    sink = FakeSink()
+    event = _envelope(
+        "cita.actualizada",
+        "cita",
+        CITA,
+        {"cita": {**_cita("PENDIENTE_PAGO"), **CITA_PAYLOAD_EXTRA}},
+    )
+
+    assert apply_event(event, sink, consumer="replica-supabase") is True
+
+    assert _names(sink) == ["upsert_cita"]
+    written = sink.committed[0][1]
+    assert set(written) == CITA_KEYS
+    assert written["estado"] == "PENDIENTE_PAGO"
+    assert written["inicio"] == "2026-11-15T10:00:00"
+    assert written["fin"] == "2026-11-15T10:30:00"
+    _no_forbidden_writes(sink)
+    assert "dolor de pecho" not in repr(sink.committed).lower()
+
+
+def test_cita_actualizada_carries_a_doctor_reason_exactly_as_stored():
+    sink = FakeSink()
+    texto = ("Urgencia médica en el hospital. " * 60)[:1500]
+    assert len(texto) == 1500
+    event = _envelope(
+        "cita.actualizada",
+        "cita",
+        CITA,
+        {
+            "cita": _cita(
+                "CANCELADA",
+                cancelada_en="2026-11-13T09:00:00",
+                motivo_cancelacion_codigo="IMPREVISTO_MEDICO",
+                motivo_cancelacion_texto=texto,
+            )
+        },
+    )
+
+    apply_event(event, sink, consumer="replica-supabase")
+
+    written = sink.committed[0][1]
+    assert written["motivo_cancelacion_codigo"] == "IMPREVISTO_MEDICO"
+    assert written["motivo_cancelacion_texto"] == texto
+    assert len(written["motivo_cancelacion_texto"]) == 1500
+
+
+def test_cita_actualizada_from_a_patient_cancellation_projects_null_reason_fields():
+    sink = FakeSink()
+    event = _envelope(
+        "cita.actualizada",
+        "cita",
+        CITA,
+        {"cita": _cita("CANCELADA", cancelada_en="2026-11-13T09:00:00")},
+    )
+
+    apply_event(event, sink, consumer="replica-supabase")
+
+    written = sink.committed[0][1]
+    assert written["motivo_cancelacion_codigo"] is None
+    assert written["motivo_cancelacion_texto"] is None
