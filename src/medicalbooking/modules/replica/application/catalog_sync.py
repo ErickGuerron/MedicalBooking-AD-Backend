@@ -49,4 +49,3 @@ def replace_catalog(snapshot: CatalogSnapshot, target: CatalogTarget) -> None:
             conn.execute(_INSERT_PERMISO, permiso)
         for rol_id, permiso_id in snapshot.roles_permisos:
             conn.execute(_INSERT_LINK, (rol_id, permiso_id))
-

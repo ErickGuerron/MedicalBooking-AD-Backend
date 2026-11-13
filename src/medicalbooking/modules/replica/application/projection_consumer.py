@@ -23,7 +23,12 @@ class ProjectionSink(Protocol):
 def apply_event(envelope: dict[str, Any], sink: Any, consumer: str) -> bool:
     """Return True when the event was applied, False when it was already processed."""
     with sink.transaction() as tx:
-        if not tx.mark_processed(envelope["event_id"], consumer, envelope["event_type"]):
+        if not tx.mark_processed(
+            envelope["event_id"],
+            consumer,
+            envelope["event_type"],
+            envelope["created_at"],
+        ):
             return False
         handler = _HANDLERS.get(envelope["event_type"])
         if handler is not None:
@@ -50,13 +55,14 @@ def _orden_creada(envelope: dict[str, Any], tx: Any) -> None:
     orden = envelope["payload"]["orden"]
     tx.upsert_order(orden)
     for detalle in orden.get("detalles", []):
-        tx.upsert_detail(detalle["id"], orden["id"], detalle["estado"])
+        tx.upsert_detail(detalle["id"], orden["id"], detalle["estado"], detalle["tipo_prueba_id"])
 
 
 def _resultado_registrado(envelope: dict[str, Any], tx: Any) -> None:
     payload = envelope["payload"]
     detalle = payload["detalle"]
-    tx.upsert_detail(detalle["id"], envelope["aggregate_id"], detalle["estado"])
+    # The detail keeps its test type from the creation event; only its state changes here.
+    tx.upsert_detail(detalle["id"], envelope["aggregate_id"], detalle["estado"], None)
     tx.set_order_state(envelope["aggregate_id"], payload["orden_estado"])
     tx.upsert_results(detalle["id"], payload.get("resultados", []))
 
