@@ -87,7 +87,9 @@ def test_a_denied_patient_is_never_audited_as_authorized_nor_read():
             log, sink=sink, reader=reader, resolver=RecordingResolver(log, deny=True)
         ).results_for(actor_id=ACTOR, correlation_id=CORRELATION, ip=None)
 
-    assert sink.records == []
+    assert [r.resultado for r in sink.records] == ["DENEGADA"]
+    assert sink.records[0].paciente_id is None
+    assert sink.records[0].actor_id == str(ACTOR)
     assert reader.calls == []
 
 
@@ -107,9 +109,7 @@ def test_the_audit_record_has_only_the_allowed_fields_and_no_clinical_values():
     log = Log()
     sink = RecordingSink(log)
 
-    _service(log, sink=sink).results_for(
-        actor_id=ACTOR, correlation_id=CORRELATION, ip="10.0.0.5"
-    )
+    _service(log, sink=sink).results_for(actor_id=ACTOR, correlation_id=CORRELATION, ip="10.0.0.5")
 
     record = sink.records[0]
     assert set(record.as_document()) == {
@@ -141,3 +141,56 @@ def test_the_read_uses_the_resolved_patient_and_the_actor_account():
 
     assert result.patient_id == PATIENT
     assert reader.calls == [(PATIENT, ACTOR)]
+
+
+def test_a_denial_that_cannot_be_audited_is_still_refused_without_data():
+    log = Log()
+    reader = RecordingReader(log)
+
+    with pytest.raises(AccessDenied):
+        _service(
+            log,
+            sink=RecordingSink(log, fail=True),
+            reader=reader,
+            resolver=RecordingResolver(log, deny=True),
+        ).results_for(actor_id=ACTOR, correlation_id=CORRELATION, ip=None)
+
+    assert reader.calls == []
+
+
+def test_a_denial_record_carries_the_same_fields_and_no_patient_or_clinical_data():
+    log = Log()
+    sink = RecordingSink(log)
+
+    with pytest.raises(AccessDenied):
+        _service(log, sink=sink, resolver=RecordingResolver(log, deny=True)).results_for(
+            actor_id=ACTOR, correlation_id=CORRELATION, ip="10.0.0.5"
+        )
+
+    record = sink.records[0]
+    assert set(record.as_document()) == {
+        "fecha_evento",
+        "paciente_id",
+        "actor_id",
+        "accion",
+        "entidad",
+        "resultado",
+        "correlation_id",
+        "ip_origen",
+    }
+    assert record.accion == "READ_CONTINGENCY"
+    assert record.resultado == "DENEGADA"
+    assert record.paciente_id is None
+    assert record.correlation_id == str(CORRELATION)
+    assert record.ip_origen == "10.0.0.5"
+
+
+def test_an_unaudited_denial_is_logged_so_the_gap_is_visible(caplog):
+    log = Log()
+
+    with pytest.raises(AccessDenied), caplog.at_level("ERROR"):
+        _service(
+            log, sink=RecordingSink(log, fail=True), resolver=RecordingResolver(log, deny=True)
+        ).results_for(actor_id=ACTOR, correlation_id=CORRELATION, ip=None)
+
+    assert any("denial not audited" in message for message in caplog.messages)

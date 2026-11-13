@@ -12,11 +12,14 @@ audited, never clinical values.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 
 class AccountNotActive(Exception):
@@ -34,7 +37,7 @@ class AuditUnavailable(Exception):
 @dataclass(frozen=True)
 class AuditRecord:
     fecha_evento: datetime
-    paciente_id: str
+    paciente_id: str | None
     actor_id: str
     accion: str
     entidad: str
@@ -87,7 +90,11 @@ class FallbackReadService:
         self._clock = clock
 
     def results_for(self, actor_id: UUID, correlation_id: UUID, ip: str | None) -> PatientResults:
-        patient_id = self._resolver.patient_for(actor_id)
+        try:
+            patient_id = self._resolver.patient_for(actor_id)
+        except (AccessDenied, AccountNotActive):
+            self._audit_denial(actor_id, correlation_id, ip)
+            raise
         self._sink.append(
             AuditRecord(
                 fecha_evento=self._clock(),
@@ -101,3 +108,22 @@ class FallbackReadService:
             )
         )
         return self._reader.results_of(patient_id, actor_id)
+
+    def _audit_denial(self, actor_id: UUID, correlation_id: UUID, ip: str | None) -> None:
+        """Record a refused attempt without patient data. A failed audit keeps the refusal."""
+        try:
+            self._sink.append(
+                AuditRecord(
+                    fecha_evento=self._clock(),
+                    paciente_id=None,
+                    actor_id=str(actor_id),
+                    accion="READ_CONTINGENCY",
+                    entidad="resultados_laboratorio",
+                    resultado="DENEGADA",
+                    correlation_id=str(correlation_id),
+                    ip_origen=ip,
+                )
+            )
+        except AuditUnavailable as error:
+            # The refusal stands. Log the error type only: the gap must be visible.
+            logger.error("denial not audited: %s", type(error).__name__)
