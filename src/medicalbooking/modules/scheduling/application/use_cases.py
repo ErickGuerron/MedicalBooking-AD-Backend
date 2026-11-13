@@ -19,8 +19,10 @@ from medicalbooking.modules.scheduling.application.ports import (
 )
 from medicalbooking.modules.scheduling.domain.policies import (
     PERM_BOOK,
+    PERM_CANCEL_MEDICO,
     ROLE_PATIENT,
     is_same_request,
+    validate_cancellation_reason,
     validate_estado,
     validate_idempotency_key,
     validate_page,
@@ -127,13 +129,32 @@ class SchedulingService:
         assert outcome.appointment is not None
         return BookingResult(appointment=outcome.appointment, replayed=False)
 
-    def cancel(self, actor: AccessProfile, appointment_id: str) -> Appointment:
-        _require(actor, PERM_BOOK)
+    def cancel(
+        self,
+        actor: AccessProfile,
+        appointment_id: str,
+        *,
+        motivo_codigo: str | None = None,
+        motivo_texto: str | None = None,
+    ) -> Appointment:
+        """A patient cancels an own appointment; a doctor cancels one of an own agenda.
+
+        A doctor must give a reason. A patient's reason fields are ignored and never stored.
+        Both paths answer the same 403 for a missing or foreign appointment.
+        """
+        as_medico = _cancels_as_medico(actor)
+        if as_medico:
+            validate_cancellation_reason(motivo_codigo, motivo_texto)
+        else:
+            motivo_codigo = motivo_texto = None
         outcome = self._store.cancel(
             CancelCommand(
                 actor_user_id=actor.user_id,
                 appointment_id=str(appointment_id),
                 now=self._clock(),
+                as_medico=as_medico,
+                motivo_codigo=motivo_codigo,
+                motivo_texto=motivo_texto,
             )
         )
         if outcome.status is CancelStatus.NOT_FOUND_OR_FORBIDDEN:
@@ -193,3 +214,13 @@ class SchedulingService:
 def _require(actor: AccessProfile, permission: str) -> None:
     if permission not in actor.permissions:
         raise Forbidden("Access to this resource is not allowed")
+
+
+def _cancels_as_medico(actor: AccessProfile) -> bool:
+    """Patients are checked first, as for listing. Only a doctor with the cancel permission
+    may cancel as the agenda's doctor; anyone else is refused before the store is reached."""
+    if PERM_BOOK in actor.permissions:
+        return False
+    if PERM_CANCEL_MEDICO in actor.permissions:
+        return True
+    raise Forbidden("Access to this resource is not allowed")

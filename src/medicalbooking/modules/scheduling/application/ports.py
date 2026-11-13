@@ -66,6 +66,11 @@ class CancelCommand:
     actor_user_id: str
     appointment_id: str
     now: datetime
+    # True: the actor cancels as the doctor of the appointment's agenda. False: as its patient.
+    as_medico: bool = False
+    # Only set for a doctor's cancellation; a patient's cancellation carries None.
+    motivo_codigo: str | None = None
+    motivo_texto: str | None = None
 
 
 class CancelStatus(Enum):

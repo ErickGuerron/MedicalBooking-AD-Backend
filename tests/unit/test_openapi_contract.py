@@ -116,7 +116,11 @@ def test_protected_operations_require_bearer_and_login_does_not(spec) -> None:
         ("/api/v1/users", "post", {"201", "401", "403", "409", "422"}),
         ("/api/v1/availability", "get", {"200", "401", "403", "422"}),
         ("/api/v1/appointments", "post", {"200", "201", "401", "403", "404", "409", "422"}),
-        ("/api/v1/appointments/{appointment_id}/cancel", "post", {"200", "401", "403", "409"}),
+        (
+            "/api/v1/appointments/{appointment_id}/cancel",
+            "post",
+            {"200", "401", "403", "409", "422"},
+        ),
         ("/api/v1/users", "get", {"200", "401", "403", "422"}),
         ("/api/v1/appointments", "get", {"200", "401", "403", "422"}),
         ("/api/v1/knowledge/rules", "get", {"200", "401", "403", "422"}),

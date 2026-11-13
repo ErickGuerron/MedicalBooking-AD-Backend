@@ -32,6 +32,16 @@ class BookAppointmentRequest(BaseModel):
     motivo: str | None = Field(default=None, max_length=500)
 
 
+class CancelAppointmentRequest(BaseModel):
+    """Optional body. The reason is required for a doctor and ignored for a patient; its
+    values are checked by the use case, so a patient's body is only checked for shape."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    motivo_codigo: str | None = None
+    motivo_texto: str | None = None
+
+
 def _service() -> SchedulingService:
     return current_app.extensions["medicalbooking.scheduling"]
 
@@ -55,6 +65,19 @@ def _body() -> BookAppointmentRequest:
         raise ValidationFailed("Request body must be a JSON object")
     try:
         return BookAppointmentRequest.model_validate(data)
+    except ValidationError as error:
+        fields = sorted({".".join(str(part) for part in item["loc"]) for item in error.errors()})
+        raise ValidationFailed("Invalid fields: " + ", ".join(fields)) from None
+
+
+def _cancel_body() -> CancelAppointmentRequest:
+    """A JSON object is checked for unknown fields. No body, or any other body, carries no
+    reason fields, as before this endpoint read a body at all."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return CancelAppointmentRequest()
+    try:
+        return CancelAppointmentRequest.model_validate(data)
     except ValidationError as error:
         fields = sorted({".".join(str(part) for part in item["loc"]) for item in error.errors()})
         raise ValidationFailed("Invalid fields: " + ", ".join(fields)) from None
@@ -132,7 +155,17 @@ def book() -> tuple[Response, int]:
 @scheduling_bp.post("/appointments/<uuid:appointment_id>/cancel")
 @authenticated
 def cancel(appointment_id: uuid.UUID) -> tuple[Response, int]:
-    appointment = _service().cancel(g.actor, str(appointment_id))
+    body = _cancel_body()
+    appointment = _service().cancel(
+        g.actor,
+        str(appointment_id),
+        motivo_codigo=body.motivo_codigo,
+        motivo_texto=body.motivo_texto,
+    )
+    # The cancellation is committed. Hooks run afterwards and must not change its answer.
+    hook = current_app.extensions.get("medicalbooking.after_appointment_cancelled")
+    if hook is not None:
+        hook(g.actor, str(appointment_id))
     return jsonify(_appointment_json(appointment)), 200
 
 

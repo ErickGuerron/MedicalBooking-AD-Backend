@@ -8,7 +8,10 @@ from __future__ import annotations
 from typing import Any
 
 from medicalbooking.modules.scheduling.domain.policies import APPOINTMENT_STATES
-from medicalbooking.modules.scheduling.presentation.routes import BookAppointmentRequest
+from medicalbooking.modules.scheduling.presentation.routes import (
+    BookAppointmentRequest,
+    CancelAppointmentRequest,
+)
 
 _PROBLEM_CONTENT = {
     "application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}
@@ -182,6 +185,13 @@ def scheduling_fragment() -> dict[str, Any]:
                     "tags": ["Scheduling"],
                     "operationId": "cancelAppointment",
                     "summary": "Cancel an own appointment and release its slot",
+                    "description": (
+                        "A patient cancels an own appointment; a body is optional and its reason "
+                        "fields are ignored. A doctor cancels an appointment of an own agenda and "
+                        "must send motivo_codigo (IMPREVISTO_MEDICO or OTRO_MEDICO) and "
+                        "motivo_texto (1 to 1500 characters). A paid appointment's refund is "
+                        "requested for the patient after the cancellation."
+                    ),
                     "security": _BEARER,
                     "parameters": [
                         {
@@ -191,11 +201,26 @@ def scheduling_fragment() -> dict[str, Any]:
                             "schema": {"type": "string", "format": "uuid"},
                         }
                     ],
+                    "requestBody": {
+                        "required": False,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/CancelAppointmentRequest"}
+                            }
+                        },
+                    },
                     "responses": {
                         "200": _json_response("Appointment cancelled", "Appointment"),
                         "401": _problem("Missing, malformed or inactive credentials"),
-                        "403": _problem("Appointment not found or not owned by the caller"),
+                        "403": _problem(
+                            "Appointment not found or not owned by the caller (patient, or doctor "
+                            "of the agenda)"
+                        ),
                         "409": _problem("Appointment can no longer be cancelled"),
+                        "422": _problem(
+                            "Invalid body; a doctor without a valid reason (MOTIVO_CANCELACION_"
+                            "REQUERIDO or MOTIVO_CANCELACION_INVALIDO)"
+                        ),
                     },
                 }
             },
@@ -203,6 +228,7 @@ def scheduling_fragment() -> dict[str, Any]:
         "components": {
             "schemas": {
                 "BookAppointmentRequest": BookAppointmentRequest.model_json_schema(),
+                "CancelAppointmentRequest": CancelAppointmentRequest.model_json_schema(),
                 "AppointmentSummary": {
                     "type": "object",
                     "required": ["id", "estado", "inicio", "fin"],
@@ -268,7 +294,7 @@ def scheduling_fragment() -> dict[str, Any]:
                         },
                         "horario_id": {"type": "string", "format": "uuid"},
                         "servicio_id": {"type": "string", "format": "uuid"},
-                        "motivo": {"type": ["string", "null"], "maxLength": 500},
+                        "motivo": {"type": ["string", "null"], "maxLength": 1500},
                         "expiracion_reserva": {"type": ["string", "null"], "format": "date-time"},
                     },
                 },

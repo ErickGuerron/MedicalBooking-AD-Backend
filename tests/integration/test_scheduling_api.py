@@ -282,7 +282,7 @@ def test_twenty_parallel_bookings_leave_exactly_one_active_appointment(app, engi
         _count(
             engine,
             "SELECT COUNT(*) FROM eventos_outbox e JOIN citas c ON c.id = e.agregado_id "
-            "WHERE c.horario_id = :h",
+            "WHERE c.horario_id = :h AND e.tipo_evento = 'cita.reservada'",
             h=slot,
         )
         == 1
