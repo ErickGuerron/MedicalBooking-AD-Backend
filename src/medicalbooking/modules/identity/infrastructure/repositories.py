@@ -19,6 +19,7 @@ from medicalbooking.modules.identity.domain.policies import (
     MAX_FAILED_LOGINS,
 )
 from medicalbooking.shared.domain.errors import Conflict, ValidationFailed
+from medicalbooking.shared.infrastructure.outbox import append_outbox
 
 
 def _canonical(value: object) -> str:
@@ -231,6 +232,14 @@ class SqlUserDirectory:
                 ),
                 {"u": row.usuario_id},
             )
+            append_outbox(
+                conn,
+                "usuario",
+                str(row.usuario_id),
+                "usuario.activado",
+                {"usuario": {"id": str(row.usuario_id), "estado": "ACTIVO"}},
+                datetime.now(UTC).replace(tzinfo=None),
+            )
             return True
 
     def _create(self, new_user: NewUser, verification: tuple[str, int] | None) -> None:
@@ -259,6 +268,8 @@ class SqlUserDirectory:
                     ),
                     {"id": new_user.user_id, "hash": new_user.password_hash},
                 )
+                role_ids: list[int] = []
+                paciente_id: str | None = None
                 for role in new_user.roles:
                     role_id = conn.execute(
                         text("SELECT id FROM roles WHERE nombre = :nombre"), {"nombre": role}
@@ -269,13 +280,15 @@ class SqlUserDirectory:
                         text("INSERT INTO usuarios_roles (usuario_id, rol_id) VALUES (:u, :r)"),
                         {"u": new_user.user_id, "r": role_id},
                     )
+                    role_ids.append(int(role_id))
                     if role == "PACIENTE":
+                        paciente_id = str(uuid.uuid4())
                         conn.execute(
                             text(
                                 "INSERT INTO pacientes (id, usuario_id, creado_en) "
-                                "VALUES (NEWID(), :u, SYSUTCDATETIME())"
+                                "VALUES (:id, :u, SYSUTCDATETIME())"
                             ),
-                            {"u": new_user.user_id},
+                            {"id": paciente_id, "u": new_user.user_id},
                         )
                 if verification is not None:
                     token_hash, valid_hours = verification
@@ -288,6 +301,22 @@ class SqlUserDirectory:
                         ),
                         {"u": new_user.user_id, "hash": token_hash, "horas": valid_hours},
                     )
+                append_outbox(
+                    conn,
+                    "usuario",
+                    str(new_user.user_id),
+                    "usuario.creado",
+                    {
+                        "usuario": {"id": str(new_user.user_id), "estado": new_user.status},
+                        "roles": sorted(role_ids),
+                        "paciente": (
+                            None
+                            if paciente_id is None
+                            else {"id": paciente_id, "usuario_id": str(new_user.user_id)}
+                        ),
+                    },
+                    datetime.now(UTC).replace(tzinfo=None),
+                )
         except IntegrityError:
             # Unique email, or a concurrent request created the same account first.
             raise Conflict("An account with this email already exists") from None
