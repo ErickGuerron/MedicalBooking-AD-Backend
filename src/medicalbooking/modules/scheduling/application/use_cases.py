@@ -10,6 +10,7 @@ from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
     AppointmentSummary,
+    ApprovalStatus,
     AvailableSlot,
     CancelCommand,
     CancelStatus,
@@ -20,8 +21,10 @@ from medicalbooking.modules.scheduling.application.ports import (
 from medicalbooking.modules.scheduling.domain.policies import (
     PERM_BOOK,
     PERM_CANCEL_MEDICO,
+    PERM_REVIEW_CANCELLATIONS,
     ROLE_PATIENT,
     is_same_request,
+    validate_approval_reason,
     validate_cancellation_reason,
     validate_estado,
     validate_idempotency_key,
@@ -162,8 +165,28 @@ class SchedulingService:
             raise Forbidden("Access to this resource is not allowed")
         if outcome.status is CancelStatus.NOT_CANCELLABLE:
             raise Conflict("The appointment can no longer be cancelled")
+        if outcome.status is CancelStatus.REQUIRES_APPROVAL:
+            # Stable codes: the client matches them, so they are not translated.
+            raise Conflict(",".join(outcome.blockers))
         assert outcome.appointment is not None
         return outcome.appointment
+
+    def approve_doctor_cancellation(
+        self, actor: AccessProfile, appointment_id: str, *, motivo: str | None
+    ) -> None:
+        """An admin records the approval that lets a doctor cancel one appointment beyond the
+        monthly quota or inside the 24-hour notice. The doctor still performs the cancellation."""
+        _require(actor, PERM_REVIEW_CANCELLATIONS)
+        validate_approval_reason(motivo)
+        status = self._store.approve_doctor_cancellation(
+            str(appointment_id), actor.user_id, str(motivo), self._clock()
+        )
+        if status is ApprovalStatus.NOT_FOUND:
+            raise NotFound("Appointment not found")
+        if status is ApprovalStatus.NOT_CANCELLABLE:
+            raise Conflict("The appointment can no longer be cancelled")
+        if status is ApprovalStatus.ALREADY_APPROVED:
+            raise Conflict("The appointment already has an approval")
 
     def list_appointments(
         self,
