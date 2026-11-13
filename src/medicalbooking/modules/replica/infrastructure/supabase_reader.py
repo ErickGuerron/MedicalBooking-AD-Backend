@@ -35,7 +35,11 @@ class SupabaseReplicaReader:
         connection = self._connect()
         with connection.transaction():
             with connection.cursor() as cursor:
-                cursor.execute("SET LOCAL app.paciente_id = %s", (str(patient_id),))
+                # set_config(..., true) is SET LOCAL that accepts a bound parameter;
+                # SET itself rejects placeholders in PostgreSQL.
+                cursor.execute(
+                    "SELECT set_config('app.paciente_id', %s, true)", (str(patient_id),)
+                )
                 cursor.execute(_ORDERS_WITH_RESULTS, (str(patient_id),))
                 rows = cursor.fetchall()
         return PatientResults(patient_id=patient_id, orders=_group(rows))

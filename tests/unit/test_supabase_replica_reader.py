@@ -55,7 +55,7 @@ def test_the_patient_is_fixed_inside_the_same_transaction_before_any_select():
     assert connection.log[0] == ("begin",)
     assert connection.log[1] == (
         "execute",
-        "SET LOCAL app.paciente_id = %s",
+        "SELECT set_config('app.paciente_id', %s, true)",
         (str(PATIENT),),
     )
     selects = [entry for entry in connection.log if entry[0] == "execute"][1:]
