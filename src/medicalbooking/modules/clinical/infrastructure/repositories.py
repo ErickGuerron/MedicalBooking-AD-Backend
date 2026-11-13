@@ -1066,7 +1066,9 @@ def _outbox(
     )
 
 
-def _review_projection(conn: Connection, proposal_guid: str, decision: str, moment: datetime) -> dict:
+def _review_projection(
+    conn: Connection, proposal_guid: str, decision: str, moment: datetime
+) -> dict:
     """Replica snapshot of a reviewed proposal. Only ACEPTADA and CORREGIDA carry content.
 
     A rejected proposal is projected as its state alone, so the replica removes what it holds.

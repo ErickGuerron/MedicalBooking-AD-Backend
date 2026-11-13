@@ -287,8 +287,9 @@ def clinical_fragment() -> dict[str, Any]:
                     "operationId": "readClinicalProfile",
                     "summary": "Read own declared altitude of residence and smoking (patient)",
                     "description": (
-                        "Returns what the patient declared with the PUT. A field is null until it is "
-                        "declared, so altitude or smoking null means the profile is not complete yet."
+                        "Returns what the patient declared with the PUT. A field is null until "
+                        "it is declared, so altitude or smoking null means the profile is not "
+                        "complete yet."
                     ),
                     "security": _BEARER,
                     "responses": {

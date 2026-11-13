@@ -26,6 +26,9 @@ def _apply(engine: Engine) -> None:
     with engine.begin() as conn:
         for batch in split_batches(SQL_FILE.read_text(encoding="utf-8")):
             conn.exec_driver_sql(batch)
+        # The script switches NOCOUNT on. The pooled connection keeps it, so later
+        # UPDATEs report rowcount -1 and rowcount checks in other tests break.
+        conn.exec_driver_sql("SET NOCOUNT OFF")
 
 
 def _count(engine: Engine, query: str, **params: str) -> int:
