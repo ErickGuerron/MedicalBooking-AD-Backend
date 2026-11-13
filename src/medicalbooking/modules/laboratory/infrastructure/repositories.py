@@ -360,7 +360,9 @@ class SqlLabStore:
                 1 for entry in entries if entry.analito_id is not None
             ):
                 return "ANALYTE_ALREADY_REPORTED"
+            projected_results: list[dict] = []
             for entry in entries:
+                result_id = str(uuid.uuid4())
                 conn.execute(
                     text(
                         "INSERT INTO resultados_laboratorio (id, detalle_orden_id, analito_id, "
@@ -373,7 +375,7 @@ class SqlLabStore:
                         ":referencia_version, :minimo, :maximo, :validador, :ahora)"
                     ),
                     {
-                        "id": str(uuid.uuid4()),
+                        "id": result_id,
                         "d": detail_id,
                         "analito": None if entry.analito_id is None else _as_guid(entry.analito_id),
                         "nombre": entry.nombre_analito,
@@ -392,6 +394,19 @@ class SqlLabStore:
                         "validador": actor_user_id,
                         "ahora": moment,
                     },
+                )
+                projected_results.append(
+                    {
+                        "id": result_id,
+                        "nombre_analito": entry.nombre_analito,
+                        "valor_texto": entry.valor_texto,
+                        "valor_numerico": entry.valor_numerico,
+                        "unidad": entry.unidad,
+                        "referencia_min": entry.referencia_min,
+                        "referencia_max": entry.referencia_max,
+                        "interpretacion": entry.interpretacion,
+                        "validado_en": moment.isoformat(),
+                    }
                 )
             # A test is complete when every mandatory analyte (obligatorio=1) has a result.
             # A test with no mandatory analyte is complete with its first submission.
@@ -431,11 +446,22 @@ class SqlLabStore:
                 text("UPDATE ordenes_laboratorio SET estado = :e WHERE id = :o"),
                 {"e": new_state, "o": order_id},
             )
+            detail_state = "COMPLETADO" if complete else "EN_PROCESO"
             _outbox(
                 conn,
                 order_id,
                 "resultado_laboratorio.registrado",
-                {"detalle_id": detail_id, "estado_orden": new_state},
+                {
+                    "detalle_id": detail_id,
+                    "estado_orden": new_state,
+                    "orden_estado": new_state,
+                    "detalle": {
+                        "id": detail_id,
+                        "estado": detail_state,
+                        "fecha_resultado": moment.isoformat() if complete else None,
+                    },
+                    "resultados": projected_results,
+                },
                 moment,
             )
         return "CREATED"
