@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from medicalbooking.shared.domain.errors import ValidationFailed
 
@@ -71,8 +71,48 @@ def validate_cancellation_reason(codigo: str | None, texto: str | None) -> None:
         raise ValidationFailed(REASON_INVALID)
 
 
+def validate_approval_reason(texto: str | None) -> None:
+    """The admin's reason for an exception: non-blank, within the same 1500-unit limit."""
+    if texto is None or not texto.strip():
+        raise ValidationFailed(APPROVAL_REASON_REQUIRED)
+    if len(texto.encode("utf-16-le")) > 2 * MOTIVO_TEXTO_MAX:
+        raise ValidationFailed("Invalid approval reason: at most 1500 characters")
+
+
 def is_cancellable(state: str) -> bool:
     return state in ACTIVE_STATES
+
+
+PERM_REVIEW_CANCELLATIONS = "citas.revisar_cancelaciones"
+APPROVAL_REASON_REQUIRED = "MOTIVO_APROBACION_REQUERIDO"
+MAX_DOCTOR_CANCELLATIONS_PER_MONTH = 3
+DOCTOR_CANCEL_MIN_NOTICE = timedelta(hours=24)
+LIMITE_CANCELACION_MEDICO = "LIMITE_CANCELACION_MEDICO"
+CANCELACION_MEDICO_FUERA_DE_PLAZO = "CANCELACION_MEDICO_FUERA_DE_PLAZO"
+
+
+def doctor_cancellation_blockers(
+    *, now: datetime, slot_start: datetime, cancellations_this_month: int
+) -> tuple[str, ...]:
+    """Reasons a doctor's cancellation needs an admin approval first; empty when allowed.
+
+    Quota counts the doctor's earlier cancellations in the same UTC month. Notice is measured
+    from ``now`` to the slot start; less than 24 hours (or a started slot) is a blocker.
+    """
+    blockers: list[str] = []
+    if cancellations_this_month >= MAX_DOCTOR_CANCELLATIONS_PER_MONTH:
+        blockers.append(LIMITE_CANCELACION_MEDICO)
+    if slot_start - now < DOCTOR_CANCEL_MIN_NOTICE:
+        blockers.append(CANCELACION_MEDICO_FUERA_DE_PLAZO)
+    return tuple(blockers)
+
+
+def month_bounds(moment: datetime) -> tuple[datetime, datetime]:
+    """UTC calendar month containing ``moment``: [first day, first day of next month)."""
+    utc = moment.astimezone(UTC)
+    start = datetime(utc.year, utc.month, 1, tzinfo=UTC)
+    following = datetime(utc.year + (utc.month == 12), utc.month % 12 + 1, 1, tzinfo=UTC)
+    return start, following
 
 
 def is_same_request(

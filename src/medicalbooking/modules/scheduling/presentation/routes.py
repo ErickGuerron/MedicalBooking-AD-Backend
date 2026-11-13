@@ -169,6 +169,20 @@ def cancel(appointment_id: uuid.UUID) -> tuple[Response, int]:
     return jsonify(_appointment_json(appointment)), 200
 
 
+@scheduling_bp.post("/appointments/<uuid:appointment_id>/cancellation-approval")
+@authenticated
+def approve_cancellation(appointment_id: uuid.UUID) -> tuple[Response, int]:
+    """An admin approves one doctor cancellation beyond the quota or inside the notice window."""
+    data = request.get_json(silent=True)
+    motivo = data.get("motivo") if isinstance(data, dict) else None
+    _service().approve_doctor_cancellation(
+        g.actor,
+        str(appointment_id),
+        motivo=motivo if isinstance(motivo, str) else None,
+    )
+    return jsonify(cita_id=str(appointment_id), aprobada=True), 201
+
+
 @scheduling_bp.get("/appointments")
 @authenticated
 def list_appointments() -> tuple[Response, int]:

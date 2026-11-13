@@ -77,12 +77,22 @@ class CancelStatus(Enum):
     CANCELLED = "cancelled"
     NOT_FOUND_OR_FORBIDDEN = "not_found_or_forbidden"
     NOT_CANCELLABLE = "not_cancellable"
+    REQUIRES_APPROVAL = "requires_approval"
 
 
 @dataclass(frozen=True)
 class CancelOutcome:
     status: CancelStatus
     appointment: Appointment | None
+    # Only for REQUIRES_APPROVAL: the stable codes that blocked the doctor's cancellation.
+    blockers: tuple[str, ...] = ()
+
+
+class ApprovalStatus(Enum):
+    APPROVED = "approved"
+    NOT_FOUND = "not_found"
+    NOT_CANCELLABLE = "not_cancellable"
+    ALREADY_APPROVED = "already_approved"
 
 
 class SchedulingStore(Protocol):
@@ -115,6 +125,10 @@ class SchedulingStore(Protocol):
     def reserve(self, command: ReserveCommand) -> ReserveOutcome: ...
 
     def cancel(self, command: CancelCommand) -> CancelOutcome: ...
+
+    def approve_doctor_cancellation(
+        self, appointment_id: str, approver_user_id: str, motivo: str, now: datetime
+    ) -> ApprovalStatus: ...
 
     def expire_overdue_holds(self, now: datetime, limit: int) -> int:
         """Expire up to ``limit`` pending holds whose hold ended by ``now``; return how many."""

@@ -216,11 +216,65 @@ def scheduling_fragment() -> dict[str, Any]:
                             "Appointment not found or not owned by the caller (patient, or doctor "
                             "of the agenda)"
                         ),
-                        "409": _problem("Appointment can no longer be cancelled"),
+                        "409": _problem(
+                            "Appointment can no longer be cancelled, or a doctor's cancellation "
+                            "needs an admin approval first: the 'detail' is "
+                            "LIMITE_CANCELACION_MEDICO (monthly quota reached) and/or "
+                            "CANCELACION_MEDICO_FUERA_DE_PLAZO (less than 24 hours of notice), "
+                            "separated by commas"
+                        ),
                         "422": _problem(
                             "Invalid body; a doctor without a valid reason (MOTIVO_CANCELACION_"
                             "REQUERIDO or MOTIVO_CANCELACION_INVALIDO)"
                         ),
+                    },
+                }
+            },
+            "/api/v1/appointments/{appointment_id}/cancellation-approval": {
+                "post": {
+                    "tags": ["Scheduling"],
+                    "operationId": "approveDoctorCancellation",
+                    "summary": "Approve one doctor cancellation beyond the quota or notice window",
+                    "description": (
+                        "Requires citas.revisar_cancelaciones (ADMINISTRADOR). "
+                        "Records one approval for the appointment with a non-blank motivo "
+                        "(up to 1500 characters). "
+                        "The doctor then cancels it with the usual cancel endpoint. The approval "
+                        "does not change the monthly quota count."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "appointment_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["motivo"],
+                                    "properties": {
+                                        "motivo": {"type": "string", "maxLength": 1500}
+                                    },
+                                    "additionalProperties": False,
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": _json_response("Approval recorded", "CancellationApproval"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks citas.revisar_cancelaciones"),
+                        "404": _problem("Appointment not found"),
+                        "409": _problem(
+                            "Appointment can no longer be cancelled, or it already has an approval"
+                        ),
+                        "422": _problem("Missing or blank motivo (MOTIVO_APROBACION_REQUERIDO)"),
                     },
                 }
             },
@@ -229,6 +283,14 @@ def scheduling_fragment() -> dict[str, Any]:
             "schemas": {
                 "BookAppointmentRequest": BookAppointmentRequest.model_json_schema(),
                 "CancelAppointmentRequest": CancelAppointmentRequest.model_json_schema(),
+                "CancellationApproval": {
+                    "type": "object",
+                    "required": ["cita_id", "aprobada"],
+                    "properties": {
+                        "cita_id": {"type": "string", "format": "uuid"},
+                        "aprobada": {"type": "boolean"},
+                    },
+                },
                 "AppointmentSummary": {
                     "type": "object",
                     "required": ["id", "estado", "inicio", "fin"],

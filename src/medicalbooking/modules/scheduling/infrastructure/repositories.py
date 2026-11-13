@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
     AppointmentSummary,
+    ApprovalStatus,
     AvailableSlot,
     CancelCommand,
     CancelOutcome,
@@ -24,7 +25,11 @@ from medicalbooking.modules.scheduling.application.ports import (
     ReserveOutcome,
     ReserveStatus,
 )
-from medicalbooking.modules.scheduling.domain.policies import ACTIVE_STATES
+from medicalbooking.modules.scheduling.domain.policies import (
+    ACTIVE_STATES,
+    doctor_cancellation_blockers,
+    month_bounds,
+)
 from medicalbooking.shared.infrastructure.outbox import append_outbox
 from medicalbooking.shared.infrastructure.sql_errors import is_unique_violation, retry_on_deadlock
 
@@ -324,6 +329,10 @@ class SqlSchedulingStore:
                 return CancelOutcome(CancelStatus.NOT_FOUND_OR_FORBIDDEN, None)
             if row.estado not in ACTIVE_STATES:
                 return CancelOutcome(CancelStatus.NOT_CANCELLABLE, None)
+            if command.as_medico:
+                blockers = _doctor_blockers(conn, command, row.id)
+                if blockers:
+                    return CancelOutcome(CancelStatus.REQUIRES_APPROVAL, None, blockers)
             updated = conn.execute(
                 text(
                     "UPDATE citas SET estado = :nuevo, cancelada_en = :ahora, "
@@ -375,6 +384,42 @@ class SqlSchedulingStore:
                 expiracion_reserva=_utc_aware(row.expiracion_reserva),
             ),
         )
+
+    def approve_doctor_cancellation(
+        self, appointment_id: str, approver_user_id: str, motivo: str, now: datetime
+    ) -> ApprovalStatus:
+        """Record one admin approval for an appointment. The unique index on the appointment is
+        the last guard against two admins approving at the same time."""
+        moment = _utc_naive(now)
+        try:
+            with self._engine.begin() as conn:
+                row = conn.execute(
+                    text("SELECT estado FROM citas WITH (UPDLOCK, ROWLOCK) WHERE id = :id"),
+                    {"id": appointment_id},
+                ).first()
+                if row is None:
+                    return ApprovalStatus.NOT_FOUND
+                if row.estado not in ACTIVE_STATES:
+                    return ApprovalStatus.NOT_CANCELLABLE
+                conn.execute(
+                    text(
+                        "INSERT INTO aprobaciones_cancelacion_medico "
+                        "(id, cita_id, aprobado_por, motivo, aprobado_en) "
+                        "VALUES (:id, :cita, :admin, :motivo, :ahora)"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "cita": appointment_id,
+                        "admin": approver_user_id,
+                        "motivo": motivo,
+                        "ahora": moment,
+                    },
+                )
+        except IntegrityError as error:
+            if not is_unique_violation(str(error.orig)):
+                raise
+            return ApprovalStatus.ALREADY_APPROVED
+        return ApprovalStatus.APPROVED
 
     def expire_overdue_holds(self, now: datetime, limit: int) -> int:
         return retry_on_deadlock(lambda: self._expire_once(now, limit))
@@ -450,6 +495,50 @@ _AGENDA_OWNER = text(
     "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
     "WHERE c.id = :cita AND m.usuario_id = :usuario"
 )
+
+
+_DOCTOR_SLOT = text(
+    "SELECT m.id AS medico_id, h.inicio_utc FROM citas c "
+    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
+    "WHERE c.id = :cita"
+)
+# Serializes doctor cancellations of one doctor, so two concurrent requests cannot both pass
+# the monthly quota.
+_LOCK_MEDICO = text("SELECT id FROM medicos WITH (UPDLOCK, ROWLOCK) WHERE id = :medico")
+_DOCTOR_CANCELS_IN_MONTH = text(
+    "SELECT COUNT(*) FROM citas c JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id "
+    "WHERE a.medico_id = :medico AND c.estado = 'CANCELADA' "
+    "AND c.motivo_cancelacion_codigo IN ('IMPREVISTO_MEDICO', 'OTRO_MEDICO') "
+    "AND c.cancelada_en >= :desde AND c.cancelada_en < :hasta"
+)
+_HAS_APPROVAL = text(
+    "SELECT 1 FROM aprobaciones_cancelacion_medico WHERE cita_id = :cita"
+)
+
+
+def _doctor_blockers(conn: Connection, command: CancelCommand, cita_id) -> tuple[str, ...]:
+    """Limits a doctor's cancellation must clear; an admin approval for the appointment clears
+    them all. Counts only earlier doctor cancellations of the same doctor in the UTC month."""
+    slot = conn.execute(_DOCTOR_SLOT, {"cita": cita_id}).one()
+    conn.execute(_LOCK_MEDICO, {"medico": slot.medico_id}).first()
+    if conn.execute(_HAS_APPROVAL, {"cita": cita_id}).first() is not None:
+        return ()
+    desde, hasta = month_bounds(command.now)
+    cancellations = conn.execute(
+        _DOCTOR_CANCELS_IN_MONTH,
+        {
+            "medico": slot.medico_id,
+            "desde": _utc_naive(desde),
+            "hasta": _utc_naive(hasta),
+        },
+    ).scalar_one()
+    return doctor_cancellation_blockers(
+        now=command.now,
+        slot_start=_utc_aware(slot.inicio_utc),
+        cancellations_this_month=cancellations,
+    )
 
 
 def _may_cancel(conn: Connection, command: CancelCommand, row) -> bool:
