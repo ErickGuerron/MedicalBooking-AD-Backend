@@ -1,5 +1,5 @@
 import importlib.util
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, UTC
 from pathlib import Path
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -10,7 +10,7 @@ _SPEC.loader.exec_module(seed)
 
 THURSDAY = date(2026, 11, 12)
 SUNDAY = date(2026, 11, 15)
-LONG_AGO = datetime(2026, 1, 1, tzinfo=timezone.utc)
+LONG_AGO = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def test_next_sunday_from_midweek_and_from_sunday():
@@ -31,6 +31,6 @@ def test_range_covers_every_day_through_sunday():
 
 
 def test_slots_that_already_started_are_skipped():
-    now = datetime(2026, 11, 12, 15, 0, tzinfo=timezone.utc)  # 10:00 branch time
+    now = datetime(2026, 11, 12, 15, 0, tzinfo=UTC)  # 10:00 branch time
     slots = seed.build_slots(THURSDAY, THURSDAY, 30, now)
     assert slots[0][0] == datetime(2026, 11, 12, 15, 30)
