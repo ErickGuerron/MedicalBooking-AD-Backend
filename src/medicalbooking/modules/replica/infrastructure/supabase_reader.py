@@ -97,14 +97,32 @@ class SupabaseReplicaReader:
 
 def _group(rows: list[tuple]) -> dict[str, dict[str, Any]]:
     orders: dict[str, dict[str, Any]] = {}
-    for (order_id, fecha, estado, _detail_id, _detail_estado,
-         result_id, analito, valor_texto, valor_numerico, unidad,
-         ref_min, ref_max, interpretacion, validado_en) in rows:
+    for (
+        order_id,
+        fecha,
+        estado,
+        _detail_id,
+        _detail_estado,
+        result_id,
+        analito,
+        valor_texto,
+        valor_numerico,
+        unidad,
+        ref_min,
+        ref_max,
+        interpretacion,
+        validado_en,
+    ) in rows:
         key = str(order_id)
         order = orders.setdefault(
             key,
-            {"id": key, "fecha_orden": fecha, "estado": estado,
-             "resultados": [], "diagnostico": None},
+            {
+                "id": key,
+                "fecha_orden": fecha,
+                "estado": estado,
+                "resultados": [],
+                "diagnostico": None,
+            },
         )
         if result_id is not None:
             order["resultados"].append(
