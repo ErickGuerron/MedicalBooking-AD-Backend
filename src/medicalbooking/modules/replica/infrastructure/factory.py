@@ -41,8 +41,10 @@ def build_fallback_read_service(settings: Settings) -> FallbackReadService:
 
     # connect=False defers the connection, including the SRV DNS lookup, to first use.
     audit_collection = MongoClient(audit_uri, connect=False)[database][AUDIT_COLLECTION]
+    reader = SupabaseReplicaReader(lambda: psycopg.connect(reader_url, connect_timeout=15))
     return FallbackReadService(
         sink=MongoAuditSink(audit_collection),
-        reader=SupabaseReplicaReader(lambda: psycopg.connect(reader_url, connect_timeout=15)),
+        reader=reader,
+        resolver=reader,
         clock=lambda: datetime.now(UTC),
     )

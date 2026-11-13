@@ -32,6 +32,8 @@ class FakeCursor:
             self._last = [(self._conn.estado,)] if self._conn.estado else []
         elif "FROM replica.usuarios_roles ur" in normalized:
             self._last = [(1,)] if self._conn.permiso else []
+        elif "replica.pacientes WHERE usuario_id = %s LIMIT 1" in normalized:
+            self._last = [(PATIENT,)] if self._conn.paciente_de_cuenta else []
         elif "FROM replica.pacientes WHERE" in normalized:
             self._last = [(1,)] if self._conn.paciente_de_cuenta else []
         elif "FROM replica.propuestas_clinicas pc" in normalized:
@@ -218,3 +220,30 @@ def test_an_order_without_a_reviewed_proposal_has_no_diagnosis():
     order = _read(FakeConnection(order_rows=[_row()], proposal_rows=[])).orders[0]
 
     assert order["diagnostico"] is None
+
+
+def test_patient_for_returns_the_patient_of_an_authorized_account():
+    connection = FakeConnection()
+
+    assert SupabaseReplicaReader(lambda: connection).patient_for(USER) == PATIENT
+
+
+def test_patient_for_denies_an_inactive_account():
+    connection = FakeConnection(estado="BLOQUEADO")
+
+    with pytest.raises(AccountNotActive):
+        SupabaseReplicaReader(lambda: connection).patient_for(USER)
+
+
+def test_patient_for_denies_an_account_without_the_permission():
+    connection = FakeConnection(permiso=False)
+
+    with pytest.raises(AccessDenied):
+        SupabaseReplicaReader(lambda: connection).patient_for(USER)
+
+
+def test_patient_for_denies_an_account_with_no_patient():
+    connection = FakeConnection(paciente_de_cuenta=False)
+
+    with pytest.raises(AccessDenied):
+        SupabaseReplicaReader(lambda: connection).patient_for(USER)

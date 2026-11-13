@@ -59,32 +59,46 @@ ORDER BY pc.orden_id, ph.tipo
 """
 
 
+_PATIENT_OF_USER = "SELECT id FROM replica.pacientes WHERE usuario_id = %s LIMIT 1"
+
+
+def _authorize(cursor: Any, usuario_id: UUID) -> None:
+    """The rule shared by both reads: an active account holding the own-results permission."""
+    cursor.execute("SELECT set_config('app.usuario_id', %s, true)", (str(usuario_id),))
+    cursor.execute(_ACCOUNT_STATE, (str(usuario_id),))
+    account = cursor.fetchone()
+    if account is None or account[0] != "ACTIVO":
+        raise AccountNotActive("account not active in the replica")
+    cursor.execute(_HAS_OWN_RESULTS_PERMISSION, (str(usuario_id), OWN_RESULTS_PERMISSION))
+    if cursor.fetchone() is None:
+        raise AccessDenied("own-results permission missing")
+
+
 class SupabaseReplicaReader:
     def __init__(self, connect: Callable[[], Any]) -> None:
         self._connect = connect
+
+    def patient_for(self, usuario_id: UUID) -> UUID:
+        """The patient of an authorized account. Raises before any patient data is read."""
+        connection = self._connect()
+        with connection.transaction():
+            with connection.cursor() as cursor:
+                _authorize(cursor, usuario_id)
+                cursor.execute(_PATIENT_OF_USER, (str(usuario_id),))
+                row = cursor.fetchone()
+        if row is None:
+            raise AccessDenied("no patient belongs to the account")
+        return UUID(str(row[0]))
 
     def results_of(self, patient_id: UUID, usuario_id: UUID) -> PatientResults:
         connection = self._connect()
         with connection.transaction():
             with connection.cursor() as cursor:
                 cursor.execute("SELECT set_config('app.paciente_id', %s, true)", (str(patient_id),))
-                cursor.execute("SELECT set_config('app.usuario_id', %s, true)", (str(usuario_id),))
-
-                cursor.execute(_ACCOUNT_STATE, (str(usuario_id),))
-                account = cursor.fetchone()
-                if account is None or account[0] != "ACTIVO":
-                    raise AccountNotActive("account not active in the replica")
-
-                cursor.execute(
-                    _HAS_OWN_RESULTS_PERMISSION, (str(usuario_id), OWN_RESULTS_PERMISSION)
-                )
-                if cursor.fetchone() is None:
-                    raise AccessDenied("own-results permission missing")
-
+                _authorize(cursor, usuario_id)
                 cursor.execute(_PATIENT_OF_ACCOUNT, (str(patient_id), str(usuario_id)))
                 if cursor.fetchone() is None:
                     raise AccessDenied("patient does not belong to the account")
-
                 cursor.execute(_ORDERS_WITH_RESULTS, (str(patient_id),))
                 rows = cursor.fetchall()
                 cursor.execute(_REVIEWED_PROPOSALS, (str(patient_id),))
@@ -93,7 +107,6 @@ class SupabaseReplicaReader:
             patient_id=patient_id,
             orders=_attach_diagnosis(_group(rows), proposal_rows),
         )
-
 
 def _group(rows: list[tuple]) -> dict[str, dict[str, Any]]:
     orders: dict[str, dict[str, Any]] = {}
