@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     supabase_database_url: SecretStr | None = None
     # Read-only role of the Supabase replica, used by the fallback reads during an outage.
     supabase_reader_database_url: SecretStr | None = None
+    # Writer role of the Supabase replica, used only by the consumer and the catalog sync.
+    supabase_writer_database_url: SecretStr | None = None
     # Insert-only audit role on MongoDB Atlas (replica_auditor) and the database name.
     mongodb_auditor_uri: SecretStr | None = None
     mongodb_database: str | None = None
