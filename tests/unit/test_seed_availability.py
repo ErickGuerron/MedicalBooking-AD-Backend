@@ -1,5 +1,5 @@
 import importlib.util
-from datetime import date, datetime, timezone, UTC
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 _SPEC = importlib.util.spec_from_file_location(
