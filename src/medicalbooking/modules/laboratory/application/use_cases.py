@@ -134,7 +134,8 @@ class LabService:
         """Orders the actor may read: own orders as a patient, orders placed as a doctor.
 
         The same permissions as the single-order read apply, and each side needs its profile.
-        Anyone else, including a doctor without a doctor profile, gets 403.
+        A caller with the doctor permission but no doctor profile gets 403 with the doctor-profile
+        message; anyone else without a readable side gets the uniform 403.
         """
         paciente_id = (
             self._store.resolve_patient_id(actor.user_id)
@@ -147,6 +148,8 @@ class LabService:
             else None
         )
         if paciente_id is None and medico_id is None:
+            if PERM_RESULT_READ_CONTEXT in actor.permissions:
+                raise Forbidden(_NO_DOCTOR_PROFILE)
             raise Forbidden(_FORBIDDEN)
         return self._store.list_orders(
             paciente_id=paciente_id,

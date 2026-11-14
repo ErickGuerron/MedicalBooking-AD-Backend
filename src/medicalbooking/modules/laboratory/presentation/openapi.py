@@ -56,7 +56,9 @@ def laboratory_fragment() -> dict[str, Any]:
                     "summary": "List orders the caller may read (own patient or ordering doctor)",
                     "description": (
                         "Newest first, then id. Rows carry no result values. A patient sees "
-                        "own orders; a doctor sees orders placed by them; others get 403."
+                        "own orders; a doctor sees orders placed by them; others get 403. A caller "
+                        "with the doctor permission but no doctor profile gets 403 with the "
+                        "doctor-profile message."
                     ),
                     "security": _BEARER,
                     "parameters": [
@@ -95,7 +97,10 @@ def laboratory_fragment() -> dict[str, Any]:
                     "responses": {
                         "200": _json("Orders", "LabOrderSummaryList"),
                         "401": _problem("Missing, malformed or inactive credentials"),
-                        "403": _problem("Caller has no order read access"),
+                        "403": _problem(
+                            "Caller has no order read access, or has the doctor permission but no "
+                            "doctor profile ('A doctor profile is required for this action')"
+                        ),
                         "422": _problem("Invalid estado, limit or offset"),
                     },
                 },

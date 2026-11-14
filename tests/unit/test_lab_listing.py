@@ -221,6 +221,22 @@ def test_doctor_permission_without_doctor_profile_is_forbidden(world) -> None:
         _service(world).list_orders(nobody, estado=None, limit=50, offset=0)
 
 
+def test_doctor_permission_without_doctor_profile_gets_the_distinct_message(world) -> None:
+    nobody = _actor(MEDICO)
+
+    with pytest.raises(Forbidden) as error:
+        _service(world).list_orders(nobody, estado=None, limit=50, offset=0)
+
+    assert error.value.detail == "A doctor profile is required for this action"
+
+
+def test_actor_without_any_order_permission_keeps_the_uniform_message(world) -> None:
+    with pytest.raises(Forbidden) as error:
+        _service(world).list_orders(world.lab, estado=None, limit=50, offset=0)
+
+    assert error.value.detail == "Access to this resource is not allowed"
+
+
 def test_patient_permission_without_patient_profile_is_forbidden(world) -> None:
     nobody = _actor(PACIENTE)
 
