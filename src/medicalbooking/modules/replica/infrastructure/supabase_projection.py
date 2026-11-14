@@ -282,6 +282,43 @@ class _Transaction:
             ),
         )
 
+    def upsert_tratamiento(self, tratamiento: dict[str, Any], version: int) -> None:
+        """A newer version replaces the row; an older or equal one leaves it unchanged."""
+        self._cur.execute(
+            "INSERT INTO replica.tratamientos (id, cita_id, paciente_id, medico_id, descripcion, "
+            "estado, fecha_inicio, fecha_fin, version) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET descripcion = excluded.descripcion, "
+            "estado = excluded.estado, fecha_fin = excluded.fecha_fin, "
+            "version = excluded.version "
+            "WHERE replica.tratamientos.version < excluded.version",
+            (
+                tratamiento["id"],
+                tratamiento["cita_id"],
+                tratamiento["paciente_id"],
+                tratamiento["medico_id"],
+                tratamiento["descripcion"],
+                tratamiento["estado"],
+                tratamiento["fecha_inicio"],
+                tratamiento.get("fecha_fin"),
+                version,
+            ),
+        )
+
+    def upsert_seguimiento(self, seguimiento: dict[str, Any]) -> None:
+        """A follow-up is written once: notes are append-only, so a replay changes nothing."""
+        self._cur.execute(
+            "INSERT INTO replica.tratamientos_seguimientos (id, tratamiento_id, secuencia, nota, "
+            "creado_en) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+            (
+                seguimiento["id"],
+                seguimiento["tratamiento_id"],
+                seguimiento["secuencia"],
+                seguimiento["nota"],
+                seguimiento["creado_en"],
+            ),
+        )
+
 
 class SupabaseProjectionSink:
     def __init__(self, connect: Callable[[], Any]) -> None:
