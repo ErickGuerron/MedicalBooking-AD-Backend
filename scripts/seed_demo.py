@@ -85,6 +85,18 @@ class Slot:
     start: datetime  # naive UTC
 
 
+def database_name(url: str) -> str:
+    """Target database name, from the URL path or from the Database= keyword of odbc_connect."""
+    parsed = make_url(url)
+    if parsed.database:
+        return parsed.database
+    odbc = parsed.query.get("odbc_connect", "")
+    for part in odbc.split(";"):
+        key, _, value = part.partition("=")
+        if key.strip().lower() == "database":
+            return value.strip()
+    return ""
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Seed a demonstration database.")
     parser.add_argument("--confirm", required=True, help="exact database name to seed")
@@ -105,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     if os.environ.get("APP_ENV", "").lower() == "production" and not args.allow_production:
         print("APP_ENV=production: pass --allow-production to seed demo accounts.", file=sys.stderr)
         return 2
-    database = make_url(url).database or ""
+    database = database_name(url)
     if database != args.confirm:
         print("The database name must equal --confirm.", file=sys.stderr)
         return 2
