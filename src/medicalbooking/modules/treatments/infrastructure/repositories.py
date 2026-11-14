@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
 from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
@@ -22,6 +22,12 @@ from medicalbooking.modules.treatments.application.ports import (
     NewTreatment,
     Treatment,
     TreatmentUpdate,
+)
+from medicalbooking.modules.treatments.infrastructure.outbox_events import (
+    EVENT_TREATMENT_CREATED,
+    EVENT_TREATMENT_UPDATED,
+    emit_followup_event,
+    emit_treatment_event,
 )
 
 # Treatment joined to its appointment, the patient and the doctor who owns the appointment.
@@ -119,8 +125,9 @@ class SqlTreatmentStore:
                     "ahora": now,
                 },
             )
-        treatment = self.get_treatment(command.treatment_id)
-        assert treatment is not None
+            treatment = _read_treatment(conn, command.treatment_id)
+            assert treatment is not None
+            emit_treatment_event(conn, EVENT_TREATMENT_CREATED, treatment, now)
         return treatment
 
     def get_treatment(self, treatment_id: str) -> Treatment | None:
@@ -128,8 +135,7 @@ class SqlTreatmentStore:
         if guid is None:
             return None
         with self._engine.connect() as conn:
-            row = conn.execute(text(_TREATMENT_SELECT + "WHERE t.id = :t"), {"t": guid}).first()
-        return None if row is None else _treatment(row)
+            return _read_treatment(conn, guid)
 
     def list_treatments(self, cita_id: str) -> list[Treatment]:
         guid = _as_guid(cita_id)
@@ -165,13 +171,27 @@ class SqlTreatmentStore:
             )
             if result.rowcount == 0:
                 return None
-        return self.get_treatment(command.treatment_id)
+            treatment = _read_treatment(conn, command.treatment_id)
+            assert treatment is not None
+            emit_treatment_event(conn, EVENT_TREATMENT_UPDATED, treatment, now)
+        return treatment
 
     # ---------- follow-ups ----------
 
     def append_followup(self, command: NewFollowUp) -> FollowUp:
         registered = _utc_aware(command.registrado_en)
+        followup = FollowUp(
+            id=command.followup_id,
+            tratamiento_id=command.tratamiento_id,
+            nota=command.nota,
+            registrado_en=registered,
+        )
         with self._engine.begin() as conn:
+            # Lock the treatment row so two concurrent notes take distinct outbox versions.
+            conn.execute(
+                text("SELECT id FROM tratamientos WITH (UPDLOCK, ROWLOCK) WHERE id = :t"),
+                {"t": command.tratamiento_id},
+            )
             conn.execute(
                 text(
                     "INSERT INTO tratamientos_seguimientos (id, tratamiento_id, nota, "
@@ -186,12 +206,12 @@ class SqlTreatmentStore:
                     "ahora": _utc_naive(registered),
                 },
             )
-        return FollowUp(
-            id=command.followup_id,
-            tratamiento_id=command.tratamiento_id,
-            nota=command.nota,
-            registrado_en=registered,
-        )
+            secuencia = conn.execute(
+                text("SELECT secuencia FROM tratamientos_seguimientos WHERE id = :id"),
+                {"id": command.followup_id},
+            ).scalar_one()
+            emit_followup_event(conn, followup, int(secuencia), _utc_naive(registered))
+        return followup
 
     def list_followups(self, tratamiento_id: str) -> list[FollowUp]:
         guid = _as_guid(tratamiento_id)
@@ -214,6 +234,12 @@ class SqlTreatmentStore:
             )
             for row in rows
         ]
+
+
+def _read_treatment(conn: Connection, treatment_id: str) -> Treatment | None:
+    """The treatment as the replica needs it, read on the caller's transaction."""
+    row = conn.execute(text(_TREATMENT_SELECT + "WHERE t.id = :t"), {"t": treatment_id}).first()
+    return None if row is None else _treatment(row)
 
 
 def _treatment(row) -> Treatment:

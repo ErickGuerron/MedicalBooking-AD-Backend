@@ -6,6 +6,7 @@ The append-only trigger is asserted through SQL, not through the API.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Iterator
 
@@ -334,6 +335,61 @@ def test_requests_without_a_bearer_token_are_rejected_with_401(app, engine) -> N
         _count(engine, "SELECT COUNT(*) FROM tratamientos WHERE cita_id = :c", c=cita)
         == tratamientos_before
     )
+
+
+# ---------- replication events (treatments S11) ----------
+
+
+def _outbox(engine: Engine, tratamiento: str) -> list[tuple[str, dict]]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT tipo_evento, payload FROM eventos_outbox "
+                "WHERE agregado_tipo = 'tratamiento' AND agregado_id = :a "
+                "ORDER BY version_agregado"
+            ),
+            {"a": tratamiento},
+        ).all()
+    return [(row.tipo_evento, json.loads(row.payload)) for row in rows]
+
+
+def test_each_write_appends_its_replication_event_in_order_with_the_full_text(app, engine) -> None:
+    _, doctor, cita = _cita(app, engine)
+    client = app.test_client()
+    headers = _token(app, doctor)
+    treatment = _create(client, headers, cita).get_json()["id"]
+    nota = "Control inicial: mejoria del dolor, continuar ejercicios (sintetico)."
+    descripcion = "Control a las dos semanas, ajustar carga de ejercicio (sintetico)."
+
+    _note(client, headers, treatment, nota)
+    client.patch(
+        f"/api/v1/tratamientos/{treatment}", json={"descripcion": descripcion}, headers=headers
+    )
+    events = _outbox(engine, treatment)
+
+    assert [name for name, _ in events] == [
+        "tratamiento.creado",
+        "seguimiento.registrado",
+        "tratamiento.actualizado",
+    ]
+    assert events[0][1]["tratamiento"]["id"] == treatment
+    assert events[1][1]["seguimiento"]["nota"] == nota
+    assert events[2][1]["tratamiento"]["descripcion"] == descripcion
+
+
+def test_rejected_patch_appends_no_replication_event(app, engine) -> None:
+    _, doctor, cita = _cita(app, engine)
+    client = app.test_client()
+    headers = _token(app, doctor)
+    treatment = _create(client, headers, cita).get_json()["id"]
+    events_before = len(_outbox(engine, treatment))
+
+    rejected = client.patch(
+        f"/api/v1/tratamientos/{treatment}", json={"estado": "FINALIZADO"}, headers=headers
+    )
+
+    assert rejected.status_code == 422
+    assert len(_outbox(engine, treatment)) == events_before
 
 
 # Goal 7 (migration 0029 downgrade) is not covered here: the repo has no integration downgrade
