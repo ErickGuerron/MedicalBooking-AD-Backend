@@ -105,7 +105,8 @@ def laboratory_fragment() -> dict[str, Any]:
                     "summary": "Create a laboratory order for a patient",
                     "description": (
                         "Requires ordenes.crear and a doctor profile. The patient must have a "
-                        "cita or a lab order with the caller. Starts SOLICITADA."
+                        "cita or a lab order with the caller. Starts SOLICITADA. A patient the "
+                        "caller does not treat (or an unknown id) gets the same generic 403."
                     ),
                     "security": _BEARER,
                     "requestBody": _body("CreateOrderRequest"),
@@ -113,7 +114,12 @@ def laboratory_fragment() -> dict[str, Any]:
                         "201": _json("Order created", "LabOrder"),
                         "401": _problem("Missing, malformed or inactive credentials"),
                         "403": _problem(
-                            "Caller is not an ordering doctor or the patient is not theirs"
+                            "Forbidden. Three messages in the detail: "
+                            "'Access to this resource is not allowed' (no ordenes.crear, or the "
+                            "patient is unknown or not treated by the caller); "
+                            "'A doctor profile is required for this action' (ordenes.crear but "
+                            "no medicos profile); 'The patient account is not active' (a patient "
+                            "the caller treats whose account is not ACTIVO)"
                         ),
                         "422": _problem("Invalid body or unknown test type"),
                     },
@@ -262,7 +268,12 @@ def laboratory_fragment() -> dict[str, Any]:
                     "responses": {
                         "200": _json("Patient page", "PatientList"),
                         "401": _problem("Missing, malformed or inactive credentials"),
-                        "403": _problem("Caller lacks ordenes.crear"),
+                        "403": _problem(
+                            "Forbidden. Two messages in the detail: "
+                            "'Access to this resource is not allowed' (caller lacks "
+                            "ordenes.crear); 'A doctor profile is required for this action' "
+                            "(ordenes.crear but no medicos profile)"
+                        ),
                         "422": _problem("limit outside 1 to 100, or an invalid offset"),
                     },
                 }

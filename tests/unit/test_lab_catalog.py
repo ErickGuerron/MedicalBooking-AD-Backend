@@ -182,6 +182,24 @@ def test_patient_list_answers_403_over_http_for_a_patient(world) -> None:
     assert response.status_code == 403
 
 
+def test_rule_c_patient_directory_without_doctor_profile_says_so_over_http(world) -> None:
+    world.store.medico_profile_id = None
+    world.doctor = _actor(MEDICO)  # has the permission, no medicos row
+
+    response = world.client().get(PATIENTS_URL, headers=_bearer("tok-doctor"))
+
+    assert response.status_code == 403
+    assert response.get_json()["detail"] == "A doctor profile is required for this action"
+    assert world.store.patient_calls == []
+
+
+def test_rule_d_patient_directory_without_permission_keeps_the_uniform_message(world) -> None:
+    response = world.client().get(PATIENTS_URL, headers=_bearer("tok-lab"))
+
+    assert response.status_code == 403
+    assert response.get_json()["detail"] == "Access to this resource is not allowed"
+
+
 def test_patient_list_is_allowed_for_a_doctor(world) -> None:
     world.store.patients = [_patient()]
 

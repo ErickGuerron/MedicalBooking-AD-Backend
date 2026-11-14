@@ -80,6 +80,9 @@ class FakeStore:
     def patient_is_related(self, medico_id, paciente_id):
         return (medico_id, paciente_id) in self.related
 
+    def patient_account_is_active(self, paciente_id):
+        return True
+
     def active_test_ids(self, ids):
         return set(ids)
 

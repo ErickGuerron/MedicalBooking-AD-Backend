@@ -53,6 +53,11 @@ from medicalbooking.shared.domain.errors import (
 )
 
 _FORBIDDEN = "Access to this resource is not allowed"
+# Distinct only where the caller already knows the patient or holds the permission: a
+# related patient with an inactive account, and an actor with the permission but no doctor
+# profile. Unrelated or unknown patients keep _FORBIDDEN so patient ids do not leak.
+_INACTIVE_PATIENT = "The patient account is not active"
+_NO_DOCTOR_PROFILE = "A doctor profile is required for this action"
 
 
 class DocumentIntegrityError(AppError):
@@ -88,13 +93,16 @@ class LabService:
         _require(actor, PERM_ORDER_CREATE)
         medico_id = self._store.resolve_medico_id(actor.user_id)
         if medico_id is None:
-            raise Forbidden(_FORBIDDEN)
+            raise Forbidden(_NO_DOCTOR_PROFILE)
         validate_priority(prioridad)
         validate_observations(observaciones)
         test_ids = validate_test_ids(list(tipo_prueba_ids))
         if not self._store.patient_is_related(medico_id, str(paciente_id)):
             # Unknown and unrelated patients get the same answer, so patient ids do not leak.
             raise Forbidden(_FORBIDDEN)
+        if not self._store.patient_account_is_active(str(paciente_id)):
+            # The doctor already treats this patient, so the account status is not a leak.
+            raise Forbidden(_INACTIVE_PATIENT)
         if set(test_ids) - self._store.active_test_ids(test_ids):
             raise ValidationFailed("Unknown or inactive test type")
 
@@ -159,13 +167,13 @@ class LabService:
     ) -> list[PatientSummary]:
         """Patients the calling doctor treats, for the order form; audited without values.
 
-        The relation and the ACTIVO filter are applied by the store. A caller without a doctor
-        profile has no patients to treat, so it gets the uniform 403.
+        The relation and the ACTIVO filter are applied by the store. A caller with the permission
+        but without a doctor profile has no patients to treat, so it gets a 403 that says so.
         """
         _require(actor, PERM_ORDER_CREATE)
         medico_id = self._store.resolve_medico_id(actor.user_id)
         if medico_id is None:
-            raise Forbidden(_FORBIDDEN)
+            raise Forbidden(_NO_DOCTOR_PROFILE)
         rows = self._store.list_patients(medico_id=medico_id, limit=limit, offset=offset)
         self._audit(actor, None, "paciente", None, "listar")
         return rows

@@ -363,6 +363,49 @@ def test_order_for_a_patient_with_only_an_order_history_still_answers_201(app, e
     assert response.status_code == 201, response.get_json()
 
 
+def test_order_for_a_related_patient_with_an_inactive_account_gets_its_own_403(app, engine) -> None:
+    doctor = _doctor(engine)
+    patient = _user(engine, "PACIENTE")
+    _relate(app, engine, patient, doctor)
+    profile = _patient_id(engine, patient)
+    _set_account_status(engine, patient, "INACTIVO")
+    before = _orders_of(engine, profile)
+
+    response = _post_order(app, _token(app, doctor), profile, _test_type(engine))
+
+    assert response.status_code == 403
+    assert response.get_json()["detail"] == "The patient account is not active"
+    assert _orders_of(engine, profile) == before
+
+
+def test_doctor_permission_without_a_doctor_profile_gets_the_profile_message(app, engine) -> None:
+    # A MEDICO user with no medicos row: it holds ordenes.crear but has no profile to act with.
+    headers = _token(app, _user(engine, "MEDICO"))
+    profile = _patient_id(engine, _user(engine, "PACIENTE"))
+
+    listing = app.test_client().get(PATIENTS_URL, headers=headers)
+    ordering = _post_order(app, headers, profile, _test_type(engine))
+
+    assert listing.status_code == 403
+    assert listing.get_json()["detail"] == "A doctor profile is required for this action"
+    assert ordering.status_code == 403
+    assert ordering.get_json()["detail"] == "A doctor profile is required for this action"
+    assert _orders_of(engine, profile) == 0
+
+
+def test_actor_without_the_permission_keeps_the_uniform_message(app, engine) -> None:
+    headers = _token(app, _user(engine, "LABORATORISTA"))
+    profile = _patient_id(engine, _user(engine, "PACIENTE"))
+
+    listing = app.test_client().get(PATIENTS_URL, headers=headers)
+    ordering = _post_order(app, headers, profile, _test_type(engine))
+
+    assert listing.status_code == 403
+    assert listing.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert ordering.status_code == 403
+    assert ordering.get_json()["detail"] == UNIFORM_FORBIDDEN
+
+
 def test_order_creation_without_a_token_is_401(app, engine) -> None:
     response = app.test_client().post(
         ORDERS_URL,

@@ -159,6 +159,20 @@ class SqlLabStore:
             found = conn.execute(text(query), {"paciente": paciente, "medico": medico}).first()
         return found is not None
 
+    def patient_account_is_active(self, paciente_id: str) -> bool:
+        guid = _as_guid(paciente_id)
+        if guid is None:
+            return False
+        with self._engine.connect() as conn:
+            estado = conn.execute(
+                text(
+                    "SELECT u.estado FROM pacientes p "
+                    "JOIN usuarios u ON u.id = p.usuario_id WHERE p.id = :paciente"
+                ),
+                {"paciente": guid},
+            ).scalar()
+        return estado == "ACTIVO"
+
     def active_test_ids(self, ids: list[str]) -> set[str]:
         guids = [g for g in (_as_guid(i) for i in ids) if g is not None]
         if not guids:
