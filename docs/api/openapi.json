@@ -79,7 +79,7 @@
             "type": "string"
           },
           "motivo": {
-            "maxLength": 500,
+            "maxLength": 1500,
             "type": [
               "string",
               "null"
@@ -148,6 +148,56 @@
         ],
         "type": "object"
       },
+      "AttentionSchedule": {
+        "properties": {
+          "dias": {
+            "items": {
+              "properties": {
+                "desde": {
+                  "pattern": "^[0-2][0-9]:[0-5][0-9]$",
+                  "type": "string"
+                },
+                "dia_semana": {
+                  "maximum": 7,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "hasta": {
+                  "pattern": "^[0-2][0-9]:[0-5][0-9]$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "dia_semana",
+                "desde",
+                "hasta"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "vigente_desde": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "vigente_hasta": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "vigente_desde",
+          "vigente_hasta",
+          "dias"
+        ],
+        "type": "object"
+      },
       "AvailabilityResponse": {
         "properties": {
           "items": {
@@ -175,6 +225,23 @@
           "inicio_utc": {
             "format": "date-time",
             "type": "string"
+          },
+          "medico": {
+            "description": "Public name of the clinician (additive, optional)",
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "nombre": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "nombre"
+            ],
+            "type": "object"
           },
           "medico_id": {
             "format": "uuid",
@@ -223,6 +290,89 @@
         "title": "BookAppointmentRequest",
         "type": "object"
       },
+      "CancelAppointmentRequest": {
+        "additionalProperties": false,
+        "description": "Optional body. The reason is required for a doctor and ignored for a patient; its\nvalues are checked by the use case, so a patient's body is only checked for shape.",
+        "properties": {
+          "motivo_codigo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Motivo Codigo"
+          },
+          "motivo_texto": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Motivo Texto"
+          }
+        },
+        "title": "CancelAppointmentRequest",
+        "type": "object"
+      },
+      "CancellationApproval": {
+        "properties": {
+          "aprobada": {
+            "type": "boolean"
+          },
+          "cita_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cita_id",
+          "aprobada"
+        ],
+        "type": "object"
+      },
+      "CatalogService": {
+        "properties": {
+          "duracion_min": {
+            "type": "integer"
+          },
+          "especialidad_id": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "moneda": {
+            "type": "string"
+          },
+          "nombre": {
+            "type": "string"
+          },
+          "precio_base": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "nombre",
+          "duracion_min",
+          "precio_base",
+          "moneda",
+          "especialidad_id"
+        ],
+        "type": "object"
+      },
       "CreateOrderRequest": {
         "additionalProperties": false,
         "properties": {
@@ -268,6 +418,93 @@
         "title": "CreateOrderRequest",
         "type": "object"
       },
+      "CreateServiceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "duracion_min": {
+            "exclusiveMinimum": 0,
+            "maximum": 1440,
+            "title": "Duracion Min",
+            "type": "integer"
+          },
+          "especialidad_id": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Especialidad Id"
+          },
+          "moneda": {
+            "default": "USD",
+            "pattern": "^[A-Z]{3}$",
+            "title": "Moneda",
+            "type": "string"
+          },
+          "nombre": {
+            "maxLength": 150,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Nombre",
+            "type": "string"
+          },
+          "precio_base": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Precio Base"
+          }
+        },
+        "required": [
+          "nombre",
+          "duracion_min",
+          "precio_base"
+        ],
+        "title": "CreateServiceRequest",
+        "type": "object"
+      },
+      "CreateSpecialtyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "descripcion": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Descripcion"
+          },
+          "nombre": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Nombre",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nombre"
+        ],
+        "title": "CreateSpecialtyRequest",
+        "type": "object"
+      },
       "CreateUserRequest": {
         "additionalProperties": false,
         "properties": {
@@ -295,6 +532,19 @@
             "title": "Password",
             "type": "string"
           },
+          "registro_profesional": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Registro Profesional"
+          },
           "roles": {
             "items": {
               "type": "string"
@@ -313,6 +563,70 @@
           "roles"
         ],
         "title": "CreateUserRequest",
+        "type": "object"
+      },
+      "Doctor": {
+        "properties": {
+          "duracion_cita_min": {
+            "type": "integer"
+          },
+          "especialidades": {
+            "items": {
+              "$ref": "#/components/schemas/SpecialtyRef"
+            },
+            "type": "array"
+          },
+          "horario_atencion": {
+            "$ref": "#/components/schemas/AttentionSchedule"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "nombre": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "nombre",
+          "especialidades",
+          "duracion_cita_min",
+          "horario_atencion"
+        ],
+        "type": "object"
+      },
+      "DoctorList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Doctor"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "DoctorSpecialties": {
+        "properties": {
+          "especialidades": {
+            "items": {
+              "$ref": "#/components/schemas/SpecialtyRef"
+            },
+            "type": "array"
+          },
+          "medico_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "medico_id",
+          "especialidades"
+        ],
         "type": "object"
       },
       "EmailVerified": {
@@ -1465,6 +1779,62 @@
         "title": "RuleRequest",
         "type": "object"
       },
+      "ServiceList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogService"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "SetDoctorSpecialtiesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "especialidad_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 50,
+            "title": "Especialidad Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "especialidad_ids"
+        ],
+        "title": "SetDoctorSpecialtiesRequest",
+        "type": "object"
+      },
+      "SetServiceSpecialtyRequest": {
+        "additionalProperties": false,
+        "description": "``especialidad_id`` is required; null clears the link.",
+        "properties": {
+          "especialidad_id": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Especialidad Id"
+          }
+        },
+        "required": [
+          "especialidad_id"
+        ],
+        "title": "SetServiceSpecialtyRequest",
+        "type": "object"
+      },
       "ShadowEdit": {
         "properties": {
           "accion": {
@@ -1522,6 +1892,57 @@
         ],
         "type": "object"
       },
+      "Specialty": {
+        "properties": {
+          "descripcion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer"
+          },
+          "nombre": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "nombre",
+          "descripcion"
+        ],
+        "type": "object"
+      },
+      "SpecialtyList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Specialty"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "SpecialtyRef": {
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "nombre": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "nombre"
+        ],
+        "type": "object"
+      },
       "StateResponse": {
         "properties": {
           "estado": {
@@ -1532,6 +1953,54 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "UpdateSpecialtyRequest": {
+        "additionalProperties": false,
+        "description": "Only the fields present are changed. ``activo`` false hides the specialty from listings.",
+        "properties": {
+          "activo": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Activo"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Descripcion"
+          },
+          "nombre": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Nombre"
+          }
+        },
+        "title": "UpdateSpecialtyRequest",
         "type": "object"
       },
       "UserCreated": {
@@ -1819,6 +2288,7 @@
     },
     "/api/v1/appointments/{appointment_id}/cancel": {
       "post": {
+        "description": "A patient cancels an own appointment; a body is optional and its reason fields are ignored. A doctor cancels an appointment of an own agenda and must send motivo_codigo (IMPREVISTO_MEDICO or OTRO_MEDICO) and motivo_texto (1 to 1500 characters). A paid appointment's refund is requested for the patient after the cancellation.",
         "operationId": "cancelAppointment",
         "parameters": [
           {
@@ -1831,6 +2301,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelAppointmentRequest"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "content": {
@@ -1860,7 +2340,7 @@
                 }
               }
             },
-            "description": "Appointment not found or not owned by the caller"
+            "description": "Appointment not found or not owned by the caller (patient, or doctor of the agenda)"
           },
           "409": {
             "content": {
@@ -1870,7 +2350,17 @@
                 }
               }
             },
-            "description": "Appointment can no longer be cancelled"
+            "description": "Appointment can no longer be cancelled, or a doctor's cancellation needs an admin approval first: the 'detail' is LIMITE_CANCELACION_MEDICO (monthly quota reached) and/or CANCELACION_MEDICO_FUERA_DE_PLAZO (less than 24 hours of notice), separated by commas"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body; a doctor without a valid reason (MOTIVO_CANCELACION_REQUERIDO or MOTIVO_CANCELACION_INVALIDO)"
           }
         },
         "security": [
@@ -1879,6 +2369,114 @@
           }
         ],
         "summary": "Cancel an own appointment and release its slot",
+        "tags": [
+          "Scheduling"
+        ]
+      }
+    },
+    "/api/v1/appointments/{appointment_id}/cancellation-approval": {
+      "post": {
+        "description": "Requires citas.revisar_cancelaciones (ADMINISTRADOR). Records one approval for the appointment with a non-blank motivo (up to 1500 characters). The doctor then cancels it with the usual cancel endpoint. The approval does not change the monthly quota count.",
+        "operationId": "approveDoctorCancellation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "appointment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "motivo": {
+                    "maxLength": 1500,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "motivo"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancellationApproval"
+                }
+              }
+            },
+            "description": "Approval recorded"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks citas.revisar_cancelaciones"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Appointment not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Appointment can no longer be cancelled, or it already has an approval"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or blank motivo (MOTIVO_APROBACION_REQUERIDO)"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Approve one doctor cancellation beyond the quota or notice window",
         "tags": [
           "Scheduling"
         ]
@@ -2055,6 +2653,16 @@
               "format": "uuid",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional: only slots of clinicians with this specialty",
+            "in": "query",
+            "name": "especialidad_id",
+            "required": false,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -2205,6 +2813,154 @@
         "summary": "Record the single medical decision on a proposal",
         "tags": [
           "Clinical proposals"
+        ]
+      }
+    },
+    "/api/v1/doctors": {
+      "get": {
+        "description": "Any signed-in user. Public data only: no professional registry and no e-mail. 'horario_atencion' is derived from existing data: 'vigente_desde' and 'vigente_hasta' are the earliest start and latest end of the doctor's active agendas (hasta is null when any agenda is open-ended); 'dias' lists, per ISO weekday (1 = Monday), the earliest start and latest end, in the local time of the site, of the doctor's slots in the next 31 days (not blocked). Gaps inside a day are not shown. A doctor without an active agenda has null dates and no days.",
+        "operationId": "listDoctors",
+        "parameters": [
+          {
+            "description": "Only doctors with this (active) specialty",
+            "in": "query",
+            "name": "especialidad_id",
+            "required": false,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoctorList"
+                }
+              }
+            },
+            "description": "Active doctors"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid especialidad_id"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List the active doctors, optionally by specialty",
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/doctors/{medico_id}/specialties": {
+      "put": {
+        "description": "Requires catalogo.administrar. The list replaces the current set; an empty list removes all of them. Every id must be an active specialty.",
+        "operationId": "setDoctorSpecialties",
+        "parameters": [
+          {
+            "description": "Doctor id",
+            "in": "path",
+            "name": "medico_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDoctorSpecialtiesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoctorSpecialties"
+                }
+              }
+            },
+            "description": "Specialties now assigned"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks catalogo.administrar"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Doctor not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body, or an unknown or inactive specialty"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Replace the specialties of a doctor",
+        "tags": [
+          "Catalog"
         ]
       }
     },
@@ -4946,6 +5702,564 @@
         "summary": "Receive a signed Stripe event",
         "tags": [
           "Payments"
+        ]
+      }
+    },
+    "/api/v1/payments/{pago_id}/refunds": {
+      "post": {
+        "description": "Refunds the whole payment when the patient cancelled the appointment before it started and no consultation was attended. One active refund per payment, at most two requests in 30 days, and only reason codes from the closed catalog. The amount is never taken from the client. The refund is PROCESADO only when the refund.updated webhook confirms it. A payment without a Stripe payment intent is refused. A provider error marks the refund FALLIDO and is not retried automatically.",
+        "operationId": "requestRefund",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pago_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "8 to 100 characters. The same key with the same invoice returns the same checkout; the same key with another invoice answers 409.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 8,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "motivo_codigo": {
+                    "enum": [
+                      "CANCELACION_PACIENTE",
+                      "CANCELACION_MEDICO",
+                      "ERROR_DE_COBRO"
+                    ],
+                    "type": "string"
+                  },
+                  "motivo_texto": {
+                    "maxLength": 500,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "motivo_codigo"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Replay of the same key: the stored refund"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "estado": {
+                      "enum": [
+                        "PENDIENTE",
+                        "FALLIDO"
+                      ],
+                      "type": "string"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "monto": {
+                      "type": "string"
+                    },
+                    "motivo_codigo": {
+                      "type": "string"
+                    },
+                    "pago_id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "solicitado_en": {
+                      "format": "date-time",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Refund requested"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not the owner, or the payment does not exist"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Refused by a rule: PAGO_NO_CONFIRMADO, CITA_NO_CANCELADA, CONSULTA_ATENDIDA, CANCELACION_TARDIA, REEMBOLSO_EXISTENTE, FUERA_DE_VENTANA, DEMASIADAS_SOLICITUDES, MOTIVO_INVALIDO or SIN_PAYMENT_INTENT (the code is the problem detail)"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing Idempotency-Key header or invalid body"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Payment provider error; the refund is marked FALLIDO"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Request a refund of a cancelled, paid appointment (owner only)",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/api/v1/services": {
+      "get": {
+        "description": "Any signed-in user. 'precio_base' is a decimal string.",
+        "operationId": "listServices",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceList"
+                }
+              }
+            },
+            "description": "Active services"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List the active medical services",
+        "tags": [
+          "Catalog"
+        ]
+      },
+      "post": {
+        "description": "Requires catalogo.administrar. The service is created active.",
+        "operationId": "createService",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServiceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogService"
+                }
+              }
+            },
+            "description": "Service created"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks catalogo.administrar"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body, or an unknown or inactive specialty"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a medical service",
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/services/{servicio_id}": {
+      "patch": {
+        "description": "Requires catalogo.administrar. Null clears the link.",
+        "operationId": "setServiceSpecialty",
+        "parameters": [
+          {
+            "description": "Service id",
+            "in": "path",
+            "name": "servicio_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetServiceSpecialtyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogService"
+                }
+              }
+            },
+            "description": "Service updated"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks catalogo.administrar"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body, or an unknown or inactive specialty"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Set (or clear) the specialty of a service",
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/specialties": {
+      "get": {
+        "description": "Any signed-in user. Ordered by name.",
+        "operationId": "listSpecialties",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpecialtyList"
+                }
+              }
+            },
+            "description": "Active specialties"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List the active medical specialties",
+        "tags": [
+          "Catalog"
+        ]
+      },
+      "post": {
+        "description": "Requires catalogo.administrar (ADMINISTRADOR).",
+        "operationId": "createSpecialty",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSpecialtyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Specialty"
+                }
+              }
+            },
+            "description": "Specialty created"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks catalogo.administrar"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A specialty with this name already exists"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a specialty",
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/specialties/{especialidad_id}": {
+      "patch": {
+        "description": "Requires catalogo.administrar. Only the fields sent are changed; 'activo' false removes the specialty from the listings.",
+        "operationId": "updateSpecialty",
+        "parameters": [
+          {
+            "description": "Specialty id",
+            "in": "path",
+            "name": "especialidad_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSpecialtyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Specialty"
+                }
+              }
+            },
+            "description": "Specialty updated"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks catalogo.administrar"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Specialty not found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A specialty with this name already exists"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid body, or no field sent"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Rename, describe or deactivate a specialty",
+        "tags": [
+          "Catalog"
         ]
       }
     },

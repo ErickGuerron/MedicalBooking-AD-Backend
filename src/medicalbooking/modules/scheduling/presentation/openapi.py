@@ -76,6 +76,12 @@ def scheduling_fragment() -> dict[str, Any]:
                             required=False,
                             schema={"type": "string", "format": "uuid"},
                         ),
+                        _query(
+                            "especialidad_id",
+                            "Optional: only slots of clinicians with this specialty",
+                            required=False,
+                            schema={"type": "integer", "minimum": 1},
+                        ),
                     ],
                     "responses": {
                         "200": _json_response("Free slots", "AvailabilityResponse"),
@@ -319,6 +325,15 @@ def scheduling_fragment() -> dict[str, Any]:
                         "medico_id": {"type": "string", "format": "uuid"},
                         "inicio_utc": {"type": "string", "format": "date-time"},
                         "fin_utc": {"type": "string", "format": "date-time"},
+                        "medico": {
+                            "type": "object",
+                            "description": "Public name of the clinician (additive, optional)",
+                            "required": ["id", "nombre"],
+                            "properties": {
+                                "id": {"type": "string", "format": "uuid"},
+                                "nombre": {"type": "string"},
+                            },
+                        },
                     },
                 },
                 "AvailabilityResponse": {

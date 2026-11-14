@@ -140,12 +140,16 @@ class SqlSchedulingStore:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
-    def list_available(self, start, end, medico_id, limit) -> list[AvailableSlot]:
+    def list_available(
+        self, start, end, medico_id, limit, especialidad_id=None
+    ) -> list[AvailableSlot]:
         sql = (
-            "SELECT TOP (:limite) h.id, m.id AS medico_id, h.inicio_utc, h.fin_utc "
+            "SELECT TOP (:limite) h.id, m.id AS medico_id, h.inicio_utc, h.fin_utc, "
+            "u.nombre, u.apellido "
             "FROM horarios_disponibles h "
             "JOIN agendas a ON a.id = h.agenda_id "
             "JOIN medicos m ON m.id = a.medico_id "
+            "JOIN usuarios u ON u.id = m.usuario_id "
             "WHERE h.estado = 'DISPONIBLE' AND a.activa = 1 AND m.activo = 1 "
             "AND h.inicio_utc >= :inicio AND h.inicio_utc < :fin "
         )
@@ -157,6 +161,12 @@ class SqlSchedulingStore:
         if medico_id is not None:
             sql += "AND m.id = :medico "
             params["medico"] = str(medico_id)
+        if especialidad_id is not None:
+            sql += (
+                "AND EXISTS (SELECT 1 FROM medicos_especialidades me WHERE me.medico_id = m.id "
+                "AND me.especialidad_id = :esp) "
+            )
+            params["esp"] = especialidad_id
         sql += "ORDER BY h.inicio_utc"
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql), params).all()
@@ -166,6 +176,7 @@ class SqlSchedulingStore:
                 medico_id=_canonical(row.medico_id),
                 inicio_utc=_utc_aware(row.inicio_utc),
                 fin_utc=_utc_aware(row.fin_utc),
+                medico_nombre=f"{row.nombre} {row.apellido}".strip(),
             )
             for row in rows
         ]

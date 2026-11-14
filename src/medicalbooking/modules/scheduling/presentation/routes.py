@@ -93,6 +93,16 @@ def _int_query(name: str, default: int) -> int:
     return int(raw)
 
 
+def _positive_int_query(name: str) -> int | None:
+    """Optional positive INT query parameter (an SQL Server int identity)."""
+    if name not in request.args:
+        return None
+    value = _int_query(name, 0)
+    if not 1 <= value <= 2_147_483_647:
+        raise ValidationFailed(f"'{name}' must be a positive integer")
+    return value
+
+
 def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
     return {
         "id": appointment.id,
@@ -103,12 +113,15 @@ def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
 
 
 def _slot_json(slot: AvailableSlot) -> dict[str, Any]:
-    return {
+    item: dict[str, Any] = {
         "horario_id": slot.horario_id,
         "medico_id": slot.medico_id,
         "inicio_utc": slot.inicio_utc.isoformat(),
         "fin_utc": slot.fin_utc.isoformat(),
     }
+    if slot.medico_nombre is not None:
+        item["medico"] = {"id": slot.medico_id, "nombre": slot.medico_nombre}
+    return item
 
 
 def _appointment_json(appointment: Appointment) -> dict[str, Any]:
@@ -132,6 +145,7 @@ def availability() -> tuple[Response, int]:
         _instant("desde"),
         _instant("hasta"),
         medico_id=str(uuid.UUID(medico)) if medico else None,
+        especialidad_id=_positive_int_query("especialidad_id"),
     )
     return jsonify(items=[_slot_json(slot) for slot in slots]), 200
 

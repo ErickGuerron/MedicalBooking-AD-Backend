@@ -14,6 +14,8 @@ class AvailableSlot:
     medico_id: str
     inicio_utc: datetime
     fin_utc: datetime
+    # Public name of the doctor; None when the adapter does not know it.
+    medico_nombre: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,7 +99,12 @@ class ApprovalStatus(Enum):
 
 class SchedulingStore(Protocol):
     def list_available(
-        self, start: datetime, end: datetime, medico_id: str | None, limit: int
+        self,
+        start: datetime,
+        end: datetime,
+        medico_id: str | None,
+        limit: int,
+        especialidad_id: int | None = None,
     ) -> list[AvailableSlot]: ...
 
     def find_slot(self, horario_id: str) -> datetime | None:

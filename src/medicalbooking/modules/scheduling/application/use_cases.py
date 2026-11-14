@@ -75,6 +75,7 @@ class SchedulingService:
         start: datetime,
         end: datetime,
         medico_id: str | None = None,
+        especialidad_id: int | None = None,
     ) -> list[AvailableSlot]:
         _require(actor, PERM_BOOK)
         validate_window(start, end)
@@ -82,7 +83,9 @@ class SchedulingService:
         effective_start = max(start, self._clock())
         if effective_start >= end:
             return []
-        return self._store.list_available(effective_start, end, medico_id, MAX_RESULTS)
+        return self._store.list_available(
+            effective_start, end, medico_id, MAX_RESULTS, especialidad_id=especialidad_id
+        )
 
     def book(
         self,
