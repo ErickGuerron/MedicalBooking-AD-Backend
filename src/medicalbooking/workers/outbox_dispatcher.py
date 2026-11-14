@@ -18,11 +18,14 @@ import logging
 import sys
 from datetime import UTC, datetime
 
+from pymongo import MongoClient
+from pymongo.database import Database
 from sqlalchemy import Engine
 
 from medicalbooking.config import Settings
 from medicalbooking.modules.notifications.application.handler import NotificationOutboxHandler
 from medicalbooking.modules.notifications.infrastructure.repositories import SqlNotificationStore
+from medicalbooking.modules.replica.infrastructure.mongo_projection import MongoOutboxHandler
 from medicalbooking.modules.synchronization.application.dispatch_service import (
     OutboxDispatchService,
 )
@@ -41,11 +44,12 @@ def build_handlers(
     engine: Engine,
     kafka_bootstrap: str | None = None,
     kafka_topic: str = "medicalbooking.events",
+    mongo_database: Database | None = None,
 ) -> list[OutboxHandler]:
     """Destination handlers wired into the dispatcher, one per ready destination.
 
-    The KAFKA destination is wired only when a broker is configured. Without one its delivery
-    rows stay PENDIENTE, the same as the other destinations that have no handler yet.
+    The KAFKA destination is wired only when a broker is configured, and MONGODB only when a
+    projection database is given. Without one, its delivery rows stay PENDIENTE.
     """
     handlers: list[OutboxHandler] = [
         NotificationOutboxHandler(
@@ -57,7 +61,18 @@ def build_handlers(
         handlers.append(
             KafkaOutboxHandler(build_kafka_producer(kafka_bootstrap), topic=kafka_topic)
         )
+    if mongo_database is not None:
+        handlers.append(MongoOutboxHandler(mongo_database))
     return handlers
+
+
+def _mongo_projection_database(settings: Settings) -> Database | None:
+    if settings.mongodb_projection_uri is None or not settings.mongodb_database:
+        return None
+    client = MongoClient(
+        settings.mongodb_projection_uri.get_secret_value(), serverSelectionTimeoutMS=5000
+    )
+    return client[settings.mongodb_database]
 
 
 def run(service: OutboxDispatchService) -> int:
@@ -93,6 +108,7 @@ def main() -> int:
                 engine,
                 kafka_bootstrap=settings.kafka_bootstrap_servers,
                 kafka_topic=settings.kafka_topic,
+                mongo_database=_mongo_projection_database(settings),
             ),
             clock=lambda: datetime.now(UTC),
         )

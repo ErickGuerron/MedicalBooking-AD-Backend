@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     # Insert-only audit role on MongoDB Atlas (replica_auditor) and the database name.
     mongodb_auditor_uri: SecretStr | None = None
     mongodb_database: str | None = None
+    # Read-write role that writes the projection collections (outbox destination MONGODB).
+    # Unset: the MONGODB deliveries stay PENDIENTE.
+    mongodb_projection_uri: SecretStr | None = None
     mail_from: str | None = None
     mail_from_name: str = Field(default="MedicalBooking", min_length=1, max_length=70)
     # Absolute public URL of the email images (for example a public Supabase Storage folder).

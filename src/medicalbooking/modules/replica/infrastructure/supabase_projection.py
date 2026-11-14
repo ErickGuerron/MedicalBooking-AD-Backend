@@ -4,6 +4,10 @@ Runs as replica_writer. Every write is an upsert or a delete keyed by id, so rep
 event leaves the same rows. A detail update for a detail the replica does not hold yet
 raises, so the event is retried after the event that creates it. The processed mark and
 the watermark are written in the same transaction as the projection.
+
+No tombstone table: the replication topic is keyed by aggregate id (kafka-replication S1), so
+Kafka delivers an aggregate's events in version order and an older upsert never follows its
+delete. The replica's deletes are plain DELETE statements, and a missing row is a no-op.
 """
 
 from __future__ import annotations
@@ -168,6 +172,14 @@ class _Transaction:
             "DELETE FROM replica.propuestas_hallazgos WHERE propuesta_id = %s", (propuesta_id,)
         )
         self._cur.execute("DELETE FROM replica.propuestas_clinicas WHERE id = %s", (propuesta_id,))
+
+    def delete_account(self, usuario_id: str) -> None:
+        self._cur.execute("DELETE FROM replica.usuarios_roles WHERE usuario_id = %s", (usuario_id,))
+        self._cur.execute("DELETE FROM replica.pacientes WHERE usuario_id = %s", (usuario_id,))
+        self._cur.execute("DELETE FROM replica.usuarios WHERE id = %s", (usuario_id,))
+
+    def delete_cita(self, cita_id: str) -> None:
+        self._cur.execute("DELETE FROM replica.citas WHERE id = %s", (cita_id,))
 
     def upsert_invoice(self, factura: dict[str, Any]) -> None:
         self._cur.execute(
