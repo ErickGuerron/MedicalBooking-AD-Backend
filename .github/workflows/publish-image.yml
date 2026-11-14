@@ -1,10 +1,11 @@
 name: Publish image
 
-# Publishes the API image to GitHub Container Registry after CI passes on a push:
-#   develop -> ghcr.io/<owner>/<repo>:develop and :develop-<short sha>   (test image for the VMs)
-#   main    -> ghcr.io/<owner>/<repo>:<project.version> and :latest      (release image)
+# Publishes the API image to Docker Hub after CI passes on a push:
+#   develop -> <user>/medicalbooking-backend:develop and :develop-<short sha>   (test image for the VMs)
+#   main    -> <user>/medicalbooking-backend:<project.version> and :latest      (release image)
 # A release tag is immutable: the job refuses to publish a version that already exists.
 # Bump project.version in pyproject.toml before merging to main.
+# Credentials come from the DOCKER_HUB environment: vars.DOCKERHUB_USERNAME and secrets.DOCKERHUB_TOKEN.
 
 on:
   workflow_run:
@@ -14,7 +15,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: publish-${{ github.event.workflow_run.head_branch }}
@@ -26,6 +26,7 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment: DOCKER_HUB
     steps:
       - name: Check out the commit that CI tested
         uses: actions/checkout@v4
@@ -35,21 +36,25 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Resolve channel and tags
         id: plan
         env:
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          if [ -z "$DOCKERHUB_USERNAME" ]; then
+            echo "::error::vars.DOCKERHUB_USERNAME is not set in the DOCKER_HUB environment"
+            exit 1
+          fi
+          image="${DOCKERHUB_USERNAME,,}/medicalbooking-backend"
           short_sha="${HEAD_SHA:0:7}"
           case "$BRANCH" in
             develop)

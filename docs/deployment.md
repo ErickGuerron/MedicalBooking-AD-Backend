@@ -113,7 +113,7 @@ Results are not yet measured. These will be recorded in `docs/experiments/`.
   VM1 and VM2 do not share that disk, so a PDF uploaded through one VM is not found by a
   download routed to the other. Move storage to Azure Blob or a shared volume before E7.
 - Deploying the published image to the VMs. `publish-image.yml` pushes `develop` and `<version>` images
-  to GHCR after CI passes; the VM pull and restart are still manual.
+  to Docker Hub after CI passes; the VM pull and restart are still manual.
 - HTTPS, DuckDNS, and Let's Encrypt on the VMs.
 - Azure resources, which are not provisioned from this repository.
 - Replica load tests and failure experiments.
