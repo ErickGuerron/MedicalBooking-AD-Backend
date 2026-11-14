@@ -30,6 +30,7 @@ from medicalbooking.modules.payments.domain.webhook import (
 from medicalbooking.modules.payments.infrastructure.billing_repositories import (
     emit_pago_snapshot,
     emit_reembolso_snapshot,
+    mark_invoice_paid,
     set_payment_intent,
 )
 from medicalbooking.modules.payments.infrastructure.refund_finalization import (
@@ -177,13 +178,7 @@ class SqlPaymentsStore:
             {"estado": target, "ahora": now, "id": pago.pago_id},
         )
         if target == CONFIRMADO:
-            conn.execute(
-                text(
-                    "UPDATE facturas SET estado = 'PAGADA' "
-                    "WHERE id = :factura AND estado = 'PENDIENTE'"
-                ),
-                {"factura": pago.factura_id},
-            )
+            mark_invoice_paid(conn, pago.factura_id, now)
         emit_pago_snapshot(conn, pago.pago_id, now)
 
     

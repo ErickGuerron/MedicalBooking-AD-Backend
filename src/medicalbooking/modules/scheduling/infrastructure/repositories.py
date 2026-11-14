@@ -136,6 +136,35 @@ def _history(
     )
 
 
+def confirm_appointment_of_invoice(conn: Connection, factura_id: str, moment: datetime) -> bool:
+    """Move the appointment of a paid invoice from PENDIENTE_PAGO to CONFIRMADA.
+
+    Runs inside the caller's payment transaction: the state, ``confirmada_en``, the history row
+    and the replica snapshot commit with the payment or not at all. Only PENDIENTE_PAGO moves, so
+    a cancelled or expired appointment is never resurrected. Returns False (and changes nothing)
+    when the invoice has no appointment or it is already in another state; that never fails the
+    payment confirmation. ``moment`` is naive UTC, like the payment timestamps.
+    """
+    cita_id = conn.execute(
+        text("SELECT cita_id FROM facturas WHERE id = :f"), {"f": factura_id}
+    ).scalar()
+    if cita_id is None:
+        return False
+    moved = conn.execute(
+        text(
+            "UPDATE citas SET estado = 'CONFIRMADA', confirmada_en = :ahora "
+            "WHERE id = :c AND estado = 'PENDIENTE_PAGO'"
+        ),
+        {"c": str(cita_id), "ahora": moment},
+    ).rowcount
+    if moved != 1:
+        return False
+    appointment_id = _canonical(cita_id)
+    _history(conn, appointment_id, None, _BOOKED, "CONFIRMADA", moment)
+    emit_cita_snapshot(conn, appointment_id, moment)
+    return True
+
+
 class SqlSchedulingStore:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
