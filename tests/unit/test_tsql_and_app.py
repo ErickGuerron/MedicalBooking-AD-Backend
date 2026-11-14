@@ -24,12 +24,23 @@ def test_split_batches_ignores_blank_batches() -> None:
     assert split_batches("\nGO\n   \nGO\n") == []
 
 
+class _DownEngine:
+    """Stands in for an unreachable database: connect fails at once.
+
+    A real ODBC connection to a closed port waits for the login timeout (about 16 seconds per
+    test), so the readiness branch is exercised without touching the network.
+    """
+
+    def connect(self):
+        raise OSError("database unreachable")
+
+
 @pytest.fixture
 def unreachable_app():
-    # Port 1 is closed locally, so the readiness check fails fast and deterministically.
     settings = Settings(_env_file=None, sqlserver_port=1, sqlserver_database="unused")
     app = create_app(settings)
     app.config["TESTING"] = True
+    app.extensions["medicalbooking.engine"] = _DownEngine()
     return app
 
 

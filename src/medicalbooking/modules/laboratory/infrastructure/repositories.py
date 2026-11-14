@@ -19,9 +19,12 @@ from medicalbooking.modules.laboratory.application.ports import (
     AuditEvent,
     LabDetail,
     LabOrder,
+    LabOrderSummary,
     LabResult,
+    LabTestType,
     NewDocument,
     NewOrder,
+    PatientSummary,
     ResultEntry,
     StoredDocument,
 )
@@ -42,6 +45,18 @@ def _as_guid(value: str) -> str | None:
         return str(uuid.UUID(str(value)))
     except ValueError:
         return None
+
+
+# A patient is treated by a doctor when a cita (any status) or a lab order links them. The
+# predicate expects the alias p for pacientes and the bound parameter :medico for the doctor.
+_TREATED_BY_DOCTOR = (
+    "(EXISTS (SELECT 1 FROM citas c "
+    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id "
+    "WHERE c.paciente_id = p.id AND a.medico_id = :medico) "
+    "OR EXISTS (SELECT 1 FROM ordenes_laboratorio o "
+    "WHERE o.paciente_id = p.id AND o.medico_id = :medico))"
+)
 
 
 class SqlLabStore:
@@ -134,15 +149,29 @@ class SqlLabStore:
             ).scalar()
         return None if value is None else _canonical(value)
 
-    def patient_exists(self, paciente_id: str) -> bool:
+    def patient_is_related(self, medico_id: str, paciente_id: str) -> bool:
+        medico, paciente = _as_guid(medico_id), _as_guid(paciente_id)
+        if medico is None or paciente is None:
+            return False
+        # Only the constant predicate is concatenated; every value is a bound parameter.
+        query = "SELECT 1 FROM pacientes p WHERE p.id = :paciente AND " + _TREATED_BY_DOCTOR  # noqa: S608
+        with self._engine.connect() as conn:
+            found = conn.execute(text(query), {"paciente": paciente, "medico": medico}).first()
+        return found is not None
+
+    def patient_account_is_active(self, paciente_id: str) -> bool:
         guid = _as_guid(paciente_id)
         if guid is None:
             return False
         with self._engine.connect() as conn:
-            return (
-                conn.execute(text("SELECT 1 FROM pacientes WHERE id = :p"), {"p": guid}).first()
-                is not None
-            )
+            estado = conn.execute(
+                text(
+                    "SELECT u.estado FROM pacientes p "
+                    "JOIN usuarios u ON u.id = p.usuario_id WHERE p.id = :paciente"
+                ),
+                {"paciente": guid},
+            ).scalar()
+        return estado == "ACTIVO"
 
     def active_test_ids(self, ids: list[str]) -> set[str]:
         guids = [g for g in (_as_guid(i) for i in ids) if g is not None]
@@ -182,16 +211,35 @@ class SqlLabStore:
                     "obs": command.observaciones,
                 },
             )
+            detalles = []
             for test_id in command.tipo_prueba_ids:
+                detalle_id = str(uuid.uuid4())
                 conn.execute(
                     text(
                         "INSERT INTO ordenes_laboratorio_detalle (id, orden_id, tipo_prueba_id, "
                         "estado) VALUES (:id, :o, :t, 'PENDIENTE')"
                     ),
-                    {"id": str(uuid.uuid4()), "o": command.order_id, "t": test_id},
+                    {"id": detalle_id, "o": command.order_id, "t": test_id},
                 )
+                detalles.append(
+                    {"id": detalle_id, "tipo_prueba_id": test_id, "estado": "PENDIENTE"}
+                )
+            # Replica snapshot: the order and its detail lines. Observations stay in SQL Server.
+            snapshot = {
+                "id": command.order_id,
+                "paciente_id": command.paciente_id,
+                "medico_id": command.medico_id,
+                "fecha_orden": now.isoformat(),
+                "prioridad": command.prioridad,
+                "estado": "SOLICITADA",
+                "detalles": detalles,
+            }
             _outbox(
-                conn, command.order_id, "orden_laboratorio.creada", {"estado": "SOLICITADA"}, now
+                conn,
+                command.order_id,
+                "orden_laboratorio.creada",
+                {"estado": "SOLICITADA", "orden": snapshot},
+                now,
             )
         order = self.get_order(command.order_id)
         assert order is not None
@@ -239,6 +287,95 @@ class SqlLabStore:
                 for row in detail_rows
             ),
         )
+
+    def list_orders(
+        self,
+        *,
+        paciente_id: str | None,
+        medico_id: str | None,
+        estado: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[LabOrderSummary]:
+        patient = _as_guid(paciente_id) if paciente_id is not None else None
+        doctor = _as_guid(medico_id) if medico_id is not None else None
+        if patient is None and doctor is None:
+            return []
+        # One static statement: the flags switch each optional side on or off. Values are bound.
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT o.id, o.paciente_id, o.estado, o.fecha_orden "
+                    "FROM ordenes_laboratorio o "
+                    "WHERE ((:usa_paciente = 1 AND o.paciente_id = :paciente) "
+                    "OR (:usa_medico = 1 AND o.medico_id = :medico)) "
+                    "AND (:filtra_estado = 0 OR o.estado = :estado) "
+                    "ORDER BY o.fecha_orden DESC, o.id ASC "
+                    "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY"
+                ),
+                {
+                    "usa_paciente": int(patient is not None),
+                    "paciente": patient,
+                    "usa_medico": int(doctor is not None),
+                    "medico": doctor,
+                    "filtra_estado": int(estado is not None),
+                    "estado": estado,
+                    "skip": offset,
+                    "take": limit,
+                },
+            ).all()
+        return [
+            LabOrderSummary(
+                id=_canonical(row.id),
+                paciente_id=_canonical(row.paciente_id),
+                estado=row.estado,
+                fecha=row.fecha_orden,
+            )
+            for row in rows
+        ]
+
+    # ---------- patient directory and test catalog ----------
+
+    def list_patients(self, *, medico_id: str, limit: int, offset: int) -> list[PatientSummary]:
+        medico = _as_guid(medico_id)
+        if medico is None:
+            return []
+        # Only the constant predicate is concatenated; the doctor and the paging are bound.
+        query = (
+            "SELECT p.id, u.nombre, u.apellido FROM pacientes p "  # noqa: S608
+            "JOIN usuarios u ON u.id = p.usuario_id "
+            "WHERE u.estado = 'ACTIVO' AND " + _TREATED_BY_DOCTOR + " "
+            "ORDER BY u.apellido, u.nombre, p.id "
+            "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY"
+        )
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(query),
+                {"medico": medico, "skip": offset, "take": limit},
+            ).all()
+        return [
+            PatientSummary(id=_canonical(row.id), nombre=row.nombre, apellido=row.apellido)
+            for row in rows
+        ]
+
+    def list_test_types(self) -> list[LabTestType]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, codigo, nombre, descripcion, unidad_predeterminada "
+                    "FROM tipos_prueba_laboratorio WHERE activo = 1 ORDER BY nombre, id"
+                )
+            ).all()
+        return [
+            LabTestType(
+                id=_canonical(row.id),
+                codigo=row.codigo,
+                nombre=row.nombre,
+                descripcion=row.descripcion,
+                unidad_predeterminada=row.unidad_predeterminada,
+            )
+            for row in rows
+        ]
 
     # ---------- results ----------
 
@@ -294,19 +431,22 @@ class SqlLabStore:
                 1 for entry in entries if entry.analito_id is not None
             ):
                 return "ANALYTE_ALREADY_REPORTED"
+            projected_results: list[dict] = []
             for entry in entries:
+                result_id = str(uuid.uuid4())
                 conn.execute(
                     text(
                         "INSERT INTO resultados_laboratorio (id, detalle_orden_id, analito_id, "
                         "nombre_analito, valor_texto, valor_numerico, unidad, metodo_analitico, "
-                        "tipo_muestra, interpretacion, referencia_aplicada_id, referencia_version, "
-                        "referencia_min, referencia_max, validado_por, validado_en) "
+                        "tipo_muestra, contexto_muestra, estado_embarazo, interpretacion, "
+                        "referencia_aplicada_id, referencia_version, referencia_min, "
+                        "referencia_max, validado_por, validado_en) "
                         "VALUES (:id, :d, :analito, :nombre, :texto, :numero, :unidad, :metodo, "
-                        ":muestra, :interpretacion, :referencia, :referencia_version, :minimo, "
-                        ":maximo, :validador, :ahora)"
+                        ":muestra, :contexto, :embarazo, :interpretacion, :referencia, "
+                        ":referencia_version, :minimo, :maximo, :validador, :ahora)"
                     ),
                     {
-                        "id": str(uuid.uuid4()),
+                        "id": result_id,
                         "d": detail_id,
                         "analito": None if entry.analito_id is None else _as_guid(entry.analito_id),
                         "nombre": entry.nombre_analito,
@@ -315,6 +455,8 @@ class SqlLabStore:
                         "unidad": entry.unidad,
                         "metodo": entry.metodo_analitico,
                         "muestra": entry.tipo_muestra,
+                        "contexto": entry.contexto_muestra,
+                        "embarazo": entry.estado_embarazo,
                         "interpretacion": entry.interpretacion,
                         "referencia": entry.referencia_id,
                         "referencia_version": entry.referencia_version,
@@ -323,6 +465,19 @@ class SqlLabStore:
                         "validador": actor_user_id,
                         "ahora": moment,
                     },
+                )
+                projected_results.append(
+                    {
+                        "id": result_id,
+                        "nombre_analito": entry.nombre_analito,
+                        "valor_texto": entry.valor_texto,
+                        "valor_numerico": entry.valor_numerico,
+                        "unidad": entry.unidad,
+                        "referencia_min": entry.referencia_min,
+                        "referencia_max": entry.referencia_max,
+                        "interpretacion": entry.interpretacion,
+                        "validado_en": moment.isoformat(),
+                    }
                 )
             # A test is complete when every mandatory analyte (obligatorio=1) has a result.
             # A test with no mandatory analyte is complete with its first submission.
@@ -362,11 +517,22 @@ class SqlLabStore:
                 text("UPDATE ordenes_laboratorio SET estado = :e WHERE id = :o"),
                 {"e": new_state, "o": order_id},
             )
+            detail_state = "COMPLETADO" if complete else "EN_PROCESO"
             _outbox(
                 conn,
                 order_id,
                 "resultado_laboratorio.registrado",
-                {"detalle_id": detail_id, "estado_orden": new_state},
+                {
+                    "detalle_id": detail_id,
+                    "estado_orden": new_state,
+                    "orden_estado": new_state,
+                    "detalle": {
+                        "id": detail_id,
+                        "estado": detail_state,
+                        "fecha_resultado": moment.isoformat() if complete else None,
+                    },
+                    "resultados": projected_results,
+                },
                 moment,
             )
         return "CREATED"

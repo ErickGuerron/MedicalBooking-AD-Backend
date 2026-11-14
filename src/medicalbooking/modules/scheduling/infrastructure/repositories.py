@@ -7,7 +7,6 @@ outbox rows commit with the appointment or not at all. Parameterized SQL only.
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, datetime
 
@@ -16,6 +15,8 @@ from sqlalchemy.exc import IntegrityError
 
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
+    AppointmentSummary,
+    ApprovalStatus,
     AvailableSlot,
     CancelCommand,
     CancelOutcome,
@@ -24,7 +25,12 @@ from medicalbooking.modules.scheduling.application.ports import (
     ReserveOutcome,
     ReserveStatus,
 )
-from medicalbooking.modules.scheduling.domain.policies import ACTIVE_STATES
+from medicalbooking.modules.scheduling.domain.policies import (
+    ACTIVE_STATES,
+    doctor_cancellation_blockers,
+    month_bounds,
+)
+from medicalbooking.shared.infrastructure.outbox import append_outbox
 from medicalbooking.shared.infrastructure.sql_errors import is_unique_violation, retry_on_deadlock
 
 _BOOKED = "PENDIENTE_PAGO"
@@ -58,22 +64,51 @@ def _appointment(row) -> Appointment:
 
 
 def _outbox(
-    conn: Connection, appointment_id: str, version: int, event: str, payload: dict, now: datetime
+    conn: Connection, appointment_id: str, event: str, payload: dict, now: datetime
 ) -> None:
-    conn.execute(
+    """Each event takes the next version of its appointment (the outbox is unique per version)."""
+    append_outbox(conn, "cita", appointment_id, event, payload, now)
+
+
+def emit_cita_snapshot(conn: Connection, cita_id: str, moment: datetime) -> None:
+    """Replica snapshot of an appointment and its slot window, written with the change itself.
+
+    The booking's free text, the idempotency key and the row version are never read here, so
+    they can never leave SQL Server. The snapshot is read inside the caller's transaction, after
+    the change.
+    """
+    row = conn.execute(
         text(
-            "INSERT INTO eventos_outbox (id, agregado_tipo, agregado_id, tipo_evento, payload, "
-            "version_agregado, creado_en) "
-            "VALUES (:id, 'cita', :agregado, :tipo, :payload, :version, :ahora)"
+            "SELECT c.id, c.paciente_id, c.servicio_id, c.estado, c.reservada_en, "
+            "c.confirmada_en, c.cancelada_en, c.motivo_cancelacion_codigo, "
+            "c.motivo_cancelacion_texto, h.inicio_utc, h.fin_utc "
+            "FROM citas AS c JOIN horarios_disponibles AS h ON h.id = c.horario_id "
+            "WHERE c.id = :c"
         ),
+        {"c": cita_id},
+    ).one()
+    appointment_id = _canonical(row.id)
+    append_outbox(
+        conn,
+        "cita",
+        appointment_id,
+        "cita.actualizada",
         {
-            "id": str(uuid.uuid4()),
-            "agregado": appointment_id,
-            "tipo": event,
-            "payload": json.dumps(payload),
-            "version": version,
-            "ahora": now,
+            "cita": {
+                "id": appointment_id,
+                "paciente_id": _canonical(row.paciente_id),
+                "servicio_id": _canonical(row.servicio_id),
+                "estado": row.estado,
+                "reservada_en": row.reservada_en.isoformat(),
+                "confirmada_en": row.confirmada_en.isoformat() if row.confirmada_en else None,
+                "cancelada_en": row.cancelada_en.isoformat() if row.cancelada_en else None,
+                "motivo_cancelacion_codigo": row.motivo_cancelacion_codigo,
+                "motivo_cancelacion_texto": row.motivo_cancelacion_texto,
+                "inicio": row.inicio_utc.isoformat(),
+                "fin": row.fin_utc.isoformat(),
+            }
         },
+        moment,
     )
 
 
@@ -158,6 +193,43 @@ class SqlSchedulingStore:
             ).first()
         return None if row is None else _appointment(row)
 
+    def has_doctor_profile(self, user_id: str) -> bool:
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text("SELECT 1 FROM medicos WHERE usuario_id = :u"), {"u": user_id}
+            ).first()
+        return found is not None
+
+    def list_patient_appointments(self, patient_user_id, estado, limit, offset):
+        return self._list_summaries(_PATIENT_SOURCE, patient_user_id, estado, limit, offset)
+
+    def list_agenda_appointments(self, doctor_user_id, estado, limit, offset):
+        return self._list_summaries(_AGENDA_SOURCE, doctor_user_id, estado, limit, offset)
+
+    def _list_summaries(self, source: str, user_id, estado, limit, offset):
+        """Only id, estado and slot times leave the database: no patient columns are selected."""
+        sql = _SUMMARY_SELECT + source
+        params: dict[str, object] = {
+            "usuario": str(user_id),
+            "saltar": offset,
+            "cantidad": limit,
+        }
+        if estado is not None:
+            sql += "AND c.estado = :estado "
+            params["estado"] = estado
+        sql += "ORDER BY h.inicio_utc, c.id OFFSET :saltar ROWS FETCH NEXT :cantidad ROWS ONLY"
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(sql), params).all()
+        return [
+            AppointmentSummary(
+                id=_canonical(row.id),
+                estado=row.estado,
+                inicio_utc=_utc_aware(row.inicio_utc),
+                fin_utc=_utc_aware(row.fin_utc),
+            )
+            for row in rows
+        ]
+
     def reserve(self, command: ReserveCommand) -> ReserveOutcome:
         return retry_on_deadlock(lambda: self._reserve_once(command))
 
@@ -210,7 +282,6 @@ class SqlSchedulingStore:
                 _outbox(
                     conn,
                     appointment_id,
-                    1,
                     "cita.reservada",
                     {
                         "cita_id": appointment_id,
@@ -219,6 +290,7 @@ class SqlSchedulingStore:
                     },
                     _utc_naive(command.now),
                 )
+                emit_cita_snapshot(conn, appointment_id, _utc_naive(command.now))
         except IntegrityError as error:
             # Only a unique conflict (the active-slot index or the idempotency key lost a
             # race) is an expected answer. The transaction was rolled back: nothing was
@@ -253,16 +325,27 @@ class SqlSchedulingStore:
                 ),
                 {"id": command.appointment_id},
             ).first()
-            if row is None or _canonical(row.patient_user_id) != command.actor_user_id:
+            if row is None or not _may_cancel(conn, command, row):
                 return CancelOutcome(CancelStatus.NOT_FOUND_OR_FORBIDDEN, None)
             if row.estado not in ACTIVE_STATES:
                 return CancelOutcome(CancelStatus.NOT_CANCELLABLE, None)
+            if command.as_medico:
+                blockers = _doctor_blockers(conn, command, row.id)
+                if blockers:
+                    return CancelOutcome(CancelStatus.REQUIRES_APPROVAL, None, blockers)
             updated = conn.execute(
                 text(
-                    "UPDATE citas SET estado = :nuevo, cancelada_en = :ahora "
+                    "UPDATE citas SET estado = :nuevo, cancelada_en = :ahora, "
+                    "motivo_cancelacion_codigo = :codigo, motivo_cancelacion_texto = :texto "
                     "WHERE id = :id AND estado IN ('PENDIENTE_PAGO', 'CONFIRMADA')"
                 ),
-                {"nuevo": _CANCELLED, "ahora": now, "id": command.appointment_id},
+                {
+                    "nuevo": _CANCELLED,
+                    "ahora": now,
+                    "codigo": command.motivo_codigo,
+                    "texto": command.motivo_texto,
+                    "id": command.appointment_id,
+                },
             ).rowcount
             if updated != 1:
                 return CancelOutcome(CancelStatus.NOT_CANCELLABLE, None)
@@ -279,7 +362,6 @@ class SqlSchedulingStore:
             _outbox(
                 conn,
                 command.appointment_id,
-                2,
                 "cita.cancelada",
                 {
                     "cita_id": command.appointment_id,
@@ -288,12 +370,13 @@ class SqlSchedulingStore:
                 },
                 now,
             )
+            emit_cita_snapshot(conn, command.appointment_id, now)
         return CancelOutcome(
             CancelStatus.CANCELLED,
             Appointment(
                 id=_canonical(row.id),
                 key=row.clave_idempotencia,
-                patient_user_id=command.actor_user_id,
+                patient_user_id=_canonical(row.patient_user_id),
                 horario_id=_canonical(row.horario_id),
                 servicio_id=_canonical(row.servicio_id),
                 estado=_CANCELLED,
@@ -301,6 +384,42 @@ class SqlSchedulingStore:
                 expiracion_reserva=_utc_aware(row.expiracion_reserva),
             ),
         )
+
+    def approve_doctor_cancellation(
+        self, appointment_id: str, approver_user_id: str, motivo: str, now: datetime
+    ) -> ApprovalStatus:
+        """Record one admin approval for an appointment. The unique index on the appointment is
+        the last guard against two admins approving at the same time."""
+        moment = _utc_naive(now)
+        try:
+            with self._engine.begin() as conn:
+                row = conn.execute(
+                    text("SELECT estado FROM citas WITH (UPDLOCK, ROWLOCK) WHERE id = :id"),
+                    {"id": appointment_id},
+                ).first()
+                if row is None:
+                    return ApprovalStatus.NOT_FOUND
+                if row.estado not in ACTIVE_STATES:
+                    return ApprovalStatus.NOT_CANCELLABLE
+                conn.execute(
+                    text(
+                        "INSERT INTO aprobaciones_cancelacion_medico "
+                        "(id, cita_id, aprobado_por, motivo, aprobado_en) "
+                        "VALUES (:id, :cita, :admin, :motivo, :ahora)"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "cita": appointment_id,
+                        "admin": approver_user_id,
+                        "motivo": motivo,
+                        "ahora": moment,
+                    },
+                )
+        except IntegrityError as error:
+            if not is_unique_violation(str(error.orig)):
+                raise
+            return ApprovalStatus.ALREADY_APPROVED
+        return ApprovalStatus.APPROVED
 
     def expire_overdue_holds(self, now: datetime, limit: int) -> int:
         return retry_on_deadlock(lambda: self._expire_once(now, limit))
@@ -341,7 +460,6 @@ class SqlSchedulingStore:
                 _outbox(
                     conn,
                     appointment_id,
-                    2,
                     "cita.expirada",
                     {
                         "cita_id": appointment_id,
@@ -350,11 +468,82 @@ class SqlSchedulingStore:
                     },
                     moment,
                 )
+                emit_cita_snapshot(conn, appointment_id, moment)
         return len(overdue)
 
 
+_SUMMARY_SELECT = "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc "
+# Patient ownership: citas.paciente_id -> pacientes.usuario_id.
+_PATIENT_SOURCE = (
+    "FROM citas c JOIN pacientes p ON p.id = c.paciente_id "
+    "JOIN horarios_disponibles h ON h.id = c.horario_id WHERE p.usuario_id = :usuario "
+)
+# Agenda ownership: slot -> agenda -> medico -> usuario.
+_AGENDA_SOURCE = (
+    "FROM citas c JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
+    "WHERE m.usuario_id = :usuario "
+)
 _APPOINTMENT_SELECT = (
     "SELECT c.id, c.clave_idempotencia, c.horario_id, c.servicio_id, c.estado, c.motivo, "
     "c.expiracion_reserva, p.usuario_id AS patient_user_id "
     "FROM citas c JOIN pacientes p ON p.id = c.paciente_id "
 )
+# Doctor ownership of an appointment: citas -> horarios_disponibles -> agendas -> medicos.
+_AGENDA_OWNER = text(
+    "SELECT 1 FROM citas c JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
+    "WHERE c.id = :cita AND m.usuario_id = :usuario"
+)
+
+
+_DOCTOR_SLOT = text(
+    "SELECT m.id AS medico_id, h.inicio_utc FROM citas c "
+    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
+    "WHERE c.id = :cita"
+)
+# Serializes doctor cancellations of one doctor, so two concurrent requests cannot both pass
+# the monthly quota.
+_LOCK_MEDICO = text("SELECT id FROM medicos WITH (UPDLOCK, ROWLOCK) WHERE id = :medico")
+_DOCTOR_CANCELS_IN_MONTH = text(
+    "SELECT COUNT(*) FROM citas c JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id "
+    "WHERE a.medico_id = :medico AND c.estado = 'CANCELADA' "
+    "AND c.motivo_cancelacion_codigo IN ('IMPREVISTO_MEDICO', 'OTRO_MEDICO') "
+    "AND c.cancelada_en >= :desde AND c.cancelada_en < :hasta"
+)
+_HAS_APPROVAL = text("SELECT 1 FROM aprobaciones_cancelacion_medico WHERE cita_id = :cita")
+
+
+def _doctor_blockers(conn: Connection, command: CancelCommand, cita_id) -> tuple[str, ...]:
+    """Limits a doctor's cancellation must clear; an admin approval for the appointment clears
+    them all. Counts only earlier doctor cancellations of the same doctor in the UTC month."""
+    slot = conn.execute(_DOCTOR_SLOT, {"cita": cita_id}).one()
+    conn.execute(_LOCK_MEDICO, {"medico": slot.medico_id}).first()
+    if conn.execute(_HAS_APPROVAL, {"cita": cita_id}).first() is not None:
+        return ()
+    desde, hasta = month_bounds(command.now)
+    cancellations = conn.execute(
+        _DOCTOR_CANCELS_IN_MONTH,
+        {
+            "medico": slot.medico_id,
+            "desde": _utc_naive(desde),
+            "hasta": _utc_naive(hasta),
+        },
+    ).scalar_one()
+    return doctor_cancellation_blockers(
+        now=command.now,
+        slot_start=_utc_aware(slot.inicio_utc),
+        cancellations_this_month=cancellations,
+    )
+
+
+def _may_cancel(conn: Connection, command: CancelCommand, row) -> bool:
+    """The patient who owns the appointment, or the doctor whose agenda holds it."""
+    if not command.as_medico:
+        return _canonical(row.patient_user_id) == command.actor_user_id
+    owned = conn.execute(
+        _AGENDA_OWNER, {"cita": command.appointment_id, "usuario": command.actor_user_id}
+    ).first()
+    return owned is not None

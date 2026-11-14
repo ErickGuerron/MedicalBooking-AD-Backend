@@ -29,6 +29,16 @@ class Appointment:
 
 
 @dataclass(frozen=True)
+class AppointmentSummary:
+    """Listing row. Deliberately carries no patient data."""
+
+    id: str
+    estado: str
+    inicio_utc: datetime
+    fin_utc: datetime
+
+
+@dataclass(frozen=True)
 class ReserveCommand:
     key: str
     patient_user_id: str
@@ -56,18 +66,33 @@ class CancelCommand:
     actor_user_id: str
     appointment_id: str
     now: datetime
+    # True: the actor cancels as the doctor of the appointment's agenda. False: as its patient.
+    as_medico: bool = False
+    # Only set for a doctor's cancellation; a patient's cancellation carries None.
+    motivo_codigo: str | None = None
+    motivo_texto: str | None = None
 
 
 class CancelStatus(Enum):
     CANCELLED = "cancelled"
     NOT_FOUND_OR_FORBIDDEN = "not_found_or_forbidden"
     NOT_CANCELLABLE = "not_cancellable"
+    REQUIRES_APPROVAL = "requires_approval"
 
 
 @dataclass(frozen=True)
 class CancelOutcome:
     status: CancelStatus
     appointment: Appointment | None
+    # Only for REQUIRES_APPROVAL: the stable codes that blocked the doctor's cancellation.
+    blockers: tuple[str, ...] = ()
+
+
+class ApprovalStatus(Enum):
+    APPROVED = "approved"
+    NOT_FOUND = "not_found"
+    NOT_CANCELLABLE = "not_cancellable"
+    ALREADY_APPROVED = "already_approved"
 
 
 class SchedulingStore(Protocol):
@@ -83,9 +108,27 @@ class SchedulingStore(Protocol):
 
     def find_appointment_by_key(self, key: str) -> Appointment | None: ...
 
+    def has_doctor_profile(self, user_id: str) -> bool: ...
+
+    def list_patient_appointments(
+        self, patient_user_id: str, estado: str | None, limit: int, offset: int
+    ) -> list[AppointmentSummary]:
+        """One page of the patient's own appointments, ordered by slot start then id."""
+        ...
+
+    def list_agenda_appointments(
+        self, doctor_user_id: str, estado: str | None, limit: int, offset: int
+    ) -> list[AppointmentSummary]:
+        """One page of appointments booked on the doctor's own agendas."""
+        ...
+
     def reserve(self, command: ReserveCommand) -> ReserveOutcome: ...
 
     def cancel(self, command: CancelCommand) -> CancelOutcome: ...
+
+    def approve_doctor_cancellation(
+        self, appointment_id: str, approver_user_id: str, motivo: str, now: datetime
+    ) -> ApprovalStatus: ...
 
     def expire_overdue_holds(self, now: datetime, limit: int) -> int:
         """Expire up to ``limit`` pending holds whose hold ended by ``now``; return how many."""

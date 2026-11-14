@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
+    AppointmentSummary,
+    ApprovalStatus,
     AvailableSlot,
     CancelCommand,
     CancelStatus,
@@ -18,8 +20,15 @@ from medicalbooking.modules.scheduling.application.ports import (
 )
 from medicalbooking.modules.scheduling.domain.policies import (
     PERM_BOOK,
+    PERM_CANCEL_MEDICO,
+    PERM_REVIEW_CANCELLATIONS,
+    ROLE_PATIENT,
     is_same_request,
+    validate_approval_reason,
+    validate_cancellation_reason,
+    validate_estado,
     validate_idempotency_key,
+    validate_page,
     validate_window,
 )
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
@@ -123,13 +132,32 @@ class SchedulingService:
         assert outcome.appointment is not None
         return BookingResult(appointment=outcome.appointment, replayed=False)
 
-    def cancel(self, actor: AccessProfile, appointment_id: str) -> Appointment:
-        _require(actor, PERM_BOOK)
+    def cancel(
+        self,
+        actor: AccessProfile,
+        appointment_id: str,
+        *,
+        motivo_codigo: str | None = None,
+        motivo_texto: str | None = None,
+    ) -> Appointment:
+        """A patient cancels an own appointment; a doctor cancels one of an own agenda.
+
+        A doctor must give a reason. A patient's reason fields are ignored and never stored.
+        Both paths answer the same 403 for a missing or foreign appointment.
+        """
+        as_medico = _cancels_as_medico(actor)
+        if as_medico:
+            validate_cancellation_reason(motivo_codigo, motivo_texto)
+        else:
+            motivo_codigo = motivo_texto = None
         outcome = self._store.cancel(
             CancelCommand(
                 actor_user_id=actor.user_id,
                 appointment_id=str(appointment_id),
                 now=self._clock(),
+                as_medico=as_medico,
+                motivo_codigo=motivo_codigo,
+                motivo_texto=motivo_texto,
             )
         )
         if outcome.status is CancelStatus.NOT_FOUND_OR_FORBIDDEN:
@@ -137,8 +165,52 @@ class SchedulingService:
             raise Forbidden("Access to this resource is not allowed")
         if outcome.status is CancelStatus.NOT_CANCELLABLE:
             raise Conflict("The appointment can no longer be cancelled")
+        if outcome.status is CancelStatus.REQUIRES_APPROVAL:
+            # Stable codes: the client matches them, so they are not translated.
+            raise Conflict(",".join(outcome.blockers))
         assert outcome.appointment is not None
         return outcome.appointment
+
+    def approve_doctor_cancellation(
+        self, actor: AccessProfile, appointment_id: str, *, motivo: str | None
+    ) -> None:
+        """An admin records the approval that lets a doctor cancel one appointment beyond the
+        monthly quota or inside the 24-hour notice. The doctor still performs the cancellation."""
+        _require(actor, PERM_REVIEW_CANCELLATIONS)
+        validate_approval_reason(motivo)
+        status = self._store.approve_doctor_cancellation(
+            str(appointment_id), actor.user_id, str(motivo), self._clock()
+        )
+        if status is ApprovalStatus.NOT_FOUND:
+            raise NotFound("Appointment not found")
+        if status is ApprovalStatus.NOT_CANCELLABLE:
+            raise Conflict("The appointment can no longer be cancelled")
+        if status is ApprovalStatus.ALREADY_APPROVED:
+            raise Conflict("The appointment already has an approval")
+
+    def list_appointments(
+        self,
+        actor: AccessProfile,
+        *,
+        estado: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[AppointmentSummary]:
+        """Appointments the actor owns: a patient's own, or those of the doctor's agenda.
+
+        Patients are checked first, so a user with both roles sees only their own
+        appointments as a patient. Any other actor is refused before paging is checked.
+        """
+        if ROLE_PATIENT in actor.roles:
+            query = self._store.list_patient_appointments
+        elif self._store.has_doctor_profile(actor.user_id):
+            query = self._store.list_agenda_appointments
+        else:
+            raise Forbidden("Access to this resource is not allowed")
+        validate_page(limit, offset)
+        if estado is not None:
+            validate_estado(estado)
+        return query(actor.user_id, estado, limit, offset)
 
     @staticmethod
     def _replay_or_conflict(
@@ -165,3 +237,13 @@ class SchedulingService:
 def _require(actor: AccessProfile, permission: str) -> None:
     if permission not in actor.permissions:
         raise Forbidden("Access to this resource is not allowed")
+
+
+def _cancels_as_medico(actor: AccessProfile) -> bool:
+    """Patients are checked first, as for listing. Only a doctor with the cancel permission
+    may cancel as the agenda's doctor; anyone else is refused before the store is reached."""
+    if PERM_BOOK in actor.permissions:
+        return False
+    if PERM_CANCEL_MEDICO in actor.permissions:
+        return True
+    raise Forbidden("Access to this resource is not allowed")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -10,9 +11,21 @@ from typing import Any
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from medicalbooking.modules.clinical.application.clinical_profile import (
+    ClinicalProfile,
+    PatientProfileService,
+)
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
-from medicalbooking.modules.clinical.application.ports import FindingView, ProposalView
+from medicalbooking.modules.clinical.application.ports import (
+    FindingView,
+    ProposalView,
+    ReferenceView,
+    RuleView,
+    ShadowEditView,
+    ShadowSnapshotRecord,
+)
 from medicalbooking.modules.clinical.application.proposals import ProposalService
+from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
 from medicalbooking.modules.clinical.domain.evaluation import CriterionSpec
 from medicalbooking.modules.clinical.domain.references import Reference
 from medicalbooking.modules.identity.presentation.routes import authenticated
@@ -68,6 +81,29 @@ class RuleRequest(BaseModel):
     criterios: list[CriterionRequest] = Field(min_length=1, max_length=10)
 
 
+class ShadowEditRequest(BaseModel):
+    """A physician's action on one shadow finding (S7): CONFIRMAR, DESCARTAR or MODIFICAR."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accion: str = Field(max_length=20)
+    categoria_nueva: str | None = Field(default=None, max_length=60)
+    motivo: str | None = Field(default=None, max_length=600)
+
+
+class ClinicalProfileRequest(BaseModel):
+    """Self-reported altitude of residence and smoking (WHO 2024 Tables 4, 5), both mandatory (S19).
+
+    A smoker declares cigarettes per day; a non-smoker omits it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    altitud_residencia_m: int = Field(ge=0, le=8848)
+    fumador: bool
+    cigarrillos_dia: int | None = Field(default=None, ge=0, le=200)
+
+
 class ProposalReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -82,6 +118,25 @@ def _knowledge() -> KnowledgeService:
 
 def _proposals() -> ProposalService:
     return current_app.extensions["medicalbooking.proposals"]
+
+
+def _shadow() -> ShadowFindingsService:
+    return current_app.extensions["medicalbooking.shadow"]
+
+
+def _patient_profile() -> PatientProfileService:
+    return current_app.extensions["medicalbooking.patient_profile"]
+
+
+def _plain(value: Any) -> Any:
+    """JSON-safe copy: decimals become numbers, dataclass dicts stay as they are."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    return value
 
 
 def _parse(model: type[BaseModel]) -> Any:
@@ -114,6 +169,57 @@ def _reference_json(reference: Reference) -> dict[str, Any]:
         "contexto": reference.contexto,
         "fecha_inicio": reference.fecha_inicio.isoformat(),
         "fecha_fin": reference.fecha_fin.isoformat() if reference.fecha_fin else None,
+    }
+
+
+def _optional_uuid(name: str) -> str | None:
+    raw = request.args.get(name)
+    if raw is None:
+        return None
+    try:
+        return str(uuid.UUID(raw))
+    except ValueError:
+        raise ValidationFailed(f"'{name}' must be a UUID") from None
+
+
+def _rule_json(rule: RuleView) -> dict[str, Any]:
+    return {
+        "id": rule.id,
+        "codigo": rule.codigo,
+        "version": rule.version,
+        "nombre": rule.nombre,
+        "descripcion": rule.descripcion,
+        "tipo": rule.tipo,
+        "expresion_logica": rule.expresion_logica,
+        "mensaje": rule.mensaje,
+        "prioridad": rule.prioridad,
+        "estado": rule.estado,
+        "criterios": [
+            {
+                "analito_id": criterion.analito_id,
+                "operador": criterion.operador,
+                "umbral": None if criterion.umbral is None else float(criterion.umbral),
+                "unidad": criterion.unidad,
+                "contexto": criterion.contexto,
+            }
+            for criterion in rule.criteria
+        ],
+    }
+
+
+def _reference_row_json(row: ReferenceView) -> dict[str, Any]:
+    return {**_reference_json(row.reference), "analito_id": row.analito_id, "estado": row.estado}
+
+
+def _edit_json(edit: ShadowEditView) -> dict[str, Any]:
+    return {
+        "id": edit.id,
+        "accion": edit.accion,
+        "categoria_anterior": edit.categoria_anterior,
+        "categoria_nueva": edit.categoria_nueva,
+        "motivo": edit.motivo,
+        "medico_user_id": edit.medico_user_id,
+        "creado_en": edit.creado_en.isoformat(),
     }
 
 
@@ -187,6 +293,18 @@ def list_references(analyte_id: uuid.UUID) -> tuple[Response, int]:
     return jsonify(items=[_reference_json(r) for r in references]), 200
 
 
+@clinical_bp.get("/knowledge/references")
+@authenticated
+def list_knowledge_references() -> tuple[Response, int]:
+    """Reference ranges with their state, for validators and administrators (S4)."""
+    rows = _knowledge().list_references(
+        g.actor,
+        analito_id=_optional_uuid("analito_id"),
+        estado=request.args.get("estado"),
+    )
+    return jsonify(items=[_reference_row_json(row) for row in rows]), 200
+
+
 @clinical_bp.post("/knowledge/analytes/<uuid:analyte_id>/references")
 @authenticated
 def create_reference(analyte_id: uuid.UUID) -> tuple[Response, int]:
@@ -244,6 +362,14 @@ def create_rule() -> tuple[Response, int]:
     return jsonify(id=rule_id, estado="BORRADOR"), 201
 
 
+@clinical_bp.get("/knowledge/rules")
+@authenticated
+def list_knowledge_rules() -> tuple[Response, int]:
+    """Declarative rules for readers (S3). Drafts are listed only for validators and admins."""
+    rules = _knowledge().list_rules(g.actor, estado=request.args.get("estado"))
+    return jsonify(items=[_rule_json(rule) for rule in rules]), 200
+
+
 @clinical_bp.post("/knowledge/rules/<uuid:rule_id>/validate")
 @authenticated
 def validate_rule(rule_id: uuid.UUID) -> tuple[Response, int]:
@@ -266,6 +392,123 @@ def evaluate(order_id: uuid.UUID) -> tuple[Response, int]:
 def get_proposal(order_id: uuid.UUID) -> tuple[Response, int]:
     proposal = _proposals().get_proposal(g.actor, str(order_id))
     return jsonify(_proposal_json(proposal)), 200
+
+
+@clinical_bp.get("/lab/orders/<uuid:order_id>/sombra")
+@authenticated
+def get_shadow(order_id: uuid.UUID) -> tuple[Response, int]:
+    """Shadow findings (S13): read-only, nothing stored, the decision is not modified."""
+    report = _shadow().get(g.actor, str(order_id))
+    return jsonify(_plain(asdict(report))), 200
+
+
+@clinical_bp.get("/me/perfil-clinico")
+@authenticated
+def read_clinical_profile() -> tuple[Response, int]:
+    """The patient's own declared profile, so a client knows whether it is already complete."""
+    return jsonify(asdict(_patient_profile().read(g.actor))), 200
+
+
+@clinical_bp.put("/me/perfil-clinico")
+@authenticated
+def save_clinical_profile() -> tuple[Response, int]:
+    """The patient's own altitude and smoking, for the WHO 2024 adjustments (S12)."""
+    body = _parse(ClinicalProfileRequest)
+    profile = ClinicalProfile(
+        altitud_residencia_m=body.altitud_residencia_m,
+        fumador=body.fumador,
+        cigarrillos_dia=body.cigarrillos_dia,
+    )
+    _patient_profile().save(g.actor, profile)
+    return (
+        jsonify(
+            altitud_residencia_m=body.altitud_residencia_m,
+            fumador=body.fumador,
+            cigarrillos_dia=body.cigarrillos_dia,
+        ),
+        200,
+    )
+
+
+@clinical_bp.post("/lab/orders/<uuid:order_id>/sombra/snapshots")
+@authenticated
+def record_shadow_snapshot(order_id: uuid.UUID) -> tuple[Response, int]:
+    """Explicit snapshot of the shadow findings (S9): a new immutable record on every call."""
+    snapshot = _shadow().record_snapshot(g.actor, str(order_id))
+    return jsonify(_snapshot_json(snapshot)), 201
+
+
+@clinical_bp.post(
+    "/lab/orders/<uuid:order_id>/sombra/snapshots/<uuid:snapshot_id>/hallazgos/<hallazgo>/ediciones"
+)
+@authenticated
+def edit_shadow_finding(
+    order_id: uuid.UUID, snapshot_id: uuid.UUID, hallazgo: str
+) -> tuple[Response, int]:
+    """Physician edit of one finding of a snapshot (S7, S14). Appends a row; never overwrites."""
+    body = _parse(ShadowEditRequest)
+    edit_id, categoria_guardada = _shadow().edit_finding(
+        g.actor,
+        str(order_id),
+        str(snapshot_id),
+        hallazgo,
+        accion=body.accion,
+        categoria_nueva=body.categoria_nueva,
+        motivo=body.motivo,
+    )
+    return (
+        jsonify(
+            id=edit_id,
+            snapshot_id=str(snapshot_id),
+            hallazgo=hallazgo,
+            accion=body.accion,
+            categoria_guardada=categoria_guardada,
+        ),
+        201,
+    )
+
+
+@clinical_bp.get(
+    "/lab/orders/<uuid:order_id>/sombra/snapshots/<uuid:snapshot_id>/hallazgos/<hallazgo>/ediciones"
+)
+@authenticated
+def list_shadow_edit_history(
+    order_id: uuid.UUID, snapshot_id: uuid.UUID, hallazgo: str
+) -> tuple[Response, int]:
+    """Append-only edit history of one shadow finding (S7). Read-only, every read is audited."""
+    edits = _shadow().edit_history(g.actor, str(order_id), str(snapshot_id), hallazgo)
+    return jsonify(items=[_edit_json(edit) for edit in edits]), 200
+
+
+def _snapshot_json(snapshot: ShadowSnapshotRecord) -> dict[str, Any]:
+    return {
+        "id": snapshot.id,
+        "orden_id": snapshot.orden_id,
+        "version_regla": snapshot.version_regla,
+        "modo": "SOMBRA",
+        "modifica_decision": False,
+        "creado_en": snapshot.creado_en.isoformat(),
+        "items": [
+            {
+                "hallazgo": item.hallazgo,
+                "categoria": item.categoria,
+                "corte_valor": None if item.corte_valor is None else float(item.corte_valor),
+                "corte_unidad": item.corte_unidad,
+                "fuente": item.fuente,
+                "motivo": item.motivo,
+                "evidencia": [
+                    {
+                        "rol": evidence.rol,
+                        "resultado_id": evidence.resultado_id,
+                        "valor": float(evidence.valor),
+                        "unidad": evidence.unidad,
+                    }
+                    for evidence in item.evidencia
+                ],
+            }
+            for item in snapshot.items
+        ],
+    }
 
 
 @clinical_bp.post("/clinical/proposals/<uuid:proposal_id>/reviews")

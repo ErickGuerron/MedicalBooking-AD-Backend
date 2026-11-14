@@ -15,12 +15,15 @@ from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from medicalbooking.config import Settings
+from medicalbooking.modules.clinical.application.clinical_profile import PatientProfileService
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
 from medicalbooking.modules.clinical.application.proposals import ProposalService
+from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
 from medicalbooking.modules.clinical.infrastructure.repositories import SqlClinicalStore
 from medicalbooking.modules.clinical.presentation.openapi import clinical_fragment
 from medicalbooking.modules.clinical.presentation.routes import clinical_bp
 from medicalbooking.modules.identity.application.use_cases import IdentityService
+from medicalbooking.modules.identity.infrastructure.email import BrevoActivationMailer
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
 from medicalbooking.modules.identity.infrastructure.security import (
     Argon2PasswordHasher,
@@ -28,15 +31,43 @@ from medicalbooking.modules.identity.infrastructure.security import (
 )
 from medicalbooking.modules.identity.presentation.openapi import identity_fragment
 from medicalbooking.modules.identity.presentation.routes import identity_bp
+from medicalbooking.modules.interoperability.application.laboratory_status import (
+    LaboratoryStatusService,
+)
+from medicalbooking.modules.interoperability.presentation.soap import soap_bp
 from medicalbooking.modules.laboratory.application.use_cases import LabService
 from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
 from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
 from medicalbooking.modules.laboratory.presentation.openapi import laboratory_fragment
 from medicalbooking.modules.laboratory.presentation.routes import lab_bp
+from medicalbooking.modules.payments.application.billing_service import BillingService
+from medicalbooking.modules.payments.application.customers import CustomerDirectory
+from medicalbooking.modules.payments.application.payment_methods import PaymentMethodService
+from medicalbooking.modules.payments.application.webhook_service import StripeWebhookService
+from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
+from medicalbooking.modules.payments.infrastructure.customer_repositories import (
+    SqlStripeCustomerStore,
+)
+from medicalbooking.modules.payments.infrastructure.repositories import SqlPaymentsStore
+from medicalbooking.modules.payments.infrastructure.stripe_checkout import StripeCheckoutGateway
+from medicalbooking.modules.payments.presentation.openapi import payments_fragment
+from medicalbooking.modules.payments.presentation.routes import (
+    auto_refund_after_cancel,
+    payments_bp,
+)
+from medicalbooking.modules.replica.infrastructure.factory import (
+    ReplicaConfigError,
+    build_fallback_read_service,
+)
+from medicalbooking.modules.replica.presentation.routes import replica_bp
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
 from medicalbooking.modules.scheduling.presentation.routes import scheduling_bp
+from medicalbooking.modules.treatments.application.use_cases import TreatmentService
+from medicalbooking.modules.treatments.infrastructure.repositories import SqlTreatmentStore
+from medicalbooking.modules.treatments.presentation.openapi import treatments_fragment
+from medicalbooking.modules.treatments.presentation.routes import treatments_bp
 from medicalbooking.shared.domain.errors import AppError
 from medicalbooking.shared.infrastructure.database import create_database_engine
 from medicalbooking.shared.presentation.api_docs import register_api_docs
@@ -56,15 +87,34 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
-    knowledge, proposals = _build_clinical(engine)
+    app.extensions["medicalbooking.treatments"] = _build_treatments(engine)
+    app.extensions["medicalbooking.laboratory_status"] = LaboratoryStatusService(
+        orders=app.extensions["medicalbooking.laboratory"], clock=_utc_now
+    )
+    app.extensions["medicalbooking.fallback_read"] = _build_fallback_read(settings)
+    app.extensions["medicalbooking.token_verifier"] = JwtTokenIssuer(
+        settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None,
+        settings.jwt_access_ttl_minutes,
+    )
+    knowledge, proposals, shadow, patient_profile = _build_clinical(engine)
     app.extensions["medicalbooking.knowledge"] = knowledge
     app.extensions["medicalbooking.proposals"] = proposals
+    app.extensions["medicalbooking.shadow"] = shadow
+    app.extensions["medicalbooking.patient_profile"] = patient_profile
+    app.extensions["medicalbooking.payments_webhook"] = _build_payments_webhook(settings, engine)
+    app.extensions["medicalbooking.billing"] = build_billing(settings, engine)
+    app.extensions["medicalbooking.payment_methods"] = _build_payment_methods(settings, engine)
 
     app.register_blueprint(health_bp)
+    app.register_blueprint(payments_bp)
     app.register_blueprint(identity_bp)
     app.register_blueprint(scheduling_bp)
     app.register_blueprint(lab_bp)
+    app.register_blueprint(treatments_bp)
+    app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
+    app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
+    app.register_blueprint(replica_bp)
     if settings.docs_enabled:
         register_api_docs(
             app,
@@ -72,7 +122,9 @@ def create_app(settings: Settings | None = None) -> Flask:
                 identity_fragment(),
                 scheduling_fragment(),
                 laboratory_fragment(),
+                treatments_fragment(),
                 clinical_fragment(),
+                payments_fragment(),
             ],
         )
     _register_error_handlers(app)
@@ -88,6 +140,21 @@ def _build_identity(settings: Settings, engine: Any) -> IdentityService:
         directory=SqlUserDirectory(engine),
         hasher=Argon2PasswordHasher(),
         tokens=JwtTokenIssuer(signing_key, settings.jwt_access_ttl_minutes),
+        mailer=_build_mailer(settings),
+        public_base_url=settings.app_public_url,
+        verification_hours=settings.email_verification_hours,
+    )
+
+
+def _build_mailer(settings: Settings) -> BrevoActivationMailer | None:
+    """Brevo is optional: without a key or sender, registration answers but sends nothing."""
+    if settings.brevo_api_key is None or not settings.mail_from:
+        return None
+    return BrevoActivationMailer(
+        api_key=settings.brevo_api_key.get_secret_value(),
+        sender_email=settings.mail_from,
+        sender_name=settings.mail_from_name,
+        asset_base_url=settings.email_assets_base_url,
     )
 
 
@@ -110,11 +177,73 @@ def _build_laboratory(settings: Settings, engine: Any) -> LabService:
     )
 
 
-def _build_clinical(engine: Any) -> tuple[KnowledgeService, ProposalService]:
-    """Composition root for clinical knowledge (E5): one store shared by both services."""
+def _build_treatments(engine: Any) -> TreatmentService:
+    """Composition root for treatments (S4-S6): SQL store and the request's correlation id."""
+    return TreatmentService(
+        store=SqlTreatmentStore(engine),
+        clock=lambda: datetime.now(UTC),
+        correlation_id=lambda: g.get("correlation_id"),
+    )
+
+
+def _build_payments_webhook(settings: Settings, engine: Any) -> StripeWebhookService:
+    """Composition root for the Stripe webhook (E4). The secret stays inside the service."""
+    secret = (
+        settings.stripe_webhook_secret.get_secret_value()
+        if settings.stripe_webhook_secret
+        else None
+    )
+    return StripeWebhookService(
+        store=SqlPaymentsStore(engine, clock=lambda: datetime.now(UTC)),
+        secret=secret,
+        clock=lambda: int(datetime.now(UTC).timestamp()),
+    )
+
+
+def build_billing(settings: Settings, engine: Any) -> BillingService:
+    """Composition root for billing (invoices and checkout). The Stripe key stays in the gateway.
+
+    Return URLs point to the Flutter front end; a payment is confirmed only by the webhook.
+    """
+    gateway = _build_stripe_gateway(settings)
+    return BillingService(
+        store=SqlBillingStore(engine),
+        gateway=gateway,
+        clock=lambda: datetime.now(UTC),
+        customers=CustomerDirectory(store=SqlStripeCustomerStore(engine), gateway=gateway),
+    )
+
+
+def _build_payment_methods(settings: Settings, engine: Any) -> PaymentMethodService:
+    """Composition root for saved payment methods (/me/payment-methods). One Stripe gateway and
+    the same per-user customer mapping that checkout uses."""
+    gateway = _build_stripe_gateway(settings)
+    return PaymentMethodService(
+        gateway=gateway,
+        customers=CustomerDirectory(store=SqlStripeCustomerStore(engine), gateway=gateway),
+    )
+
+
+def _build_stripe_gateway(settings: Settings) -> StripeCheckoutGateway:
+    key = settings.stripe_secret_key.get_secret_value() if settings.stripe_secret_key else None
+    return StripeCheckoutGateway(
+        secret_key=key,
+        return_url=f"{settings.flutter_front_url}/pago/retorno?session_id={{CHECKOUT_SESSION_ID}}",
+        publishable_key=settings.stripe_publishable_key,
+    )
+
+
+def _build_clinical(
+    engine: Any,
+) -> tuple[KnowledgeService, ProposalService, ShadowFindingsService, PatientProfileService]:
+    """Composition root for clinical knowledge (E5), shadow findings (S13) and the patient profile
+    (S12): one shared store."""
     store = SqlClinicalStore(engine)
-    return KnowledgeService(store=store, clock=_utc_now), ProposalService(
-        store=store, clock=_utc_now
+    return (
+        KnowledgeService(store=store, clock=_utc_now),
+        ProposalService(store=store, clock=_utc_now),
+        ShadowFindingsService(store=store, clock=_utc_now),
+        PatientProfileService(store=store, clock=_utc_now),
     )
 
 
@@ -144,7 +273,7 @@ def _register_correlation_id(app: Flask) -> None:
         return response
 
 
-def _problem(status: int, title: str, detail: str) -> tuple[Response, int]:
+def _problem(status: int, title: str, detail: str, code: str | None = None) -> tuple[Response, int]:
     body: dict[str, Any] = {
         "type": "about:blank",
         "title": title,
@@ -152,6 +281,8 @@ def _problem(status: int, title: str, detail: str) -> tuple[Response, int]:
         "detail": detail,
         "correlation_id": g.get("correlation_id", ""),
     }
+    if code is not None:
+        body["code"] = code
     response = jsonify(body)
     response.mimetype = "application/problem+json"
     return response, status
@@ -160,7 +291,7 @@ def _problem(status: int, title: str, detail: str) -> tuple[Response, int]:
 def _register_error_handlers(app: Flask) -> None:
     @app.errorhandler(AppError)
     def _domain_error(error: AppError) -> tuple[Response, int]:
-        return _problem(error.status, error.title, error.detail)
+        return _problem(error.status, error.title, error.detail, error.code)
 
     @app.errorhandler(HTTPException)
     def _http_error(error: HTTPException) -> tuple[Response, int]:
@@ -170,3 +301,11 @@ def _register_error_handlers(app: Flask) -> None:
     def _unexpected_error(error: Exception) -> tuple[Response, int]:
         app.logger.exception("unhandled error", extra={"correlation_id": g.get("correlation_id")})
         return _problem(500, "Internal Server Error", "Unexpected error. Use correlation_id.")
+
+
+def _build_fallback_read(settings: Settings):
+    """Fallback reads from the replicas; None when the replica settings are incomplete."""
+    try:
+        return build_fallback_read_service(settings)
+    except ReplicaConfigError:
+        return None

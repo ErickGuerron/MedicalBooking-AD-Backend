@@ -164,3 +164,36 @@ def test_a_numeric_criterion_without_unit_never_compares_raw_numbers() -> None:
     results = [_result("r1", HB, "10", "g/L", "BAJO")]
 
     assert evaluate(results, [no_unit]).findings == ()
+
+
+# Sample context (E5.1): a criterion with a context fires only for a matching sample context.
+GLU_AYUNO = _rule(
+    "GLU-AYUNO",
+    [CriterionSpec(GLU, "GE", Decimal("126.0"), "mg/dL", contexto="AYUNO")],
+)
+
+
+def _result_ctx(rid, analito, valor, unidad, contexto) -> ResultInput:
+    return ResultInput(
+        resultado_id=rid,
+        analito_id=analito,
+        valor=None if valor is None else Decimal(valor),
+        unidad=unidad,
+        interpretacion=None,
+        contexto_muestra=contexto,
+    )
+
+
+def test_a_fasting_criterion_fires_only_for_a_fasting_sample() -> None:
+    fasting = evaluate([_result_ctx("r1", GLU, "130", "mg/dL", "AYUNO")], [GLU_AYUNO])
+    assert [f.rule_code for f in fasting.findings] == ["GLU-AYUNO"]
+
+
+def test_a_fasting_criterion_does_not_fire_for_a_non_fasting_sample() -> None:
+    non_fasting = evaluate([_result_ctx("r1", GLU, "130", "mg/dL", "NO_AYUNO")], [GLU_AYUNO])
+    assert non_fasting.findings == ()
+
+
+def test_a_fasting_criterion_does_not_fire_when_the_sample_context_is_unknown() -> None:
+    unknown = evaluate([_result_ctx("r1", GLU, "130", "mg/dL", None)], [GLU_AYUNO])
+    assert unknown.findings == ()

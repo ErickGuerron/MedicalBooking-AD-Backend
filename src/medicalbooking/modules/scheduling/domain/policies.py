@@ -3,14 +3,27 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from medicalbooking.shared.domain.errors import ValidationFailed
 
 PERM_BOOK = "citas.reservar"
+PERM_CANCEL_MEDICO = "citas.cancelar_medico"
+ROLE_PATIENT = "PACIENTE"
+# Closed catalog of the reasons a doctor gives when cancelling an appointment of an own agenda.
+MOTIVOS_CANCELACION_MEDICO = frozenset({"IMPREVISTO_MEDICO", "OTRO_MEDICO"})
+MOTIVO_TEXTO_MAX = 1500  # mirrors citas.motivo_cancelacion_texto nvarchar(1500)
+REASON_REQUIRED = "MOTIVO_CANCELACION_REQUERIDO"
+REASON_INVALID = "MOTIVO_CANCELACION_INVALIDO"
 MAX_WINDOW = timedelta(days=31)
 # Appointments that still hold a slot. Mirrors the filtered unique index UX_citas_horario_activa.
 ACTIVE_STATES = frozenset({"PENDIENTE_PAGO", "CONFIRMADA"})
+# Mirrors the CK_citas_estado check constraint.
+APPOINTMENT_STATES = frozenset(
+    {"PENDIENTE_PAGO", "CONFIRMADA", "COMPLETADA", "CANCELADA", "EXPIRADA", "NO_ASISTIO"}
+)
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
 _KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{8,100}")
 
 
@@ -23,6 +36,21 @@ def validate_window(start: datetime, end: datetime) -> None:
         raise ValidationFailed("The window cannot exceed 31 days")
 
 
+MAX_PAGE_OFFSET = 2_147_483_647  # SQL Server OFFSET takes an INT; larger values fail as a 500
+
+
+def validate_page(limit: int, offset: int) -> None:
+    if not 1 <= limit <= MAX_PAGE_SIZE:
+        raise ValidationFailed(f"'limit' must be between 1 and {MAX_PAGE_SIZE}")
+    if not 0 <= offset <= MAX_PAGE_OFFSET:
+        raise ValidationFailed(f"'offset' must be between 0 and {MAX_PAGE_OFFSET}")
+
+
+def validate_estado(estado: str) -> None:
+    if estado not in APPOINTMENT_STATES:
+        raise ValidationFailed("'estado' must be one of: " + ", ".join(sorted(APPOINTMENT_STATES)))
+
+
 def validate_idempotency_key(key: str) -> None:
     if not _KEY_PATTERN.fullmatch(key or ""):
         raise ValidationFailed(
@@ -30,8 +58,62 @@ def validate_idempotency_key(key: str) -> None:
         )
 
 
+def validate_cancellation_reason(codigo: str | None, texto: str | None) -> None:
+    """A doctor's cancellation needs a code from the closed set and a non-blank text.
+
+    The text limit counts UTF-16 units, the unit nvarchar(1500) stores, so no accepted text can
+    overflow the column.
+    """
+    if codigo is None or texto is None or not texto.strip():
+        raise ValidationFailed(REASON_REQUIRED)
+    too_long = len(texto.encode("utf-16-le")) > 2 * MOTIVO_TEXTO_MAX
+    if codigo not in MOTIVOS_CANCELACION_MEDICO or too_long:
+        raise ValidationFailed(REASON_INVALID)
+
+
+def validate_approval_reason(texto: str | None) -> None:
+    """The admin's reason for an exception: non-blank, within the same 1500-unit limit."""
+    if texto is None or not texto.strip():
+        raise ValidationFailed(APPROVAL_REASON_REQUIRED)
+    if len(texto.encode("utf-16-le")) > 2 * MOTIVO_TEXTO_MAX:
+        raise ValidationFailed(APPROVAL_REASON_INVALID)
+
+
 def is_cancellable(state: str) -> bool:
     return state in ACTIVE_STATES
+
+
+PERM_REVIEW_CANCELLATIONS = "citas.revisar_cancelaciones"
+APPROVAL_REASON_REQUIRED = "MOTIVO_APROBACION_REQUERIDO"
+APPROVAL_REASON_INVALID = "MOTIVO_APROBACION_INVALIDO"
+MAX_DOCTOR_CANCELLATIONS_PER_MONTH = 3
+DOCTOR_CANCEL_MIN_NOTICE = timedelta(hours=24)
+LIMITE_CANCELACION_MEDICO = "LIMITE_CANCELACION_MEDICO"
+CANCELACION_MEDICO_FUERA_DE_PLAZO = "CANCELACION_MEDICO_FUERA_DE_PLAZO"
+
+
+def doctor_cancellation_blockers(
+    *, now: datetime, slot_start: datetime, cancellations_this_month: int
+) -> tuple[str, ...]:
+    """Reasons a doctor's cancellation needs an admin approval first; empty when allowed.
+
+    Quota counts the doctor's earlier cancellations in the same UTC month. Notice is measured
+    from ``now`` to the slot start; less than 24 hours (or a started slot) is a blocker.
+    """
+    blockers: list[str] = []
+    if cancellations_this_month >= MAX_DOCTOR_CANCELLATIONS_PER_MONTH:
+        blockers.append(LIMITE_CANCELACION_MEDICO)
+    if slot_start - now < DOCTOR_CANCEL_MIN_NOTICE:
+        blockers.append(CANCELACION_MEDICO_FUERA_DE_PLAZO)
+    return tuple(blockers)
+
+
+def month_bounds(moment: datetime) -> tuple[datetime, datetime]:
+    """UTC calendar month containing ``moment``: [first day, first day of next month)."""
+    utc = moment.astimezone(UTC)
+    start = datetime(utc.year, utc.month, 1, tzinfo=UTC)
+    following = datetime(utc.year + (utc.month == 12), utc.month % 12 + 1, 1, tzinfo=UTC)
+    return start, following
 
 
 def is_same_request(

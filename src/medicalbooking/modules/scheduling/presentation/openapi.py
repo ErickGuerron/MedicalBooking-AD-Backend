@@ -7,7 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from medicalbooking.modules.scheduling.presentation.routes import BookAppointmentRequest
+from medicalbooking.modules.scheduling.domain.policies import APPOINTMENT_STATES
+from medicalbooking.modules.scheduling.presentation.routes import (
+    BookAppointmentRequest,
+    CancelAppointmentRequest,
+)
 
 _PROBLEM_CONTENT = {
     "application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}
@@ -82,6 +86,53 @@ def scheduling_fragment() -> dict[str, Any]:
                 }
             },
             "/api/v1/appointments": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "listAppointments",
+                    "summary": "List own appointments, or the doctor's agenda",
+                    "description": (
+                        "A patient sees own appointments; a doctor with a doctor profile sees "
+                        "appointments of his or her agenda; any other caller gets 403. Ordered "
+                        "by slot start, then id. Rows carry no patient data."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "estado",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
+                        },
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                                "default": 50,
+                            },
+                        },
+                        {
+                            "name": "offset",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "default": 0,
+                            },
+                        },
+                    ],
+                    "responses": {
+                        "200": _json_response("Appointments", "AppointmentSummaryList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller is neither a patient nor a doctor with an agenda"),
+                        "422": _problem("Invalid estado, limit or offset"),
+                    },
+                },
                 "post": {
                     "tags": ["Scheduling"],
                     "operationId": "bookAppointment",
@@ -127,13 +178,20 @@ def scheduling_fragment() -> dict[str, Any]:
                         "409": _problem("Slot already taken, or key reused with another request"),
                         "422": _problem("Invalid body, missing key or slot already started"),
                     },
-                }
+                },
             },
             "/api/v1/appointments/{appointment_id}/cancel": {
                 "post": {
                     "tags": ["Scheduling"],
                     "operationId": "cancelAppointment",
                     "summary": "Cancel an own appointment and release its slot",
+                    "description": (
+                        "A patient cancels an own appointment; a body is optional and its reason "
+                        "fields are ignored. A doctor cancels an appointment of an own agenda and "
+                        "must send motivo_codigo (IMPREVISTO_MEDICO or OTRO_MEDICO) and "
+                        "motivo_texto (1 to 1500 characters). A paid appointment's refund is "
+                        "requested for the patient after the cancellation."
+                    ),
                     "security": _BEARER,
                     "parameters": [
                         {
@@ -143,11 +201,78 @@ def scheduling_fragment() -> dict[str, Any]:
                             "schema": {"type": "string", "format": "uuid"},
                         }
                     ],
+                    "requestBody": {
+                        "required": False,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/CancelAppointmentRequest"}
+                            }
+                        },
+                    },
                     "responses": {
                         "200": _json_response("Appointment cancelled", "Appointment"),
                         "401": _problem("Missing, malformed or inactive credentials"),
-                        "403": _problem("Appointment not found or not owned by the caller"),
-                        "409": _problem("Appointment can no longer be cancelled"),
+                        "403": _problem(
+                            "Appointment not found or not owned by the caller (patient, or doctor "
+                            "of the agenda)"
+                        ),
+                        "409": _problem(
+                            "Appointment can no longer be cancelled, or a doctor's cancellation "
+                            "needs an admin approval first: the 'detail' is "
+                            "LIMITE_CANCELACION_MEDICO (monthly quota reached) and/or "
+                            "CANCELACION_MEDICO_FUERA_DE_PLAZO (less than 24 hours of notice), "
+                            "separated by commas"
+                        ),
+                        "422": _problem(
+                            "Invalid body; a doctor without a valid reason (MOTIVO_CANCELACION_"
+                            "REQUERIDO or MOTIVO_CANCELACION_INVALIDO)"
+                        ),
+                    },
+                }
+            },
+            "/api/v1/appointments/{appointment_id}/cancellation-approval": {
+                "post": {
+                    "tags": ["Scheduling"],
+                    "operationId": "approveDoctorCancellation",
+                    "summary": "Approve one doctor cancellation beyond the quota or notice window",
+                    "description": (
+                        "Requires citas.revisar_cancelaciones (ADMINISTRADOR). "
+                        "Records one approval for the appointment with a non-blank motivo "
+                        "(up to 1500 characters). "
+                        "The doctor then cancels it with the usual cancel endpoint. The approval "
+                        "does not change the monthly quota count."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "appointment_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["motivo"],
+                                    "properties": {"motivo": {"type": "string", "maxLength": 1500}},
+                                    "additionalProperties": False,
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": _json_response("Approval recorded", "CancellationApproval"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks citas.revisar_cancelaciones"),
+                        "404": _problem("Appointment not found"),
+                        "409": _problem(
+                            "Appointment can no longer be cancelled, or it already has an approval"
+                        ),
+                        "422": _problem("Missing or blank motivo (MOTIVO_APROBACION_REQUERIDO)"),
                     },
                 }
             },
@@ -155,6 +280,35 @@ def scheduling_fragment() -> dict[str, Any]:
         "components": {
             "schemas": {
                 "BookAppointmentRequest": BookAppointmentRequest.model_json_schema(),
+                "CancelAppointmentRequest": CancelAppointmentRequest.model_json_schema(),
+                "CancellationApproval": {
+                    "type": "object",
+                    "required": ["cita_id", "aprobada"],
+                    "properties": {
+                        "cita_id": {"type": "string", "format": "uuid"},
+                        "aprobada": {"type": "boolean"},
+                    },
+                },
+                "AppointmentSummary": {
+                    "type": "object",
+                    "required": ["id", "estado", "inicio", "fin"],
+                    "properties": {
+                        "id": {"type": "string", "format": "uuid"},
+                        "estado": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
+                        "inicio": {"type": "string", "format": "date-time"},
+                        "fin": {"type": "string", "format": "date-time"},
+                    },
+                },
+                "AppointmentSummaryList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/AppointmentSummary"},
+                        }
+                    },
+                },
                 "AvailableSlot": {
                     "type": "object",
                     "required": ["horario_id", "medico_id", "inicio_utc", "fin_utc"],
@@ -200,7 +354,7 @@ def scheduling_fragment() -> dict[str, Any]:
                         },
                         "horario_id": {"type": "string", "format": "uuid"},
                         "servicio_id": {"type": "string", "format": "uuid"},
-                        "motivo": {"type": ["string", "null"], "maxLength": 500},
+                        "motivo": {"type": ["string", "null"], "maxLength": 1500},
                         "expiracion_reserva": {"type": ["string", "null"], "format": "date-time"},
                     },
                 },

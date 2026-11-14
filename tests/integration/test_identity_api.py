@@ -193,6 +193,73 @@ def test_administrator_creates_user_and_duplicate_email_conflicts(client, engine
     assert _login(client, new_email, "long-enough-pass-1").status_code == 200
 
 
+def test_admin_creates_a_doctor_with_profile_and_outbox_event(client, engine) -> None:
+    _, admin_email = _account(engine, "ADMINISTRADOR")
+    registration = f"MP-{uuid.uuid4().hex[:12]}"
+    email = f"medico-{uuid.uuid4()}@synthetic.test"
+
+    response = client.post(
+        "/api/v1/users",
+        json={
+            "email": email,
+            "password": "long-enough-pass-1",
+            "first_name": "Nuevo",
+            "last_name": "Medico",
+            "roles": ["MEDICO"],
+            "registro_profesional": registration,
+        },
+        headers=_auth(_token(client, admin_email)),
+    )
+
+    assert response.status_code == 201
+    user_id = response.get_json()["id"]
+    with engine.connect() as conn:
+        profile = conn.execute(
+            text(
+                "SELECT registro_profesional, duracion_cita_min, activo FROM medicos "
+                "WHERE usuario_id = :u"
+            ),
+            {"u": user_id},
+        ).one()
+        events = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM eventos_outbox "
+                "WHERE agregado_id = :u AND tipo_evento = 'usuario.creado'"
+            ),
+            {"u": user_id},
+        ).scalar_one()
+    assert (profile.registro_profesional, profile.duracion_cita_min, bool(profile.activo)) == (
+        registration,
+        30,
+        True,
+    )
+    assert events == 1
+
+
+def test_doctor_without_registration_is_refused_and_nothing_is_created(client, engine) -> None:
+    _, admin_email = _account(engine, "ADMINISTRADOR")
+    email = f"medico-{uuid.uuid4()}@synthetic.test"
+
+    response = client.post(
+        "/api/v1/users",
+        json={
+            "email": email,
+            "password": "long-enough-pass-1",
+            "first_name": "Sin",
+            "last_name": "Registro",
+            "roles": ["MEDICO"],
+        },
+        headers=_auth(_token(client, admin_email)),
+    )
+
+    assert response.status_code == 422
+    with engine.connect() as conn:
+        count = conn.execute(
+            text("SELECT COUNT(*) FROM usuarios WHERE email = :e"), {"e": email}
+        ).scalar_one()
+    assert count == 0
+
+
 def test_patient_cannot_create_users(client, engine) -> None:
     _, email = _account(engine, "PACIENTE")
 

@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "fecha_descarga": "2026-11-09",
+  "fuente": "NHANES (CDC/NCHS), datos públicos",
+  "url_base": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/{anio}/DataFiles/{archivo}.xpt",
+  "criterios": {
+    "edad_min": 18,
+    "edad_max": 65,
+    "embarazo_excluido": [1, 3],
+    "pcr_max_mg_l": 5.0,
+    "variables_obligatorias": ["LBXHGB", "LBXFER", "LBXHSCRP", "LBXTFR", "LBXMCVSI", "LBXRDW"],
+    "tabaquismo": "SMQ020 = 2 o SMQ040 = 3 cuenta como no fumador (ajuste 0). Solo se excluye a quien no tiene ninguna de las dos respuestas.",
+    "ponderacion": "ninguna (conteos sin ponderar)"
+  },
+  "referencia": {"ferritina_corte_ug_l": 15.0},
+  "prueba": {
+    "anemia": "src/medicalbooking/modules/clinical/domain/anemia.py (OMS 2024, Tablas 2 y 3)",
+    "ajuste_tabaquismo": "src/medicalbooking/modules/clinical/domain/hb_adjustments.py (OMS 2024, Tabla 5)",
+    "vcm_bajo_fl": 80.0,
+    "rdw_alto_pct": 14.5,
+    "nota_umbrales": "VCM y RDW son candidatos de prueba sin fuente verificada; no son reglas del sistema."
+  },
+  "ciclos": {
+    "2017-2018": {
+      "anio": 2017,
+      "archivos": {
+        "DEMO_J": "c0b46e0345ea19404928656277c8b0d10b0cca348a9b2fe4fc3c67e8b7ee73ec",
+        "CBC_J": "00f964098dc91272e415344554cbf1b627ecaeb2eda201518527446a7d81e742",
+        "FERTIN_J": "6bc5775797aafbd627316b6208418275fb8951cd571276e1a64436769afa16d5",
+        "HSCRP_J": "19109fab0661ba23352bdf17dd9828bbd5dd8be34759888a2a64d9e33397bfe6",
+        "TFR_J": "6aa6b0f649210ce1605c4d92f6ca8ea4d08d257f11792207c6b58c5d28819b52",
+        "SMQ_J": "73c3708e540cbf520a566508aa629c3e4ba53cad77dae9388ca36384646455f4"
+      }
+    },
+    "2021-2023": {
+      "anio": 2021,
+      "archivos": {
+        "DEMO_L": "ca4374a158b493b8b0163e1388da21d57a18d1b9cecff2aa4e2fa2bec494fe23",
+        "CBC_L": "4405da2a5899dcd11e3ef4dbec0b4d2fca6d736a3efa7a85afee668baa95923f",
+        "FERTIN_L": "9d3e4d4f330553cd82d731c302a3a200d6f75cb1c1b4565a62ce9396d4cc3795",
+        "HSCRP_L": "c56098d7c33509087a4645dfdf39936c14213d9123e1e718831a10d5bc4e3a1b",
+        "TFR_L": "8a73d5f1f3c0f06ef7c9443f823ce819fe7ff4d503a8cc7eba2a84b6f61bb50f",
+        "SMQ_L": "abbefebfa5585b1e19c079fa14be20c113a4649318070197214b258d05b93c50"
+      }
+    }
+  }
+}

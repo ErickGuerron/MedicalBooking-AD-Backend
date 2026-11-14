@@ -34,6 +34,10 @@ Defaults target the local development instance.
 | `JWT_SIGNING_KEY` | none | Required outside `local`/`test`; at least 32 characters |
 | `JWT_ACCESS_TTL_MINUTES` | `15` | Access token lifetime (1 to 60) |
 | `APPOINTMENT_HOLD_MINUTES` | `15` | How long a pending appointment holds its slot (1 to 120) |
+| `STRIPE_SECRET_KEY` | none | Stripe secret key for Checkout Sessions. Test key locally, live key only in the production secret store. Without it checkout answers 503 and creates nothing |
+| `STRIPE_WEBHOOK_SECRET` | none | Signing secret of the webhook endpoint. Without it the webhook answers 503 |
+| `STRIPE_PUBLISHABLE_KEY` | none | Publishable key `pk_test_...` (public). Returned with every checkout so the browser can mount the embedded session. Checkout answers 503 without it |
+| `FLUTTER_FRONT_URL` | `http://localhost:8081` | Base of the checkout return pages `/pago/exito` and `/pago/cancelado` |
 | `LAB_DOCUMENTS_DIR` | `storage/documents` | Private folder for uploaded lab PDFs. Single host only until shared storage exists (E7). Never versioned |
 | `API_DOCS_ENABLED` | unset | Unset: on outside `production`, off in `production`. Set `true` or `false` to override |
 
@@ -45,6 +49,22 @@ Schema is managed with Alembic and reviewed T-SQL scripts in `migrations/sql/`.
 ```powershell
 uv run alembic upgrade head
 ```
+
+## Test accounts
+
+Migration `0007` creates one shared set of accounts so every developer and both frontends sign in the
+same way.
+
+| Email | Role | Password |
+|---|---|---|
+| `paciente1@test.com`, `paciente2@test.com` | PACIENTE | `Password1` |
+| `laboratorista1@test.com` | LABORATORISTA | `Password1` |
+| `medico1@test.com` | MEDICO (can read `paciente1`) | `Password123` |
+| `medico2@test.com` | MEDICO | `Password1` |
+| `administrador1@test.com` | ADMINISTRADOR | `Password123` |
+
+The migration does nothing when `APP_ENV=production`: a known password must never exist in a real
+environment. If a deployed environment ever ran with another `APP_ENV`, remove the accounts.
 
 ## Tests
 
@@ -70,6 +90,49 @@ uv run flask --app medicalbooking.app:create_app run --port 5000
 
 Health probes: `GET /health/live` (no dependencies), `GET /health/ready` (database).
 
+## Documentation
+
+- `docs/backend-status.md`: delivery by phase, what is blocked and by whom, decisions, open advisories.
+- `docs/operations.md`: commands for setup, migrations, running the API and the container, tests,
+  workers and common failures.
+- `docs/knowledge-import.md`: the external sources (LOINC, MedlinePlus, PubMed, ICD-11), how to obtain
+  their credentials, how to run the importers, and their guarantees.
+- `docs/clinical-knowledge.md`: how results are classified, how rules and proposals work, and the
+  medical decision.
+- `docs/deployment.md`: topology of four replicas on two VMs, deployment procedure, and what is still
+  pending.
+- `docs/api/openapi.json`: the OpenAPI document of the running API.
+- `odd/tasks/`: one feature document per phase, with specs, tasks, decisions and evidence.
+
+## External knowledge importers
+
+Terminology and evidence come from public sources, imported as **drafts** with their provenance.
+A doctor with `conocimiento.validar` publishes them. Published knowledge is never changed by an
+import.
+
+| Source | Responsibility | Credentials |
+|---|---|---|
+| LOINC | Confirms analyte codes (`codigo_loinc`); terminology only | `LOINC_USERNAME`, `LOINC_PASSWORD` |
+| MedlinePlus Connect | Educational topics in Spanish for each LOINC code (drafts) | none |
+| PubMed (E-utilities) | Evidence identity (PMID, title, journal) linked to rules | none |
+| ICD-11 (WHO) | Hypothesis code for a rule, only when it is a draft | `ICD11_CLIENT_ID`, `ICD11_CLIENT_SECRET` |
+
+```powershell
+uv run python -m medicalbooking.workers.import_knowledge --dry-run   # fetch and report, write nothing
+uv run python -m medicalbooking.workers.import_knowledge             # fetch, then write in one transaction
+uv run python -m medicalbooking.workers.knowledge_candidates         # candidate report for review (no database write)
+uv run python -m medicalbooking.workers.import_references --dry-run  # validate knowledge/references.csv
+uv run python -m medicalbooking.workers.import_references            # write reviewed ranges as drafts
+```
+
+The APIs do not provide reference ranges. Ranges are read from studies by a person and recorded in
+`knowledge/references.csv` with their PMID; see `docs/knowledge-import.md`.
+
+The configuration is `knowledge/sources.json`. PubMed PMIDs are empty on purpose: choosing the
+literature that supports a rule is a clinical decision. Step 1 fetches every source before any
+write, so one failing source writes nothing. Step 2 writes in a single transaction: an error
+halfway rolls back every earlier write. Re-running is safe; existing codes are never overwritten.
+
 ## Hold expiration worker
 
 Pending appointments release their slot when the hold ends (`APPOINTMENT_HOLD_MINUTES`).
@@ -82,6 +145,27 @@ uv run python -m medicalbooking.workers.expire_holds   # prints expired_holds=N,
 Schedule it every few minutes (cron, Windows Task Scheduler, or an Azure job). Running it
 from several processes at once is safe: each hold is claimed with row locks.
 
+## Checkout retry worker
+
+When Stripe cannot create a Checkout Session, the payment attempt stays pending and the
+retry is scheduled: 1, 1, 2, 2 and 5 minutes, five retries at most. A separate one-shot
+process runs the due retries; the API replicas never run it:
+
+```powershell
+uv run python -m medicalbooking.workers.retry_failed_checkouts   # prints checkout_retries attempted=N succeeded=M failed=K, exit 0 on success
+```
+
+Schedule it every minute. It only creates the Stripe session again (never a charge). Each
+retry uses its own Idempotency-Key (`<attempt key>:<retry number>`), so overlapping runs
+converge on the same session. An attempt whose invoice is no longer pending is cancelled.
+After the fifth failed retry the attempt is rejected and the patient can start a new one.
+
+The patient sees the state in the app with `GET /api/v1/invoices/{factura_id}/checkout-status`.
+"Reintentar ahora" runs the next retry at once: send `reintentar_ahora: true` on
+`POST /api/v1/payments/checkout`. Without that flag a routine reopen never spends a retry.
+Patients can use it at most once a minute: a request sooner than one minute after the last
+failure answers 409 and calls no provider.
+
 ## Endpoints
 
 All endpoints except login and health require `Authorization: Bearer <token>`.
@@ -92,10 +176,22 @@ Errors use `application/problem+json` with `correlation_id`.
 | `POST /api/v1/auth/login` | Sign in, returns a bearer token | Same answer for unknown email, wrong password and locked account. Five consecutive failures lock the account for 15 minutes; a success clears the counter |
 | `GET /api/v1/me` | Current user, roles and permissions | |
 | `POST /api/v1/users` | Create a user | Requires `usuarios.administrar` |
+| `GET /api/v1/users?limit=&offset=` | List user accounts (no credentials) | Requires `usuarios.administrar`. Ordered by email; `limit` 1 to 200 (default 50), `offset` 0 or more; invalid values get `422` |
+| `POST /api/v1/auth/register` | Patient self-registration, always `202` with the same message | Creates an inactive patient and sends an activation link by Brevo (`BREVO_API_KEY`, `MAIL_FROM`, `MAIL_FROM_NAME`). Same answer and work for registered and new emails. Rate-limited with login at Nginx |
+| `GET /api/v1/auth/verify-email?token=...` | Activate the account from the email link | Single-use token valid 24 hours, stored only as a SHA-256 hash. Invalid, used or expired tokens get one generic `422` |
 | `GET /api/v1/availability?desde=&hasta=&medico_id=` | Free slots in a window | ISO-8601 with offset; window at most 31 days; past slots never returned |
 | `POST /api/v1/appointments` | Reserve a slot (status `PENDIENTE_PAGO`) | Requires header `Idempotency-Key` (8 to 100 characters). Same key and body returns the original (200); same key with another body returns 409; a new reservation returns 201 |
-| `POST /api/v1/appointments/{id}/cancel` | Cancel an own appointment and release its slot | Missing and foreign appointments both return 403 |
+| `GET /api/v1/appointments?estado=&limit=&offset=` | List own appointments, or the doctor's agenda | Patients see their own; a doctor with a doctor profile sees the agenda; anyone else gets 403. Rows carry `id`, `estado`, `inicio` and `fin` only. Same paging rules as users |
+| `POST /api/v1/appointments/{id}/cancel` | Cancel an own appointment and release its slot; a doctor cancels an appointment of an own agenda | Patients send no body (any reason fields are ignored). A doctor must send `{"motivo_codigo": "IMPREVISTO_MEDICO" or "OTRO_MEDICO", "motivo_texto": 1 to 500 characters}`; otherwise 422 and nothing changes. Missing and foreign appointments both return 403. A paid cancellation requests the patient's refund |
+| `POST /api/v1/invoices` | Invoice an own active appointment (one detail line at the service price) | Body `{"cita_id"}`. Status `PENDIENTE`; one invoice per appointment (409). Missing and foreign appointments both return 403 |
+| `POST /api/v1/payments/checkout` | Start an embedded Stripe Checkout for an own pending invoice | Body `{"factura_id"}` plus optional `"reintentar_ahora"` (default false), header `Idempotency-Key`. With `reintentar_ahora` true a scheduled retry runs at once and uses one of its five retries; without it a pending attempt with a scheduled retry answers 409 and Stripe is not called. 201 new, 200 replay of the same key and invoice, 409 for another invoice. A new key on an invoice with a pending attempt first asks Stripe about that session (read only): open returns its checkout (200); paid reconciles the payment and the invoice to PAGADA and answers 409 without charging again; expired cancels the attempt and opens a new one (201). Stripe unreachable or an unexpected state answers 503 and changes nothing. Returns an embedded Checkout Session: `client_secret` (mounts the session in the browser) and `publishable_key`. The session belongs to the caller's Stripe customer (created on first use) and offers to save the card (`payment_intent_data[setup_future_usage]=off_session`). The session has no hosted URL. Its `return_url` is `FLUTTER_FRONT_URL/pago/retorno?session_id=...`. Payment is confirmed only by the verified webhook, never by the redirect. 503 when Stripe is not configured or unreachable |
+| `POST /api/v1/payments/webhook` | Stripe event (no JWT) | Signature over the raw body; duplicates are recorded once |
+| `GET /api/v1/invoices/{factura_id}/checkout-status` | Latest checkout attempt of an own invoice | Returns `pago_id`, `estado`, `reintentos_realizados`, `reintentos_maximos` (5), `reintentos_agotados`, `ultimo_error_codigo` and `proximo_reintento_en`. Foreign and missing invoices answer the same 403; an invoice without attempts answers 404. |
+| `GET /api/v1/me/payment-methods` | List the caller's saved cards, one page at a time | Requires `metodos_pago.gestionar` (patients). Read from Stripe on each call; items carry `id`, `brand`, `last4`, `exp_month`, `exp_year`, `is_default`. Query `limit` (1 to 100, default 10) and `starting_after` (a payment method id); anything else answers 422 before Stripe is called. Response `{items, has_more, next_cursor}`: `next_cursor` is the last item's id when `has_more` is true, otherwise null. No card data is stored, only the Stripe customer id in `stripe_clientes`. A user without a customer gets `{"items": []}` with no Stripe call |
+| `POST /api/v1/me/payment-methods/setup-intents` | Start saving a card without paying | Requires header `Idempotency-Key` (8 to 100 characters; missing or invalid answers 422 with no provider call or local write). Creates the caller's Stripe customer on first use (Idempotency-Key `customer-<usuario_id>`), then an off-session SetupIntent with Idempotency-Key `setup-<usuario_id>-<client key>`, so a repeat returns the same SetupIntent. Returns `client_secret` and `publishable_key` (201). 503 when Stripe is not configured or unreachable; nothing is stored |
+| `DELETE /api/v1/me/payment-methods/{payment_method_id}` | Remove one of the caller's saved cards | The card is read from Stripe first. Missing and foreign cards both answer 403 with the same body. 204 on success |
 | `POST /api/v1/lab/orders` | Order lab tests for a patient (status `SOLICITADA`) | Requires `ordenes.crear` and a doctor profile. Test types must be active |
+| `GET /api/v1/lab/orders?estado=&limit=&offset=` | List the orders the caller may read, newest first | Patient sees own orders; ordering doctor sees orders placed by them; others get 403. No result values in the list |
 | `GET /api/v1/lab/orders/{id}` | Read an order | Only the patient or the ordering doctor; anything else is 403 |
 | `POST /api/v1/lab/orders/{id}/results` | Enter results by hand for one test | Requires `resultados.registrar`. No clinical classification (E5). A test can be recorded once (409 otherwise) |
 | `GET /api/v1/lab/orders/{id}/results` | Read the results | Patient or ordering doctor; each read is audited |
@@ -106,12 +202,15 @@ Errors use `application/problem+json` with `correlation_id`.
 | `POST /api/v1/knowledge/analytes` | Create an analyte | Requires `conocimiento.administrar` |
 | `GET /api/v1/knowledge/analytes/{id}/references?fecha=` | Validated reference ranges valid on a date | Drafts are never listed |
 | `POST /api/v1/knowledge/analytes/{id}/references` | Create a draft reference range | Requires `conocimiento.administrar`. Invisible until validated |
+| `GET /api/v1/knowledge/references?analito_id=&estado=` | List reference ranges with their state | Requires `conocimiento.validar` or `conocimiento.administrar`. Listing `BORRADOR` needs `analito_id`; unknown analyte gets 404 |
 | `POST /api/v1/knowledge/references/{id}/validate` | Validate a draft range | Requires `conocimiento.validar`. 409 when it overlaps a validated range |
+| `GET /api/v1/knowledge/rules?estado=` | List declarative rules | Requires `conocimiento.leer` (validated rules only). `conocimiento.validar` or `conocimiento.administrar` also see drafts; asking for `BORRADOR` without them gets 403 |
 | `POST /api/v1/knowledge/rules` | Create a declarative rule draft | Requires `conocimiento.administrar`. Numeric criteria need a unit |
 | `POST /api/v1/knowledge/rules/{id}/validate` | Validate a rule draft | Requires `conocimiento.validar`. Only validated rules run |
 | `POST /api/v1/lab/orders/{id}/evaluate` | Create the preliminary proposal of a complete order | Deterministic. One proposal per order. Never a diagnosis |
 | `GET /api/v1/lab/orders/{id}/proposal` | Read the proposal | Ordering doctor only; denials are audited |
 | `POST /api/v1/clinical/proposals/{id}/reviews` | Record the single medical decision | `ACEPTAR`, `CORREGIR` (needs the corrected conclusion) or `RECHAZAR` (needs a reason). The proposal content is never rewritten |
+| `GET /api/v1/lab/orders/{id}/sombra/snapshots/{snapshot_id}/hallazgos/{hallazgo}/ediciones` | Append-only edit history of one shadow finding | Same access as the shadow read (`resultados.leer_con_acceso` and the ordering doctor). Missing and foreign resources both return 403; every read is audited |
 
 Booking is safe under concurrency: the slot is claimed with a conditional update and a
 filtered unique index, so concurrent requests for one slot yield exactly one `201`.

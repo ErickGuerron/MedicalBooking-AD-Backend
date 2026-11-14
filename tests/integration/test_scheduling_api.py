@@ -66,19 +66,27 @@ def _token(app: Flask, user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {response.get_json()['access_token']}"}
 
 
-def _slot(engine: Engine, *, days_ahead: int = 2) -> str:
-    """Create a clinician, a schedule and one free future slot; return the slot id."""
-    doctor = _user(engine, "MEDICO")
+def _slot(engine: Engine, *, days_ahead: int = 2, doctor: str | None = None) -> str:
+    """Create a schedule and one free future slot; return the slot id.
+
+    The clinician is created unless the caller passes the user id of an existing doctor.
+    """
+    if doctor is None:
+        doctor = _user(engine, "MEDICO")
     start = datetime.now(UTC).replace(second=0, microsecond=0) + timedelta(days=days_ahead)
     start = start.replace(tzinfo=None)
     with engine.begin() as conn:
         medico_id = conn.execute(
-            text(
-                "INSERT INTO medicos (id, usuario_id, registro_profesional) "
-                "OUTPUT inserted.id VALUES (NEWID(), :u, :reg)"
-            ),
-            {"u": doctor, "reg": f"REG-{doctor}"},
-        ).scalar_one()
+            text("SELECT id FROM medicos WHERE usuario_id = :u"), {"u": doctor}
+        ).scalar()
+        if medico_id is None:
+            medico_id = conn.execute(
+                text(
+                    "INSERT INTO medicos (id, usuario_id, registro_profesional) "
+                    "OUTPUT inserted.id VALUES (NEWID(), :u, :reg)"
+                ),
+                {"u": doctor, "reg": f"REG-{doctor}"},
+            ).scalar_one()
         sede_id = conn.execute(
             text("INSERT INTO sedes (id, nombre) OUTPUT inserted.id VALUES (NEWID(), N'Sede test')")
         ).scalar_one()
@@ -282,7 +290,7 @@ def test_twenty_parallel_bookings_leave_exactly_one_active_appointment(app, engi
         _count(
             engine,
             "SELECT COUNT(*) FROM eventos_outbox e JOIN citas c ON c.id = e.agregado_id "
-            "WHERE c.horario_id = :h",
+            "WHERE c.horario_id = :h AND e.tipo_evento = 'cita.reservada'",
             h=slot,
         )
         == 1

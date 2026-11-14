@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from datetime import UTC
+from typing import Any, Literal
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -11,7 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from medicalbooking.modules.identity.presentation.routes import authenticated
 from medicalbooking.modules.laboratory.application.ports import (
     LabOrder,
+    LabOrderSummary,
     LabResult,
+    LabTestType,
+    PatientSummary,
     ResultEntry,
     StoredDocument,
 )
@@ -42,6 +46,10 @@ class ResultItem(BaseModel):
     analito_id: uuid.UUID | None = None
     metodo_analitico: str | None = Field(default=None, max_length=150)
     tipo_muestra: str | None = Field(default=None, max_length=80)
+    # Optional (E5.1): e.g. "AYUNO". Unknown (absent) context never satisfies a context-bound rule.
+    contexto_muestra: str | None = Field(default=None, max_length=100)
+    # Optional (S18): pregnancy state at sample time. Absent means unknown.
+    estado_embarazo: Literal["NO", "T1", "T2", "T3"] | None = None
 
 
 class RecordResultsRequest(BaseModel):
@@ -58,6 +66,21 @@ class ReviewRequest(BaseModel):
     recomendaciones: str | None = Field(default=None, max_length=4000)
 
 
+class ListOrdersQuery(BaseModel):
+    """Query string of GET /lab/orders. Unknown parameters are ignored, invalid ones are 422."""
+
+    estado: Literal["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"] | None = None
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0, le=2_147_483_647)
+
+
+class PatientListQuery(BaseModel):
+    """Query string of GET /patients: one page of the patient directory (default 50, max 100)."""
+
+    limit: int = Field(default=50, ge=1, le=100)
+    offset: int = Field(default=0, ge=0, le=2_147_483_647)
+
+
 def _service() -> LabService:
     return current_app.extensions["medicalbooking.laboratory"]
 
@@ -66,6 +89,10 @@ def _parse(model: type[BaseModel]) -> Any:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         raise ValidationFailed("Request body must be a JSON object")
+    return _validate(model, data)
+
+
+def _validate(model: type[BaseModel], data: dict[str, Any]) -> Any:
     try:
         return model.model_validate(data)
     except ValidationError as error:
@@ -84,6 +111,30 @@ def _order_json(order: LabOrder) -> dict[str, Any]:
             {"detalle_id": d.id, "tipo_prueba_id": d.tipo_prueba_id, "estado": d.estado}
             for d in order.details
         ],
+    }
+
+
+def _summary_json(order: LabOrderSummary) -> dict[str, Any]:
+    moment = order.fecha if order.fecha.tzinfo is not None else order.fecha.replace(tzinfo=UTC)
+    return {
+        "id": order.id,
+        "paciente_id": order.paciente_id,
+        "estado": order.estado,
+        "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+
+def _patient_json(patient: PatientSummary) -> dict[str, Any]:
+    return {"id": patient.id, "nombres": patient.nombre, "apellidos": patient.apellido}
+
+
+def _test_type_json(test_type: LabTestType) -> dict[str, Any]:
+    return {
+        "id": test_type.id,
+        "codigo": test_type.codigo,
+        "nombre": test_type.nombre,
+        "descripcion": test_type.descripcion,
+        "unidad_predeterminada": test_type.unidad_predeterminada,
     }
 
 
@@ -123,6 +174,38 @@ def create_order() -> tuple[Response, int]:
     return jsonify(_order_json(order)), 201
 
 
+@lab_bp.get("/lab/orders")
+@authenticated
+def list_orders() -> tuple[Response, int]:
+    query = _validate(ListOrdersQuery, request.args.to_dict())
+    rows = _service().list_orders(
+        g.actor, estado=query.estado, limit=query.limit, offset=query.offset
+    )
+    return jsonify(items=[_summary_json(row) for row in rows]), 200
+
+
+@lab_bp.get("/patients")
+@authenticated
+def list_patients() -> tuple[Response, int]:
+    query = _validate(PatientListQuery, request.args.to_dict())
+    rows = _service().list_patients(g.actor, limit=query.limit, offset=query.offset)
+    return (
+        jsonify(
+            items=[_patient_json(row) for row in rows],
+            limit=query.limit,
+            offset=query.offset,
+        ),
+        200,
+    )
+
+
+@lab_bp.get("/lab/test-types")
+@authenticated
+def list_test_types() -> tuple[Response, int]:
+    rows = _service().list_test_types()
+    return jsonify(items=[_test_type_json(row) for row in rows]), 200
+
+
 @lab_bp.get("/lab/orders/<uuid:order_id>")
 @authenticated
 def get_order(order_id: uuid.UUID) -> tuple[Response, int]:
@@ -142,6 +225,8 @@ def record_results(order_id: uuid.UUID) -> tuple[Response, int]:
             analito_id=None if item.analito_id is None else str(item.analito_id),
             metodo_analitico=item.metodo_analitico,
             tipo_muestra=item.tipo_muestra,
+            contexto_muestra=item.contexto_muestra,
+            estado_embarazo=item.estado_embarazo,
         )
         for item in body.resultados
     ]

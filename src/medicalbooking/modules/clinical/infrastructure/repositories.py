@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Connection, Engine, bindparam, text
 
 from medicalbooking.modules.clinical.application.ports import (
     AnalyteView,
@@ -22,6 +22,10 @@ from medicalbooking.modules.clinical.application.ports import (
     NewRule,
     OrderForEvaluation,
     ProposalView,
+    ReferenceView,
+    RuleView,
+    ShadowEditView,
+    ShadowItemRecord,
 )
 from medicalbooking.modules.clinical.domain import (
     CriterionSpec,
@@ -47,6 +51,25 @@ _REF_SELECT_WITH_STATE = (
     "edad_min_dias, edad_max_dias, metodo_analitico, tipo_muestra, contexto, "
     "fecha_inicio, fecha_fin, estado FROM conocimiento_referencias "
 )
+
+# Listings bind their state list as one expanding parameter: the SQL text stays constant.
+_LIST_REFERENCES = text(
+    "SELECT analito_id, id, version, unidad, referencia_min, referencia_max, sexo_aplicable, "
+    "edad_min_dias, edad_max_dias, metodo_analitico, tipo_muestra, contexto, fecha_inicio, "
+    "fecha_fin, estado FROM conocimiento_referencias WHERE estado IN :estados "
+    "ORDER BY analito_id, fecha_inicio"
+).bindparams(bindparam("estados", expanding=True))
+_LIST_REFERENCES_OF_ANALYTE = text(
+    "SELECT analito_id, id, version, unidad, referencia_min, referencia_max, sexo_aplicable, "
+    "edad_min_dias, edad_max_dias, metodo_analitico, tipo_muestra, contexto, fecha_inicio, "
+    "fecha_fin, estado FROM conocimiento_referencias WHERE estado IN :estados AND analito_id = :a "
+    "ORDER BY analito_id, fecha_inicio"
+).bindparams(bindparam("estados", expanding=True))
+_LIST_RULES = text(
+    "SELECT id, codigo, version, nombre, descripcion, tipo, expresion_logica, mensaje_propuesto, "
+    "prioridad, estado FROM conocimiento_reglas WHERE estado IN :estados "
+    "ORDER BY codigo, version"
+).bindparams(bindparam("estados", expanding=True))
 
 
 def _canonical(value: object) -> str:
@@ -162,6 +185,80 @@ class SqlClinicalStore:
                 {"a": guid, "hoy": on},
             ).all()
         return [_reference(row) for row in rows]
+
+    def list_references(
+        self, analito_id: str | None, estados: tuple[str, ...]
+    ) -> list[ReferenceView]:
+        if not estados:
+            return []
+        if analito_id is None:
+            statement, params = _LIST_REFERENCES, {"estados": list(estados)}
+        else:
+            guid = _as_guid(analito_id)
+            if guid is None:
+                return []
+            statement = _LIST_REFERENCES_OF_ANALYTE
+            params = {"estados": list(estados), "a": guid}
+        with self._engine.connect() as conn:
+            rows = conn.execute(statement, params).all()
+        return [
+            ReferenceView(
+                reference=_reference(row),
+                analito_id=_canonical(row.analito_id),
+                estado=row.estado,
+            )
+            for row in rows
+        ]
+
+    def list_rules(self, estados: tuple[str, ...]) -> list[RuleView]:
+        if not estados:
+            return []
+        with self._engine.connect() as conn:
+            rules = conn.execute(_LIST_RULES, {"estados": list(estados)}).all()
+            views = []
+            for rule in rules:
+                criteria = conn.execute(
+                    text(
+                        "SELECT analito_id, operador, umbral_numerico, unidad, contexto "
+                        "FROM conocimiento_reglas_criterios WHERE regla_id = :r "
+                        "ORDER BY orden_criterio"
+                    ),
+                    {"r": rule.id},
+                ).all()
+                views.append(
+                    RuleView(
+                        id=_canonical(rule.id),
+                        codigo=rule.codigo,
+                        version=rule.version,
+                        nombre=rule.nombre,
+                        descripcion=rule.descripcion,
+                        tipo=rule.tipo,
+                        expresion_logica=rule.expresion_logica,
+                        mensaje=rule.mensaje_propuesto,
+                        prioridad=rule.prioridad,
+                        estado=rule.estado,
+                        criteria=tuple(
+                            CriterionSpec(
+                                analito_id=_canonical(item.analito_id),
+                                operador=item.operador,
+                                umbral=item.umbral_numerico,
+                                unidad=item.unidad,
+                                contexto=item.contexto,
+                            )
+                            for item in criteria
+                        ),
+                    )
+                )
+        return views
+
+    def analyte_id_by_loinc(self, codigo_loinc: str) -> str | None:
+        """The active analyte that carries this LOINC code, or None (S20)."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id FROM conocimiento_analitos WHERE codigo_loinc = :c AND activo = 1"),
+                {"c": codigo_loinc},
+            ).first()
+        return None if row is None else str(row.id)
 
     def create_reference(self, command: NewReference, now: datetime) -> None:
         with self._engine.begin() as conn:
@@ -332,7 +429,8 @@ class SqlClinicalStore:
                 return None
             rows = conn.execute(
                 text(
-                    "SELECT r.id, r.analito_id, r.valor_numerico, r.unidad, r.interpretacion "
+                    "SELECT r.id, r.analito_id, r.valor_numerico, r.unidad, r.interpretacion, "
+                    "r.contexto_muestra "
                     "FROM resultados_laboratorio r "
                     "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
                     "WHERE d.orden_id = :o ORDER BY r.id"
@@ -352,10 +450,282 @@ class SqlClinicalStore:
                     valor=None if row.valor_numerico is None else Decimal(row.valor_numerico),
                     unidad=row.unidad,
                     interpretacion=row.interpretacion,
+                    contexto_muestra=row.contexto_muestra,
                 )
                 for row in rows
             ),
         )
+
+    def pregnancy_states_for_order(self, order_id: str) -> list[str | None]:
+        """Pregnancy state of each result of one order (S18)."""
+        guid = _as_guid(order_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT r.estado_embarazo "
+                    "FROM resultados_laboratorio r "
+                    "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                    "WHERE d.orden_id = :o"
+                ),
+                {"o": guid},
+            ).all()
+        return [row.estado_embarazo for row in rows]
+
+    def loinc_results_for_order(self, order_id: str) -> list[tuple[str, str | None, Decimal]]:
+        """Numeric results of one order whose analyte carries a LOINC code (shadow mode, S13)."""
+        guid = _as_guid(order_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT a.codigo_loinc, r.unidad, r.valor_numerico "
+                    "FROM resultados_laboratorio r "
+                    "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                    "JOIN conocimiento_analitos a ON a.id = r.analito_id "
+                    "WHERE d.orden_id = :o AND a.codigo_loinc IS NOT NULL "
+                    "AND r.valor_numerico IS NOT NULL ORDER BY r.id"
+                ),
+                {"o": guid},
+            ).all()
+        return [(row.codigo_loinc, row.unidad, Decimal(row.valor_numerico)) for row in rows]
+
+    def loinc_evidence_for_order(self, order_id: str) -> list[tuple[str, str, str | None, Decimal]]:
+        """Like loinc_results_for_order, with the result id kept as evidence (S9)."""
+        guid = _as_guid(order_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT r.id, a.codigo_loinc, r.unidad, r.valor_numerico "
+                    "FROM resultados_laboratorio r "
+                    "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                    "JOIN conocimiento_analitos a ON a.id = r.analito_id "
+                    "WHERE d.orden_id = :o AND a.codigo_loinc IS NOT NULL "
+                    "AND r.valor_numerico IS NOT NULL ORDER BY r.id"
+                ),
+                {"o": guid},
+            ).all()
+        return [
+            (_canonical(row.id), row.codigo_loinc, row.unidad, Decimal(row.valor_numerico))
+            for row in rows
+        ]
+
+    def patient_clinical_profile(
+        self, paciente_id: str
+    ) -> tuple[int | None, bool | None, int | None]:
+        guid = _as_guid(paciente_id)
+        if guid is None:
+            return None, None, None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT altitud_residencia_m, fumador, cigarrillos_dia "
+                    "FROM pacientes WHERE id = :p"
+                ),
+                {"p": guid},
+            ).first()
+        if row is None:
+            return None, None, None
+        fumador = None if row.fumador is None else bool(row.fumador)
+        return row.altitud_residencia_m, fumador, row.cigarrillos_dia
+
+    def own_clinical_profile(
+        self, usuario_id: str
+    ) -> tuple[int | None, bool | None, int | None] | None:
+        guid = _as_guid(usuario_id)
+        if guid is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT altitud_residencia_m, fumador, cigarrillos_dia "
+                    "FROM pacientes WHERE usuario_id = :u"
+                ),
+                {"u": guid},
+            ).first()
+        if row is None:
+            return None
+        fumador = None if row.fumador is None else bool(row.fumador)
+        return row.altitud_residencia_m, fumador, row.cigarrillos_dia
+
+    def save_patient_clinical_profile(
+        self,
+        usuario_id: str,
+        altitud_residencia_m: int | None,
+        fumador: bool | None,
+        cigarrillos_dia: int | None,
+    ) -> str | None:
+        guid = _as_guid(usuario_id)
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT id FROM pacientes WHERE usuario_id = :u"), {"u": guid}
+            ).first()
+            if row is None:
+                return None
+            conn.execute(
+                text(
+                    "UPDATE pacientes SET altitud_residencia_m = :alt, fumador = :fum, "
+                    "cigarrillos_dia = :cig WHERE id = :p"
+                ),
+                {
+                    "alt": altitud_residencia_m,
+                    "fum": None if fumador is None else int(fumador),
+                    "cig": cigarrillos_dia,
+                    "p": row.id,
+                },
+            )
+        return _canonical(row.id)
+
+    def record_shadow_snapshot(
+        self,
+        order_id: str,
+        version_regla: str,
+        items: tuple[ShadowItemRecord, ...],
+        actor_user_id: str,
+        now: datetime,
+    ) -> str:
+        """One transaction: the snapshot, its items and their evidence. Never updated afterwards."""
+        guid = _as_guid(order_id)
+        snapshot_id = str(uuid.uuid4())
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO hallazgos_sombra_snapshots (id, orden_id, version_regla, modo, "
+                    "modifica_decision, creado_por, creado_en) "
+                    "VALUES (:id, :o, :version, 'SOMBRA', 0, :u, :ahora)"
+                ),
+                {
+                    "id": snapshot_id,
+                    "o": guid,
+                    "version": version_regla,
+                    "u": actor_user_id,
+                    "ahora": _naive(now),
+                },
+            )
+            for item in items:
+                item_id = str(uuid.uuid4())
+                conn.execute(
+                    text(
+                        "INSERT INTO hallazgos_sombra_items (id, snapshot_id, hallazgo, categoria, "
+                        "corte_valor, corte_unidad, fuente, motivo) "
+                        "VALUES (:id, :s, :hallazgo, :categoria, :corte, :unidad, :fuente, :motivo)"
+                    ),
+                    {
+                        "id": item_id,
+                        "s": snapshot_id,
+                        "hallazgo": item.hallazgo,
+                        "categoria": item.categoria,
+                        "corte": item.corte_valor,
+                        "unidad": item.corte_unidad,
+                        "fuente": item.fuente,
+                        "motivo": item.motivo,
+                    },
+                )
+                for evidence in item.evidencia:
+                    conn.execute(
+                        text(
+                            "INSERT INTO hallazgos_sombra_evidencias (item_id, resultado_id, rol, "
+                            "valor_observado, unidad_observada) "
+                            "VALUES (:i, :r, :rol, :valor, :unidad)"
+                        ),
+                        {
+                            "i": item_id,
+                            "r": evidence.resultado_id,
+                            "rol": evidence.rol,
+                            "valor": evidence.valor,
+                            "unidad": evidence.unidad,
+                        },
+                    )
+        return snapshot_id
+
+    def shadow_item_category(self, order_id: str, snapshot_id: str, hallazgo: str) -> str | None:
+        o_guid, s_guid = _as_guid(order_id), _as_guid(snapshot_id)
+        if o_guid is None or s_guid is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT i.categoria FROM hallazgos_sombra_items i "
+                    "JOIN hallazgos_sombra_snapshots s ON s.id = i.snapshot_id "
+                    "WHERE s.id = :s AND s.orden_id = :o AND i.hallazgo = :h"
+                ),
+                {"s": s_guid, "o": o_guid, "h": hallazgo},
+            ).first()
+        return None if row is None else row.categoria
+
+    def record_shadow_edit(
+        self,
+        snapshot_id: str,
+        hallazgo: str,
+        accion: str,
+        categoria_anterior: str,
+        categoria_nueva: str,
+        motivo: str,
+        medico_user_id: str,
+        now: datetime,
+    ) -> str:
+        edit_id = str(uuid.uuid4())
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO hallazgos_sombra_ediciones (id, snapshot_id, hallazgo, accion, "
+                    "categoria_anterior, categoria_nueva, motivo, medico_user_id, creado_en) "
+                    "VALUES (:id, :s, :h, :a, :ant, :nueva, :motivo, :m, :ahora)"
+                ),
+                {
+                    "id": edit_id,
+                    "s": _as_guid(snapshot_id),
+                    "h": hallazgo,
+                    "a": accion,
+                    "ant": categoria_anterior,
+                    "nueva": categoria_nueva,
+                    "motivo": motivo,
+                    "m": _as_guid(medico_user_id),
+                    "ahora": _naive(now),
+                },
+            )
+        return edit_id
+
+    def list_shadow_edits(self, snapshot_id: str, hallazgo: str) -> list[ShadowEditView]:
+        guid = _as_guid(snapshot_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, accion, categoria_anterior, categoria_nueva, motivo, "
+                    "medico_user_id, creado_en FROM hallazgos_sombra_ediciones "
+                    "WHERE snapshot_id = :s AND hallazgo = :h ORDER BY creado_en, id"
+                ),
+                {"s": guid, "h": hallazgo},
+            ).all()
+        return [
+            ShadowEditView(
+                id=_canonical(row.id),
+                accion=row.accion,
+                categoria_anterior=row.categoria_anterior,
+                categoria_nueva=row.categoria_nueva,
+                motivo=row.motivo,
+                medico_user_id=_canonical(row.medico_user_id),
+                creado_en=row.creado_en.replace(tzinfo=UTC),
+            )
+            for row in rows
+        ]
+
+    def patient_sex_birth(self, paciente_id: str) -> tuple[str | None, date | None]:
+        guid = _as_guid(paciente_id)
+        if guid is None:
+            return None, None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT sexo_registrado, fecha_nacimiento FROM pacientes WHERE id = :p"),
+                {"p": guid},
+            ).first()
+        return (None, None) if row is None else (row.sexo_registrado, row.fecha_nacimiento)
 
     def validated_rules(self, now: datetime) -> list[RuleSpec]:
         moment = _naive(now)
@@ -373,7 +743,7 @@ class SqlClinicalStore:
             for rule in rules:
                 criteria = conn.execute(
                     text(
-                        "SELECT analito_id, operador, umbral_numerico, unidad "
+                        "SELECT analito_id, operador, umbral_numerico, unidad, contexto "
                         "FROM conocimiento_reglas_criterios WHERE regla_id = :r "
                         "ORDER BY orden_criterio"
                     ),
@@ -393,6 +763,7 @@ class SqlClinicalStore:
                                 operador=c.operador,
                                 umbral=c.umbral_numerico,
                                 unidad=c.unidad,
+                                contexto=c.contexto,
                             )
                             for c in criteria
                         ),
@@ -639,7 +1010,14 @@ class SqlClinicalStore:
                 ),
                 {"e": new_state, "p": guid},
             )
-            _outbox(conn, guid, "propuesta.revisada", {"decision": decision}, moment, 2)
+            _outbox(
+                conn,
+                guid,
+                "propuesta.revisada",
+                _review_projection(conn, guid, decision, moment),
+                moment,
+                2,
+            )
         return "CREATED"
 
     def record_audit(self, event: AuditEvent) -> None:
@@ -686,3 +1064,53 @@ def _outbox(
             "ahora": now,
         },
     )
+
+
+def _review_projection(
+    conn: Connection, proposal_guid: str, decision: str, moment: datetime
+) -> dict:
+    """Replica snapshot of a reviewed proposal. Only ACEPTADA and CORREGIDA carry content.
+
+    A rejected proposal is projected as its state alone, so the replica removes what it holds.
+    The physician note (observacion_medica) is never projected.
+    """
+    row = conn.execute(
+        text(
+            "SELECT id, orden_id, estado, resumen_propuesto, conclusion_medica, revisado_en "
+            "FROM propuestas_clinicas WHERE id = :p"
+        ),
+        {"p": proposal_guid},
+    ).one()
+    shown = _DECISION_STATE[decision] != "RECHAZADA"
+    findings = (
+        conn.execute(
+            text(
+                "SELECT id, propuesta_id, tipo, explicacion, regla_version "
+                "FROM propuestas_hallazgos WHERE propuesta_id = :p"
+            ),
+            {"p": proposal_guid},
+        ).all()
+        if shown
+        else []
+    )
+    return {
+        "propuesta": {
+            "id": str(row.id).lower(),
+            "orden_id": str(row.orden_id).lower(),
+            "estado": row.estado,
+            "resumen_propuesto": row.resumen_propuesto if shown else None,
+            "conclusion_medica": row.conclusion_medica if shown else None,
+            "revisado_en": moment.isoformat(),
+        },
+        "hallazgos": [
+            {
+                "id": str(item.id).lower(),
+                "propuesta_id": str(item.propuesta_id).lower(),
+                "tipo": item.tipo,
+                "explicacion": item.explicacion,
+                "regla_version": item.regla_version,
+            }
+            for item in findings
+        ],
+        "decision": decision,
+    }

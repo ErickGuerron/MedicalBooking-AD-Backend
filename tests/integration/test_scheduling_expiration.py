@@ -100,7 +100,7 @@ def test_expired_hold_is_released_and_recorded(app, engine) -> None:
         _count(
             engine,
             "SELECT COUNT(*) FROM eventos_outbox WHERE agregado_id = :c "
-            "AND tipo_evento = 'cita.expirada' AND version_agregado = 2",
+            "AND tipo_evento = 'cita.expirada' AND version_agregado = 3",
             c=cita_id,
         )
         == 1

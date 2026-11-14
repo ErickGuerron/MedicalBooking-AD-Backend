@@ -7,6 +7,8 @@ never touched by the test suite.
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -19,7 +21,11 @@ from medicalbooking.config import Settings
 from medicalbooking.shared.infrastructure.database import create_database_engine
 
 ROOT = Path(__file__).resolve().parents[1]
-TEST_DATABASE = "MedicalBooking_test"
+# Parallel worktrees set their own name so sessions never drop each other's database.
+TEST_DATABASE = os.environ.get("MEDICALBOOKING_TEST_DATABASE", "MedicalBooking_test")
+# The name is interpolated into DROP DATABASE, so only plain identifiers are accepted.
+if not re.fullmatch(r"[A-Za-z0-9_]{1,100}", TEST_DATABASE):
+    raise RuntimeError("MEDICALBOOKING_TEST_DATABASE must be a plain identifier")
 
 
 @pytest.fixture(scope="session")

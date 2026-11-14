@@ -5,19 +5,22 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from medicalbooking.modules.identity.application.ports import (
+    DEFAULT_APPOINTMENT_MINUTES,
     AccessProfile,
     CredentialRecord,
     NewUser,
+    UserSummary,
 )
 from medicalbooking.modules.identity.domain.policies import (
     LOCK_DURATION,
     MAX_FAILED_LOGINS,
 )
 from medicalbooking.shared.domain.errors import Conflict, ValidationFailed
+from medicalbooking.shared.infrastructure.outbox import append_outbox
 
 
 def _canonical(value: object) -> str:
@@ -172,13 +175,82 @@ class SqlUserDirectory:
         return found is not None
 
     def create_user(self, new_user: NewUser) -> None:
+        self._create(new_user, verification=None)
+
+    def list_users(self, limit: int, offset: int) -> list[UserSummary]:
+        """One page ordered by email. Credentials are never selected.
+
+        Role names come from the fixed roles catalogue and contain no commas, so
+        STRING_AGG keeps the page to a single round trip.
+        """
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT u.id, u.email, u.nombre, u.apellido, u.estado, "
+                    "(SELECT STRING_AGG(r.nombre, ',') FROM usuarios_roles ur "
+                    "JOIN roles r ON r.id = ur.rol_id WHERE ur.usuario_id = u.id) AS roles "
+                    "FROM usuarios u ORDER BY u.email "
+                    "OFFSET :saltar ROWS FETCH NEXT :cantidad ROWS ONLY"
+                ),
+                {"saltar": offset, "cantidad": limit},
+            ).all()
+        return [
+            UserSummary(
+                user_id=_canonical(row.id),
+                email=row.email,
+                first_name=row.nombre,
+                last_name=row.apellido,
+                status=row.estado,
+                roles=tuple(sorted(name for name in (row.roles or "").split(",") if name)),
+            )
+            for row in rows
+        ]
+
+    def create_pending_patient(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
+        self._create(new_user, verification=(token_hash, valid_hours))
+
+    def consume_verification(self, token_hash: str) -> bool:
+        """Activate the account behind a valid token, marking the token used atomically."""
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, usuario_id FROM verificaciones_correo WITH (UPDLOCK, ROWLOCK) "
+                    "WHERE token_hash = :hash AND usado_en IS NULL "
+                    "AND expira_en > SYSUTCDATETIME()"
+                ),
+                {"hash": token_hash},
+            ).first()
+            if row is None:
+                return False
+            conn.execute(
+                text("UPDATE verificaciones_correo SET usado_en = SYSUTCDATETIME() WHERE id = :id"),
+                {"id": row.id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE usuarios SET estado = 'ACTIVO', actualizado_en = SYSUTCDATETIME() "
+                    "WHERE id = :u"
+                ),
+                {"u": row.usuario_id},
+            )
+            append_outbox(
+                conn,
+                "usuario",
+                str(row.usuario_id),
+                "usuario.activado",
+                {"usuario": {"id": str(row.usuario_id), "estado": "ACTIVO"}},
+                datetime.now(UTC).replace(tzinfo=None),
+            )
+            return True
+
+    def _create(self, new_user: NewUser, verification: tuple[str, int] | None) -> None:
         try:
             with self._engine.begin() as conn:
                 conn.execute(
                     text(
                         "INSERT INTO usuarios "
-                        "(id, email, nombre, apellido, creado_en, actualizado_en) "
-                        "VALUES (:id, :email, :nombre, :apellido, "
+                        "(id, email, nombre, apellido, estado, creado_en, actualizado_en) "
+                        "VALUES (:id, :email, :nombre, :apellido, :estado, "
                         "SYSUTCDATETIME(), SYSUTCDATETIME())"
                     ),
                     {
@@ -186,6 +258,7 @@ class SqlUserDirectory:
                         "email": new_user.email,
                         "nombre": new_user.first_name,
                         "apellido": new_user.last_name,
+                        "estado": new_user.status,
                     },
                 )
                 conn.execute(
@@ -196,6 +269,8 @@ class SqlUserDirectory:
                     ),
                     {"id": new_user.user_id, "hash": new_user.password_hash},
                 )
+                role_ids: list[int] = []
+                paciente_id: str | None = None
                 for role in new_user.roles:
                     role_id = conn.execute(
                         text("SELECT id FROM roles WHERE nombre = :nombre"), {"nombre": role}
@@ -206,14 +281,66 @@ class SqlUserDirectory:
                         text("INSERT INTO usuarios_roles (usuario_id, rol_id) VALUES (:u, :r)"),
                         {"u": new_user.user_id, "r": role_id},
                     )
+                    role_ids.append(int(role_id))
                     if role == "PACIENTE":
+                        paciente_id = str(uuid.uuid4())
                         conn.execute(
                             text(
                                 "INSERT INTO pacientes (id, usuario_id, creado_en) "
-                                "VALUES (NEWID(), :u, SYSUTCDATETIME())"
+                                "VALUES (:id, :u, SYSUTCDATETIME())"
                             ),
-                            {"u": new_user.user_id},
+                            {"id": paciente_id, "u": new_user.user_id},
                         )
+                if new_user.professional_registration is not None:
+                    _insert_medico(conn, new_user)
+                if verification is not None:
+                    token_hash, valid_hours = verification
+                    conn.execute(
+                        text(
+                            "INSERT INTO verificaciones_correo "
+                            "(id, usuario_id, token_hash, creado_en, expira_en) "
+                            "VALUES (NEWID(), :u, :hash, SYSUTCDATETIME(), "
+                            "DATEADD(HOUR, :horas, SYSUTCDATETIME()))"
+                        ),
+                        {"u": new_user.user_id, "hash": token_hash, "horas": valid_hours},
+                    )
+                append_outbox(
+                    conn,
+                    "usuario",
+                    str(new_user.user_id),
+                    "usuario.creado",
+                    {
+                        "usuario": {"id": str(new_user.user_id), "estado": new_user.status},
+                        "roles": sorted(role_ids),
+                        "paciente": (
+                            None
+                            if paciente_id is None
+                            else {
+                                "id": paciente_id,
+                                "usuario_id": str(new_user.user_id),
+                                "nombre": new_user.first_name,
+                                "apellido": new_user.last_name,
+                            }
+                        ),
+                    },
+                    datetime.now(UTC).replace(tzinfo=None),
+                )
         except IntegrityError:
             # Unique email, or a concurrent request created the same account first.
             raise Conflict("An account with this email already exists") from None
+
+
+def _insert_medico(conn: Connection, new_user: NewUser) -> None:
+    """The clinician profile, written in the account's transaction so both exist or neither."""
+    conn.execute(
+        text(
+            "INSERT INTO medicos (id, usuario_id, registro_profesional, duracion_cita_min, activo) "
+            "VALUES (:id, :u, :registro, :minutos, 1)"
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "u": new_user.user_id,
+            "registro": new_user.professional_registration,
+            "minutos": DEFAULT_APPOINTMENT_MINUTES,
+        },
+    )

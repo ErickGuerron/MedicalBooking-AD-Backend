@@ -1,0 +1,84 @@
+"""LOINC codes to clinical roles for the shadow findings (feature doc S13). Pure functions.
+
+Only codes verified in the LOINC catalogue are mapped:
+  718-7   Hemoglobin [Mass/volume] in Blood
+  2276-4  Ferritin [Mass/volume] in Serum or Plasma
+  1988-5  C reactive protein [Mass/volume] in Serum or Plasma
+  1558-6  Fasting glucose [Mass/volume] in Serum or Plasma
+  4548-4  Hemoglobin A1c/Hemoglobin.total in Blood (NGSP, percent)
+  787-2   MCV [Entitic volume] by Automated count (fL), supporting signal only (S20)
+Not mapped on purpose: 59261-8 (IFCC HbA1c, mmol/mol) and any code not verified here.
+Two results for one role in the same order are ambiguous and are refused, never silently chosen.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+from decimal import Decimal
+
+ROLE_BY_LOINC = {
+    "718-7": "hemoglobina",
+    "2276-4": "ferritina",
+    "1988-5": "pcr",
+    "1558-6": "glucosa_ayuno",
+    "4548-4": "hba1c",
+    "787-2": "vcm",
+}
+UNIT_BY_ROLE = {
+    "hemoglobina": "g/dL",
+    "ferritina": "ug/L",
+    "pcr": "mg/L",
+    "glucosa_ayuno": "mg/dL",
+    "hba1c": "%",
+    "vcm": "fL",
+}
+
+
+class AmbiguousResult(ValueError):
+    """Two results map to the same clinical role; the caller must ask a person which one counts."""
+
+
+@dataclass(frozen=True)
+class RoleEvidence:
+    """The result a clinical role was read from, kept with the snapshot (feature doc S9)."""
+
+    resultado_id: str
+    valor: Decimal
+    unidad: str
+
+
+def evidence_by_role(
+    results: Iterable[tuple[str, str, str | None, Decimal]],
+) -> dict[str, RoleEvidence]:
+    """Map (result id, loinc, unit, value) quadruples to the evidence of each clinical role.
+
+    Same rules as roles_from_loinc: a result in another unit is not evidence, and two results for
+    one role are refused.
+    """
+    evidence: dict[str, RoleEvidence] = {}
+    for resultado_id, loinc, unit, value in results:
+        role = ROLE_BY_LOINC.get(loinc)
+        if role is None or unit != UNIT_BY_ROLE[role]:
+            continue
+        if role in evidence:
+            raise AmbiguousResult(f"two results for {role} ({loinc})")
+        evidence[role] = RoleEvidence(resultado_id=resultado_id, valor=value, unidad=unit)
+    return evidence
+
+
+def roles_from_loinc(results: Iterable[tuple[str, str | None, Decimal]]) -> dict[str, Decimal]:
+    """Map (loinc, unit, value) triples to clinical roles.
+
+    A result in a unit other than the one the role's thresholds use is not used: a silent unit
+    error would classify the patient wrongly.
+    """
+    roles: dict[str, Decimal] = {}
+    for loinc, unit, value in results:
+        role = ROLE_BY_LOINC.get(loinc)
+        if role is None or unit != UNIT_BY_ROLE[role]:
+            continue
+        if role in roles:
+            raise AmbiguousResult(f"two results for {role} ({loinc})")
+        roles[role] = value
+    return roles
