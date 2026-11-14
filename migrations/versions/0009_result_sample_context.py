@@ -1,4 +1,4 @@
-﻿"""E5.1 sample context for laboratory results (fasting status). Adds one nullable column.
+"""E5.1 sample context for laboratory results (fasting status). Adds one nullable column.
 
 Revision ID: 0009_result_sample_context
 Revises: 0008_email_verification

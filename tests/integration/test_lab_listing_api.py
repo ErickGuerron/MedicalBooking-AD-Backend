@@ -16,7 +16,7 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
-from tests.integration.test_lab_api import _cita_for, _doctor, _patient_id, _test_type
+from tests.integration.test_lab_api import _doctor, _patient_id, _relate, _test_type
 from tests.integration.test_scheduling_api import _token, _user
 
 pytestmark = pytest.mark.integration
@@ -39,15 +39,18 @@ def engine(app: Flask) -> Engine:
     return app.extensions["medicalbooking.engine"]
 
 
+def _linked_patient(app: Flask, engine: Engine, doctor: str) -> str:
+    """A fresh patient profile with an appointment with this doctor. Returns the profile id."""
+    patient = _user(engine, "PACIENTE")
+    _relate(app, engine, patient, doctor)
+    return _patient_id(engine, patient)
+
+
 def _create(app: Flask, doctor_headers: dict, patient_id: str) -> str:
     test_type = _test_type(app.extensions["medicalbooking.engine"])
     response = app.test_client().post(
         "/api/v1/lab/orders",
-        json={
-            "paciente_id": patient_id,
-            "cita_id": _cita_for(app.test_client(), doctor_headers, patient_id),
-            "tipo_prueba_ids": [test_type],
-        },
+        json={"paciente_id": patient_id, "tipo_prueba_ids": [test_type]},
         headers=doctor_headers,
     )
     assert response.status_code == 201, response.get_json()
@@ -77,6 +80,8 @@ def test_patient_lists_own_orders_and_not_other_patients(app, engine) -> None:
     doctor_headers = _token(app, doctor)
     mine_user = _user(engine, "PACIENTE")
     other_user = _user(engine, "PACIENTE")
+    _relate(app, engine, mine_user, doctor)
+    _relate(app, engine, other_user, doctor)
     mine = _create(app, doctor_headers, _patient_id(engine, mine_user))
     theirs = _create(app, doctor_headers, _patient_id(engine, other_user))
 
@@ -88,9 +93,12 @@ def test_patient_lists_own_orders_and_not_other_patients(app, engine) -> None:
 
 
 def test_ordering_doctor_lists_only_orders_they_placed(app, engine) -> None:
-    patient = _patient_id(engine, _user(engine, "PACIENTE"))
+    patient_user = _user(engine, "PACIENTE")
     doctor = _doctor(engine)
     other_doctor = _doctor(engine)
+    _relate(app, engine, patient_user, doctor)
+    _relate(app, engine, patient_user, other_doctor)
+    patient = _patient_id(engine, patient_user)
     own = _create(app, _token(app, doctor), patient)
     foreign = _create(app, _token(app, other_doctor), patient)
 
@@ -110,9 +118,9 @@ def test_lab_staff_without_order_access_gets_403(app, engine) -> None:
 
 
 def test_orders_are_listed_newest_first_with_id_as_tiebreak(app, engine) -> None:
-    patient = _patient_id(engine, _user(engine, "PACIENTE"))
     doctor = _doctor(engine)
     headers = _token(app, doctor)
+    patient = _linked_patient(app, engine, doctor)
     older = _create(app, headers, patient)
     tie_a = _create(app, headers, patient)
     tie_b = _create(app, headers, patient)
@@ -138,9 +146,9 @@ def test_orders_are_listed_newest_first_with_id_as_tiebreak(app, engine) -> None
 
 
 def test_estado_filter_returns_only_that_state(app, engine) -> None:
-    patient = _patient_id(engine, _user(engine, "PACIENTE"))
     doctor = _doctor(engine)
     headers = _token(app, doctor)
+    patient = _linked_patient(app, engine, doctor)
     completed = _create(app, headers, patient)
     pending = _create(app, headers, patient)
     _set(engine, completed, estado="COMPLETADA")
@@ -154,9 +162,9 @@ def test_estado_filter_returns_only_that_state(app, engine) -> None:
 
 
 def test_limit_and_offset_split_the_list_without_overlap(app, engine) -> None:
-    patient = _patient_id(engine, _user(engine, "PACIENTE"))
     doctor = _doctor(engine)
     headers = _token(app, doctor)
+    patient = _linked_patient(app, engine, doctor)
     created = {_create(app, headers, patient) for _ in range(3)}
 
     first = [item["id"] for item in _listed(app, headers, "?limit=2&offset=0")]
@@ -170,9 +178,9 @@ def test_limit_and_offset_split_the_list_without_overlap(app, engine) -> None:
 
 
 def test_listing_rows_never_carry_result_values(app, engine) -> None:
-    patient = _patient_id(engine, _user(engine, "PACIENTE"))
-    headers = _token(app, _doctor(engine))
-    _create(app, headers, patient)
+    doctor = _doctor(engine)
+    headers = _token(app, doctor)
+    _create(app, headers, _linked_patient(app, engine, doctor))
 
     items = _listed(app, headers)
 
@@ -197,7 +205,9 @@ def test_invalid_listing_query_is_422(app, engine, query) -> None:
 
 def test_get_order_keeps_its_response_shape_over_sql(app, engine) -> None:
     patient_user = _user(engine, "PACIENTE")
-    doctor_headers = _token(app, _doctor(engine))
+    doctor = _doctor(engine)
+    _relate(app, engine, patient_user, doctor)
+    doctor_headers = _token(app, doctor)
     order_id = _create(app, doctor_headers, _patient_id(engine, patient_user))
 
     response = app.test_client().get(
@@ -206,13 +216,5 @@ def test_get_order_keeps_its_response_shape_over_sql(app, engine) -> None:
 
     body = response.get_json()
     assert response.status_code == 200
-    assert set(body) == {
-        "id",
-        "paciente_id",
-        "prioridad",
-        "estado",
-        "observaciones",
-        "pruebas",
-        "consulta_id",
-    }
+    assert set(body) == {"id", "paciente_id", "prioridad", "estado", "observaciones", "pruebas"}
     assert set(body["pruebas"][0]) == {"detalle_id", "tipo_prueba_id", "estado"}

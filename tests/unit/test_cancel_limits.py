@@ -26,8 +26,7 @@ def test_quota_is_three_per_month() -> None:
 
 def test_below_quota_with_enough_notice_has_no_blocker() -> None:
     assert (
-        doctor_cancellation_blockers(now=NOW, slot_start=FAR_SLOT, cancellations_this_month=2)
-        == ()
+        doctor_cancellation_blockers(now=NOW, slot_start=FAR_SLOT, cancellations_this_month=2) == ()
     )
 
 

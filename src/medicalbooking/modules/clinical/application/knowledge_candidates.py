@@ -99,9 +99,14 @@ def rule_entry(
     }
 
 
-def write_report(report: dict[str, Any], directory: Path) -> Path:
-    directory.mkdir(parents=True, exist_ok=True)
+def write_report(report: dict[str, Any], directory: Path, root: Path) -> Path:
+    """Write the report into ``directory``, which must resolve inside ``root``."""
+    base = root.resolve()
+    target = directory.resolve()
+    if not target.is_relative_to(base):
+        raise ValueError("report directory must be inside the knowledge folder")
+    target.mkdir(parents=True, exist_ok=True)
     stamp = datetime.fromisoformat(report["generated_at"]).strftime("%Y%m%dT%H%M%SZ")
-    path = directory / f"candidates-{stamp}.json"
+    path = target / f"candidates-{stamp}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path

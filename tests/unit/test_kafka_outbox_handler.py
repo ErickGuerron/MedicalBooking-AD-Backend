@@ -83,6 +83,7 @@ def test_the_same_event_always_carries_the_same_id_so_consumers_can_deduplicate(
     KafkaOutboxHandler(first, topic="t").handle(EVENT)
     KafkaOutboxHandler(second, topic="t").handle(EVENT)
 
-    assert json.loads(first.messages[0]["value"])["event_id"] == (
-        json.loads(second.messages[0]["value"])["event_id"]
+    assert (
+        json.loads(first.messages[0]["value"])["event_id"]
+        == (json.loads(second.messages[0]["value"])["event_id"])
     )

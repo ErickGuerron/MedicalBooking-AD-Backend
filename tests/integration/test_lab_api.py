@@ -19,7 +19,14 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
-from tests.integration.test_scheduling_api import _count, _token, _user
+from tests.integration.test_scheduling_api import (
+    _book,
+    _count,
+    _service,
+    _slot,
+    _token,
+    _user,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -70,92 +77,32 @@ def _patient_id(engine: Engine, user_id: str) -> str:
     return str(uuid.UUID(str(value)))
 
 
-def _confirmed_cita(
-    engine: Engine, doctor_user: str, patient_id: str, estado: str = "CONFIRMADA"
-) -> str:
-    """An appointment of the doctor's own agenda for the patient profile, in ``estado``.
-
-    A user without a doctor profile gets a random id: the request is refused before it matters.
-    """
-    cita_id = str(uuid.uuid4())
-    with engine.begin() as conn:
-        medico = conn.execute(
-            text("SELECT id FROM medicos WHERE usuario_id = :u"), {"u": doctor_user}
-        ).scalar()
-        if medico is None:
-            return cita_id
-        sede, consultorio, agenda, slot, servicio = (str(uuid.uuid4()) for _ in range(5))
-        conn.execute(text("INSERT INTO sedes (id, nombre) VALUES (:s, N'Sede')"), {"s": sede})
-        conn.execute(
-            text("INSERT INTO consultorios (id, sede_id, nombre) VALUES (:c, :s, N'C1')"),
-            {"c": consultorio, "s": sede},
-        )
-        conn.execute(
-            text(
-                "INSERT INTO agendas (id, medico_id, consultorio_id, fecha_inicio) "
-                "VALUES (:a, :m, :c, CAST(SYSUTCDATETIME() AS date))"
-            ),
-            {"a": agenda, "m": medico, "c": consultorio},
-        )
-        conn.execute(
-            text(
-                "INSERT INTO horarios_disponibles (id, agenda_id, inicio_utc, fin_utc, estado) "
-                "VALUES (:h, :a, DATEADD(day, 3, SYSUTCDATETIME()), "
-                "DATEADD(minute, 30, DATEADD(day, 3, SYSUTCDATETIME())), 'RESERVADO')"
-            ),
-            {"h": slot, "a": agenda},
-        )
-        conn.execute(
-            text(
-                "INSERT INTO servicios_medicos (id, nombre, duracion_min, precio_base) "
-                "VALUES (:s, N'Consulta', 30, 25.00)"
-            ),
-            {"s": servicio},
-        )
-        conn.execute(
-            text(
-                "INSERT INTO citas (id, paciente_id, horario_id, servicio_id, estado, "
-                "reservada_en, clave_idempotencia) "
-                "VALUES (:c, :p, :h, :s, :estado, SYSUTCDATETIME(), :k)"
-            ),
-            {
-                "c": cita_id,
-                "p": patient_id,
-                "h": slot,
-                "s": servicio,
-                "estado": estado,
-                "k": f"k-{cita_id}",
-            },
-        )
-    return cita_id
-
-
-def _cita_for(client, headers, patient_id: str, estado: str = "CONFIRMADA") -> str:
-    """A fresh appointment of the signed-in doctor for the patient profile."""
-    engine = client.application.extensions["medicalbooking.engine"]
-    me = client.get("/api/v1/me", headers=headers).get_json()
-    return _confirmed_cita(engine, me["id"], patient_id, estado)
-
-
-def _create_order(
-    client, headers, patient_id: str, tests: list[str] | None = None, cita_id: str | None = None
-):
-    """Order tests from ``cita_id``, or from a fresh CONFIRMADA appointment of the caller."""
+def _create_order(client, headers, patient_id: str, tests: list[str] | None = None):
     return client.post(
         "/api/v1/lab/orders",
-        json={
-            "paciente_id": patient_id,
-            "cita_id": cita_id or _cita_for(client, headers, patient_id),
-            "tipo_prueba_ids": tests or [],
-        },
+        json={"paciente_id": patient_id, "tipo_prueba_ids": tests or []},
         headers=headers,
     )
+
+
+def _relate(app, engine, patient_user: str, doctor_user: str) -> None:
+    """Give the patient a cita with this doctor, booked through the API (the relation rule)."""
+    slot = _slot(engine, doctor=doctor_user)
+    response = _book(
+        app.test_client(),
+        _token(app, patient_user),
+        key=f"lab-relation-{uuid.uuid4()}",
+        slot=slot,
+        servicio=_service(engine),
+    )
+    assert response.status_code == 201, response.get_json()
 
 
 def _order_for(app, engine) -> tuple[str, str, str, dict[str, str]]:
     """Return (order_id, patient_user, doctor_user, doctor_headers) for a fresh order."""
     patient = _user(engine, "PACIENTE")
     doctor = _doctor(engine)
+    _relate(app, engine, patient, doctor)
     headers = _token(app, doctor)
     response = _create_order(
         app.test_client(), headers, _patient_id(engine, patient), [_test_type(engine)]
@@ -275,10 +222,12 @@ def test_patient_cannot_create_orders(app, engine) -> None:
 
 def test_unknown_test_type_is_rejected_with_422(app, engine) -> None:
     patient = _user(engine, "PACIENTE")
+    doctor = _doctor(engine)
+    _relate(app, engine, patient, doctor)
 
     response = _create_order(
         app.test_client(),
-        _token(app, _doctor(engine)),
+        _token(app, doctor),
         _patient_id(engine, patient),
         [str(uuid.uuid4())],
     )

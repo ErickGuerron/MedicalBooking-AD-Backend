@@ -52,7 +52,7 @@ def test_the_dispatcher_delivers_the_event_to_the_kafka_destination(
                 "INSERT INTO eventos_outbox (id, agregado_tipo, agregado_id, tipo_evento, "
                 "payload, version_agregado, creado_en) "
                 "VALUES (:id, 'orden_laboratorio', :a, 'orden_laboratorio.creada', "
-                "'{\"estado\": \"SOLICITADA\"}', 1, :ahora)"
+                '\'{"estado": "SOLICITADA"}\', 1, :ahora)'
             ),
             {"id": event_id, "a": aggregate, "ahora": datetime.now(UTC).replace(tzinfo=None)},
         )

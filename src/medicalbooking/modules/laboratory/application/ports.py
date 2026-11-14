@@ -27,8 +27,6 @@ class LabOrder:
     estado: str
     observaciones: str | None
     details: tuple[LabDetail, ...]
-    # The consultation the order was placed from; None only for orders created before it existed.
-    consulta_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +37,26 @@ class LabOrderSummary:
     paciente_id: str
     estado: str
     fecha: datetime
+
+
+@dataclass(frozen=True)
+class PatientSummary:
+    """A patient for the order form: the profile id and the names only."""
+
+    id: str
+    nombre: str
+    apellido: str
+
+
+@dataclass(frozen=True)
+class LabTestType:
+    """One active entry of the laboratory test catalog (static, no personal data)."""
+
+    id: str
+    codigo: str
+    nombre: str
+    descripcion: str | None
+    unidad_predeterminada: str | None
 
 
 @dataclass(frozen=True)
@@ -73,24 +91,10 @@ class ResultEntry:
 
 
 @dataclass(frozen=True)
-class OrderAppointment:
-    """The appointment an order is placed from, with the doctor who owns its agenda."""
-
-    cita_id: str
-    paciente_id: str
-    medico_id: str
-    estado: str
-
-
-@dataclass(frozen=True)
 class NewOrder:
     order_id: str
     paciente_id: str
     medico_id: str
-    # Appointment of the doctor's own agenda; its consultation is opened with the order.
-    medico_user_id: str
-    cita_id: str
-    allowed_states: frozenset[str]
     prioridad: str
     observaciones: str | None
     tipo_prueba_ids: list[str]
@@ -129,7 +133,8 @@ class AuditEvent:
     actor_user_id: str
     paciente_id: str | None
     entidad: str
-    entidad_id: str
+    # None when the event covers a listing of many records and names no single entity.
+    entidad_id: str | None
     accion: str
     resultado: str
     occurred_at: datetime
@@ -157,15 +162,30 @@ class LabStore(Protocol):
 
     def resolve_medico_id(self, user_id: str) -> str | None: ...
 
-    def patient_exists(self, paciente_id: str) -> bool: ...
+    def patient_is_related(self, medico_id: str, paciente_id: str) -> bool:
+        """True when the doctor has a cita or a lab order with this patient (any status)."""
+        ...
 
-    def find_appointment_for_order(self, cita_id: str) -> OrderAppointment | None: ...
+    def patient_account_is_active(self, paciente_id: str) -> bool:
+        """True when the patient's usuarios.estado is ACTIVO."""
+        ...
 
     def active_test_ids(self, ids: list[str]) -> set[str]: ...
 
     def create_order(self, command: NewOrder) -> LabOrder: ...
 
     def get_order(self, order_id: str) -> LabOrder | None: ...
+
+    def list_patients(self, *, medico_id: str, limit: int, offset: int) -> list[PatientSummary]:
+        """Patients the doctor treats (cita or lab order, any status) with an ACTIVO account.
+
+        Ordered by apellido, nombre, id; one page.
+        """
+        ...
+
+    def list_test_types(self) -> list[LabTestType]:
+        """Active test types only, ordered by nombre then id."""
+        ...
 
     def list_orders(
         self,

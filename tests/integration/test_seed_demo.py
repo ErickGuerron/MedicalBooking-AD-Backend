@@ -96,9 +96,7 @@ def _snapshot(engine: Engine) -> dict[str, int]:
         }
 
 
-def test_accounts_have_their_roles_and_a_verifiable_password(
-    seeded: Path, engine: Engine
-) -> None:
+def test_accounts_have_their_roles_and_a_verifiable_password(seeded: Path, engine: Engine) -> None:
     rows = _rows(
         engine,
         "SELECT u.email, r.nombre, c.password_hash FROM usuarios u "

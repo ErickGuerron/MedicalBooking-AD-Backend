@@ -180,5 +180,3 @@ class SqlPaymentsStore:
         if target == CONFIRMADO:
             mark_invoice_paid(conn, pago.factura_id, now)
         emit_pago_snapshot(conn, pago.pago_id, now)
-
-    

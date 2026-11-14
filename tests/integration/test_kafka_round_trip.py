@@ -23,9 +23,7 @@ pytestmark = pytest.mark.integration
 
 BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS")
 TOPIC = "medicalbooking.events"
-requires_broker = pytest.mark.skipif(
-    not BOOTSTRAP, reason="KAFKA_BOOTSTRAP_SERVERS is not set"
-)
+requires_broker = pytest.mark.skipif(not BOOTSTRAP, reason="KAFKA_BOOTSTRAP_SERVERS is not set")
 
 
 @requires_broker

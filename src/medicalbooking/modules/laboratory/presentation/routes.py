@@ -14,6 +14,8 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabOrder,
     LabOrderSummary,
     LabResult,
+    LabTestType,
+    PatientSummary,
     ResultEntry,
     StoredDocument,
 )
@@ -28,8 +30,6 @@ class CreateOrderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     paciente_id: uuid.UUID
-    # Required: an appointment of the doctor's own agenda, for this patient (breaking change).
-    cita_id: uuid.UUID
     prioridad: str = Field(default="NORMAL", max_length=20)
     observaciones: str | None = Field(default=None, max_length=1000)
     tipo_prueba_ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_TESTS_PER_ORDER)
@@ -74,6 +74,13 @@ class ListOrdersQuery(BaseModel):
     offset: int = Field(default=0, ge=0, le=2_147_483_647)
 
 
+class PatientListQuery(BaseModel):
+    """Query string of GET /patients: one page of the patient directory (default 50, max 100)."""
+
+    limit: int = Field(default=50, ge=1, le=100)
+    offset: int = Field(default=0, ge=0, le=2_147_483_647)
+
+
 def _service() -> LabService:
     return current_app.extensions["medicalbooking.laboratory"]
 
@@ -97,7 +104,6 @@ def _order_json(order: LabOrder) -> dict[str, Any]:
     return {
         "id": order.id,
         "paciente_id": order.paciente_id,
-        "consulta_id": order.consulta_id,
         "prioridad": order.prioridad,
         "estado": order.estado,
         "observaciones": order.observaciones,
@@ -115,6 +121,20 @@ def _summary_json(order: LabOrderSummary) -> dict[str, Any]:
         "paciente_id": order.paciente_id,
         "estado": order.estado,
         "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+
+def _patient_json(patient: PatientSummary) -> dict[str, Any]:
+    return {"id": patient.id, "nombres": patient.nombre, "apellidos": patient.apellido}
+
+
+def _test_type_json(test_type: LabTestType) -> dict[str, Any]:
+    return {
+        "id": test_type.id,
+        "codigo": test_type.codigo,
+        "nombre": test_type.nombre,
+        "descripcion": test_type.descripcion,
+        "unidad_predeterminada": test_type.unidad_predeterminada,
     }
 
 
@@ -147,7 +167,6 @@ def create_order() -> tuple[Response, int]:
     order = _service().create_order(
         g.actor,
         paciente_id=str(body.paciente_id),
-        cita_id=str(body.cita_id),
         prioridad=body.prioridad,
         observaciones=body.observaciones,
         tipo_prueba_ids=[str(item) for item in body.tipo_prueba_ids],
@@ -163,6 +182,28 @@ def list_orders() -> tuple[Response, int]:
         g.actor, estado=query.estado, limit=query.limit, offset=query.offset
     )
     return jsonify(items=[_summary_json(row) for row in rows]), 200
+
+
+@lab_bp.get("/patients")
+@authenticated
+def list_patients() -> tuple[Response, int]:
+    query = _validate(PatientListQuery, request.args.to_dict())
+    rows = _service().list_patients(g.actor, limit=query.limit, offset=query.offset)
+    return (
+        jsonify(
+            items=[_patient_json(row) for row in rows],
+            limit=query.limit,
+            offset=query.offset,
+        ),
+        200,
+    )
+
+
+@lab_bp.get("/lab/test-types")
+@authenticated
+def list_test_types() -> tuple[Response, int]:
+    rows = _service().list_test_types()
+    return jsonify(items=[_test_type_json(row) for row in rows]), 200
 
 
 @lab_bp.get("/lab/orders/<uuid:order_id>")

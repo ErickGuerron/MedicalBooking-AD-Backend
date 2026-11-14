@@ -14,12 +14,7 @@ import pytest
 from flask import Flask, jsonify
 
 from medicalbooking.modules.identity.application.ports import AccessProfile
-from medicalbooking.modules.laboratory.application.ports import (
-    LabDetail,
-    LabOrder,
-    NewOrder,
-    OrderAppointment,
-)
+from medicalbooking.modules.laboratory.application.ports import LabDetail, LabOrder, NewOrder
 from medicalbooking.modules.laboratory.application.use_cases import LabService
 from medicalbooking.modules.laboratory.presentation.routes import lab_bp
 from medicalbooking.shared.domain.errors import AppError, Forbidden, Unauthenticated
@@ -63,10 +58,7 @@ class FakeStore:
     orders: list[LabOrder] = field(default_factory=list)
     fecha_by_order: dict[str, datetime] = field(default_factory=dict)
     list_calls: list[dict] = field(default_factory=list)
-    cita: OrderAppointment | None = None
-
-    def find_appointment_for_order(self, cita_id):
-        return self.cita if self.cita and self.cita.cita_id == cita_id else None
+    related: set = field(default_factory=set)  # (medico_id, paciente_id) pairs with a relation
 
     def add(self, order: LabOrder, fecha: datetime = NOW) -> LabOrder:
         # The adapter joins the owning user ids; the fake fills them the same way.
@@ -85,8 +77,11 @@ class FakeStore:
     def resolve_medico_id(self, user_id):
         return self.medico_by_user.get(user_id)
 
-    def patient_exists(self, paciente_id):
-        return paciente_id in self.patient_by_user.values()
+    def patient_is_related(self, medico_id, paciente_id):
+        return (medico_id, paciente_id) in self.related
+
+    def patient_account_is_active(self, paciente_id):
+        return True
 
     def active_test_ids(self, ids):
         return set(ids)
@@ -174,6 +169,9 @@ def world() -> World:
     store.patient_by_user[other_patient.user_id] = _id()
     store.medico_by_user[doctor.user_id] = _id()
     store.medico_by_user[other_doctor.user_id] = _id()
+    store.related.add(
+        (store.medico_by_user[doctor.user_id], store.patient_by_user[patient.user_id])
+    )
     return World(
         store=store,
         patient=patient,
@@ -221,6 +219,24 @@ def test_doctor_permission_without_doctor_profile_is_forbidden(world) -> None:
 
     with pytest.raises(Forbidden):
         _service(world).list_orders(nobody, estado=None, limit=50, offset=0)
+
+
+def test_doctor_permission_without_doctor_profile_gets_the_distinct_message(world) -> None:
+    nobody = _actor(MEDICO)
+
+    with pytest.raises(Forbidden) as error:
+        _service(world).list_orders(nobody, estado=None, limit=50, offset=0)
+
+    assert error.value.detail == "A doctor profile is required for this action"
+    assert error.value.code == "DOCTOR_PROFILE_REQUIRED"
+
+
+def test_actor_without_any_order_permission_keeps_the_uniform_message(world) -> None:
+    with pytest.raises(Forbidden) as error:
+        _service(world).list_orders(world.lab, estado=None, limit=50, offset=0)
+
+    assert error.value.detail == "Access to this resource is not allowed"
+    assert error.value.code is None
 
 
 def test_patient_permission_without_patient_profile_is_forbidden(world) -> None:
@@ -343,37 +359,17 @@ def test_offset_must_be_a_non_negative_integer(world, offset) -> None:
 # ---------- PRESERVE: existing order routes keep their responses ----------
 
 
-def test_create_order_response_keeps_its_shape_plus_the_consultation(world) -> None:
-    cita = _id()
-    world.store.cita = OrderAppointment(cita, world.patient_id, world.doctor_id, "CONFIRMADA")
-    response = _http(world).post(
-        LIST_URL,
-        json={"paciente_id": world.patient_id, "cita_id": cita, "tipo_prueba_ids": [TEST_TYPE]},
-        headers=_bearer("tok-doctor"),
-    )
-
-    body = response.get_json()
-    assert response.status_code == 201
-    assert set(body) == {
-        "id",
-        "paciente_id",
-        "consulta_id",
-        "prioridad",
-        "estado",
-        "observaciones",
-        "pruebas",
-    }
-    assert set(body["pruebas"][0]) == {"detalle_id", "tipo_prueba_id", "estado"}
-
-
-def test_create_order_without_cita_id_is_rejected_with_422(world) -> None:
+def test_create_order_response_keeps_its_shape(world) -> None:
     response = _http(world).post(
         LIST_URL,
         json={"paciente_id": world.patient_id, "tipo_prueba_ids": [TEST_TYPE]},
         headers=_bearer("tok-doctor"),
     )
 
-    assert response.status_code == 422
+    body = response.get_json()
+    assert response.status_code == 201
+    assert set(body) == {"id", "paciente_id", "prioridad", "estado", "observaciones", "pruebas"}
+    assert set(body["pruebas"][0]) == {"detalle_id", "tipo_prueba_id", "estado"}
 
 
 def test_get_order_response_keeps_its_shape(world) -> None:
@@ -383,13 +379,5 @@ def test_get_order_response_keeps_its_shape(world) -> None:
 
     body = response.get_json()
     assert response.status_code == 200
-    assert set(body) == {
-        "id",
-        "paciente_id",
-        "consulta_id",
-        "prioridad",
-        "estado",
-        "observaciones",
-        "pruebas",
-    }
+    assert set(body) == {"id", "paciente_id", "prioridad", "estado", "observaciones", "pruebas"}
     assert set(body["pruebas"][0]) == {"detalle_id", "tipo_prueba_id", "estado"}

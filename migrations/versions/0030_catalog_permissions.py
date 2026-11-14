@@ -1,7 +1,7 @@
-"""Consultations: the consultas.abrir permission for MEDICO.
+"""Catalog administration: the catalogo.administrar permission for ADMINISTRADOR.
 
-Revision ID: 0029_consultation_permission
-Revises: 0028_catalog_permissions
+Revision ID: 0030_catalog_permissions
+Revises: 0029_treatments
 """
 
 from __future__ import annotations
@@ -12,12 +12,12 @@ from alembic import op
 
 from medicalbooking.shared.infrastructure.tsql import split_batches
 
-revision = "0029_consultation_permission"
-down_revision = "0028_catalog_permissions"
+revision = "0030_catalog_permissions"
+down_revision = "0029_treatments"
 branch_labels = None
 depends_on = None
 
-_SQL_FILE = Path(__file__).resolve().parents[1] / "sql" / "0029_consultation_permission.sql"
+_SQL_FILE = Path(__file__).resolve().parents[1] / "sql" / "0030_catalog_permissions.sql"
 
 
 def upgrade() -> None:
@@ -30,6 +30,6 @@ def downgrade() -> None:
     connection = op.get_bind()
     connection.exec_driver_sql(
         "DELETE rp FROM roles_permisos rp JOIN permisos p ON p.id = rp.permiso_id "
-        "WHERE p.codigo = 'consultas.abrir'"
+        "WHERE p.codigo = 'catalogo.administrar'"
     )
-    connection.exec_driver_sql("DELETE FROM permisos WHERE codigo = 'consultas.abrir'")
+    connection.exec_driver_sql("DELETE FROM permisos WHERE codigo = 'catalogo.administrar'")

@@ -1,4 +1,4 @@
-﻿"""Doctor cancellation limits through the API: quota, 24-hour notice, admin approval (S1-S4).
+"""Doctor cancellation limits through the API: quota, 24-hour notice, admin approval (S1-S4).
 
 Real SQL Server. Each test builds its own doctor, agenda, slots and patients.
 """
@@ -238,4 +238,3 @@ def test_approving_an_unknown_appointment_is_404(app, engine) -> None:
     response = _approve(app, admin, str(uuid.uuid4()))
 
     assert response.status_code == 404
-

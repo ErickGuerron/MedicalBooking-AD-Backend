@@ -18,14 +18,12 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabResult,
     NewDocument,
     NewOrder,
-    OrderAppointment,
     StoredDocument,
 )
 from medicalbooking.modules.laboratory.application.use_cases import (
     DocumentIntegrityError,
     LabService,
 )
-from medicalbooking.modules.scheduling.domain.policies import CONSULTATION_APPOINTMENT_STATES
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, ValidationFailed
 
 NOW = datetime(2026, 11, 2, 9, 0, tzinfo=UTC)
@@ -68,7 +66,8 @@ class FakeStore:
     references: list = field(default_factory=list)
     profile: tuple = (None, None)
     linked: set | None = None  # None: every analyte is linked (no restriction in the fake)
-    appointments: dict[str, OrderAppointment] = field(default_factory=dict)
+    related: set = field(default_factory=set)  # (medico_id, paciente_id) pairs with a relation
+    inactive: set = field(default_factory=set)  # paciente ids whose account is not ACTIVO
 
     def analyte_linked_to_test(self, analito_id, tipo_prueba_id):
         return self.linked is None or (analito_id, tipo_prueba_id) in self.linked
@@ -88,14 +87,14 @@ class FakeStore:
     def resolve_medico_id(self, user_id):
         return self.medico_by_user.get(user_id)
 
-    def patient_exists(self, paciente_id):
-        return paciente_id in self.patient_by_user.values()
+    def patient_is_related(self, medico_id, paciente_id):
+        return (medico_id, paciente_id) in self.related
+
+    def patient_account_is_active(self, paciente_id):
+        return paciente_id not in self.inactive
 
     def active_test_ids(self, ids):
         return {i for i in ids if i in self.active_tests}
-
-    def find_appointment_for_order(self, cita_id):
-        return self.appointments.get(cita_id)
 
     def create_order(self, command: NewOrder) -> LabOrder:
         medico_user = next(u for u, m in self.medico_by_user.items() if m == command.medico_id)
@@ -113,7 +112,6 @@ class FakeStore:
                 LabDetail(id=_id(), tipo_prueba_id=t, estado="PENDIENTE")
                 for t in command.tipo_prueba_ids
             ),
-            consulta_id=f"consulta-{command.cita_id}",
         )
         self.orders[order.id] = order
         return order
@@ -231,6 +229,9 @@ def world(store):
     store.patient_by_user[other_patient.user_id] = _id()
     store.medico_by_user[doctor.user_id] = _id()
     store.medico_by_user[other_doctor.user_id] = _id()
+    store.related.add(
+        (store.medico_by_user[doctor.user_id], store.patient_by_user[patient.user_id])
+    )
     return {
         "patient": patient,
         "doctor": doctor,
@@ -244,23 +245,10 @@ def _service(store, storage) -> LabService:
     return LabService(store=store, storage=storage, clock=lambda: NOW)
 
 
-def _cita(store, world, *, doctor="doctor", patient="patient", estado="CONFIRMADA") -> str:
-    """An appointment of ``doctor``'s agenda for ``patient``, registered in the fake store."""
-    cita_id = _id()
-    store.appointments[cita_id] = OrderAppointment(
-        cita_id=cita_id,
-        paciente_id=store.patient_by_user[world[patient].user_id],
-        medico_id=store.medico_by_user[world[doctor].user_id],
-        estado=estado,
-    )
-    return cita_id
-
-
 def _order(service, world, *, tests=(HEMO,)):
     return service.create_order(
         world["doctor"],
         paciente_id=world_patient_id(world["patient"].user_id, service._store),
-        cita_id=_cita(service._store, world),
         prioridad="NORMAL",
         observaciones=None,
         tipo_prueba_ids=list(tests),
@@ -294,7 +282,6 @@ def test_only_a_doctor_with_permission_can_create_an_order(store, storage, world
         service.create_order(
             world["patient"],
             paciente_id=world_patient_id(world["patient"].user_id, store),
-            cita_id=_id(),
             prioridad="NORMAL",
             observaciones=None,
             tipo_prueba_ids=[HEMO],
@@ -308,11 +295,199 @@ def test_a_user_with_permission_but_no_doctor_profile_cannot_order(store, storag
         _service(store, storage).create_order(
             nobody,
             paciente_id=world_patient_id(world["patient"].user_id, store),
-            cita_id=_id(),
             prioridad="NORMAL",
             observaciones=None,
             tipo_prueba_ids=[HEMO],
         )
+
+
+def test_an_order_for_a_patient_the_doctor_does_not_treat_is_refused_before_any_write(
+    store, storage, world
+) -> None:
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["doctor"],
+            paciente_id=world_patient_id(world["other_patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.detail == NOT_AVAILABLE
+    assert refused.value.code == "PATIENT_NOT_AVAILABLE"
+    assert store.orders == {}
+
+
+def test_an_unknown_patient_gets_the_same_403_as_an_unrelated_one(store, storage, world) -> None:
+    service = _service(store, storage)
+    with pytest.raises(Forbidden) as unknown:
+        service.create_order(
+            world["doctor"],
+            paciente_id=_id(),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+    with pytest.raises(Forbidden) as unrelated:
+        service.create_order(
+            world["doctor"],
+            paciente_id=world_patient_id(world["other_patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert unknown.value.detail == unrelated.value.detail
+
+
+UNIFORM = "Access to this resource is not allowed"
+NOT_AVAILABLE = "The patient is not available to this doctor"
+INACTIVE_PATIENT = "The patient account is not active"
+NO_DOCTOR_PROFILE = "A doctor profile is required for this action"
+
+
+def test_rule_a_related_patient_with_an_inactive_account_gets_its_own_403(
+    store, storage, world
+) -> None:
+    patient_id = world_patient_id(world["patient"].user_id, store)
+    store.inactive.add(patient_id)
+
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["doctor"],
+            paciente_id=patient_id,
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.detail == INACTIVE_PATIENT
+    assert store.orders == {}
+    assert store.audit == []
+
+
+def test_rule_b_unrelated_inactive_patient_keeps_the_uniform_message(store, storage, world) -> None:
+    other_id = world_patient_id(world["other_patient"].user_id, store)
+    store.inactive.add(other_id)
+
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["doctor"],
+            paciente_id=other_id,
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.detail == NOT_AVAILABLE
+    assert refused.value.code == "PATIENT_NOT_AVAILABLE"
+    assert store.orders == {}
+
+
+def test_rule_c_doctor_permission_without_profile_gets_the_profile_message(
+    store, storage, world
+) -> None:
+    nobody = _actor(*MEDICO)
+
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            nobody,
+            paciente_id=world_patient_id(world["patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.detail == NO_DOCTOR_PROFILE
+    assert store.orders == {}
+
+
+def test_rule_d_actor_without_the_permission_keeps_the_uniform_message(
+    store, storage, world
+) -> None:
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["patient"],
+            paciente_id=world_patient_id(world["patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.detail == UNIFORM
+    assert refused.value.code is None
+
+
+def test_unknown_and_unrelated_patients_share_one_code_and_detail(store, storage, world) -> None:
+    service = _service(store, storage)
+    refusals = []
+    for paciente_id in (_id(), world_patient_id(world["other_patient"].user_id, store)):
+        with pytest.raises(Forbidden) as refused:
+            service.create_order(
+                world["doctor"],
+                paciente_id=paciente_id,
+                prioridad="NORMAL",
+                observaciones=None,
+                tipo_prueba_ids=[HEMO],
+            )
+        refusals.append((refused.value.status, refused.value.code, refused.value.detail))
+
+    assert refusals[0] == refusals[1]
+    assert refusals[0] == (403, "PATIENT_NOT_AVAILABLE", NOT_AVAILABLE)
+
+
+def test_related_inactive_patient_gets_the_inactive_code(store, storage, world) -> None:
+    patient_id = world_patient_id(world["patient"].user_id, store)
+    store.inactive.add(patient_id)
+
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["doctor"],
+            paciente_id=patient_id,
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.code == "PATIENT_ACCOUNT_INACTIVE"
+    assert refused.value.detail == INACTIVE_PATIENT
+
+
+def test_doctor_without_profile_gets_the_profile_code_on_create_order(
+    store, storage, world
+) -> None:
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            _actor(*MEDICO),
+            paciente_id=world_patient_id(world["patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.code == "DOCTOR_PROFILE_REQUIRED"
+    assert refused.value.detail == NO_DOCTOR_PROFILE
+
+
+def test_actor_without_permission_gets_no_code_on_create_order(store, storage, world) -> None:
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["patient"],
+            paciente_id=world_patient_id(world["patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.code is None
+    assert refused.value.detail == UNIFORM
+
+
+def test_preserve_related_active_patient_still_gets_a_created_order(store, storage, world) -> None:
+    order = _order(_service(store, storage), world)
+
+    assert order.estado == "SOLICITADA"
+    assert order.paciente_id == world_patient_id(world["patient"].user_id, store)
 
 
 def test_order_starts_requested_with_pending_details(store, storage, world) -> None:
@@ -333,61 +508,10 @@ def test_order_rejects_unknown_priority(store, storage, world) -> None:
         _service(store, storage).create_order(
             world["doctor"],
             paciente_id=world_patient_id(world["patient"].user_id, store),
-            cita_id=_cita(store, world),
             prioridad="INMEDIATA",
             observaciones=None,
             tipo_prueba_ids=[HEMO],
         )
-
-
-def _order_from(store, storage, world, cita_id, patient="patient"):
-    return _service(store, storage).create_order(
-        world["doctor"],
-        paciente_id=world_patient_id(world[patient].user_id, store),
-        cita_id=cita_id,
-        prioridad="NORMAL",
-        observaciones=None,
-        tipo_prueba_ids=[HEMO],
-    )
-
-
-@pytest.mark.parametrize("estado", sorted(CONSULTATION_APPOINTMENT_STATES))
-def test_order_from_an_allowed_appointment_stores_its_consultation(
-    store, storage, world, estado
-) -> None:
-    cita = _cita(store, world, estado=estado)
-
-    order = _order_from(store, storage, world, cita)
-
-    assert order.consulta_id == f"consulta-{cita}"
-
-
-@pytest.mark.parametrize("estado", ["PENDIENTE_PAGO", "CANCELADA", "EXPIRADA", "NO_ASISTIO"])
-def test_order_from_an_appointment_in_a_disallowed_state_is_a_conflict(
-    store, storage, world, estado
-) -> None:
-    with pytest.raises(Conflict):
-        _order_from(store, storage, world, _cita(store, world, estado=estado))
-
-
-def test_the_allowed_states_are_confirmed_and_completed() -> None:
-    assert CONSULTATION_APPOINTMENT_STATES == {"CONFIRMADA", "COMPLETADA"}
-
-
-def test_missing_and_foreign_appointments_answer_the_same_403(store, storage, world) -> None:
-    foreign = _cita(store, world, doctor="other_doctor")
-
-    for cita in (_id(), foreign):
-        with pytest.raises(Forbidden) as error:
-            _order_from(store, storage, world, cita)
-        assert error.value.detail == "Access to this resource is not allowed"
-
-
-def test_the_appointment_must_belong_to_the_ordered_patient(store, storage, world) -> None:
-    cita = _cita(store, world, patient="other_patient")
-
-    with pytest.raises(ValidationFailed):
-        _order_from(store, storage, world, cita, patient="patient")
 
 
 def test_patient_reads_only_own_orders(store, storage, world) -> None:

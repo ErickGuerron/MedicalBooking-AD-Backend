@@ -25,19 +25,22 @@ class ReplicaConfigError(Exception):
 
 
 def build_fallback_read_service(settings: Settings) -> FallbackReadService:
+    reader_secret = settings.supabase_reader_database_url
+    audit_secret = settings.mongodb_auditor_uri
+    database = settings.mongodb_database
+
     missing = []
-    if settings.supabase_reader_database_url is None:
+    if reader_secret is None:
         missing.append("SUPABASE_READER_DATABASE_URL")
-    if settings.mongodb_auditor_uri is None:
+    if audit_secret is None:
         missing.append("MONGODB_AUDITOR_URI")
-    if not settings.mongodb_database:
+    if not database:
         missing.append("MONGODB_DATABASE")
-    if missing:
+    if reader_secret is None or audit_secret is None or not database:
         raise ReplicaConfigError("missing replica settings: " + ", ".join(missing))
 
-    reader_url = settings.supabase_reader_database_url.get_secret_value()
-    audit_uri = settings.mongodb_auditor_uri.get_secret_value()
-    database = settings.mongodb_database
+    reader_url = reader_secret.get_secret_value()
+    audit_uri = audit_secret.get_secret_value()
 
     # connect=False defers the connection, including the SRV DNS lookup, to first use.
     audit_collection = MongoClient(audit_uri, connect=False)[database][AUDIT_COLLECTION]

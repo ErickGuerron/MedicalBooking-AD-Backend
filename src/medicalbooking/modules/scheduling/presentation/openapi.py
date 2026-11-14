@@ -299,9 +299,7 @@ def scheduling_fragment() -> dict[str, Any]:
                                 "schema": {
                                     "type": "object",
                                     "required": ["motivo"],
-                                    "properties": {
-                                        "motivo": {"type": "string", "maxLength": 1500}
-                                    },
+                                    "properties": {"motivo": {"type": "string", "maxLength": 1500}},
                                     "additionalProperties": False,
                                 }
                             }
