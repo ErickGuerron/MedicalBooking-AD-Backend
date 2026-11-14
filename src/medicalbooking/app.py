@@ -273,7 +273,7 @@ def _register_correlation_id(app: Flask) -> None:
         return response
 
 
-def _problem(status: int, title: str, detail: str) -> tuple[Response, int]:
+def _problem(status: int, title: str, detail: str, code: str | None = None) -> tuple[Response, int]:
     body: dict[str, Any] = {
         "type": "about:blank",
         "title": title,
@@ -281,6 +281,8 @@ def _problem(status: int, title: str, detail: str) -> tuple[Response, int]:
         "detail": detail,
         "correlation_id": g.get("correlation_id", ""),
     }
+    if code is not None:
+        body["code"] = code
     response = jsonify(body)
     response.mimetype = "application/problem+json"
     return response, status
@@ -289,7 +291,7 @@ def _problem(status: int, title: str, detail: str) -> tuple[Response, int]:
 def _register_error_handlers(app: Flask) -> None:
     @app.errorhandler(AppError)
     def _domain_error(error: AppError) -> tuple[Response, int]:
-        return _problem(error.status, error.title, error.detail)
+        return _problem(error.status, error.title, error.detail, error.code)
 
     @app.errorhandler(HTTPException)
     def _http_error(error: HTTPException) -> tuple[Response, int]:
