@@ -206,5 +206,13 @@ def test_get_order_keeps_its_response_shape_over_sql(app, engine) -> None:
 
     body = response.get_json()
     assert response.status_code == 200
-    assert set(body) == {"id", "paciente_id", "prioridad", "estado", "observaciones", "pruebas"}
+    assert set(body) == {
+        "id",
+        "paciente_id",
+        "prioridad",
+        "estado",
+        "observaciones",
+        "pruebas",
+        "consulta_id",
+    }
     assert set(body["pruebas"][0]) == {"detalle_id", "tipo_prueba_id", "estado"}
