@@ -51,9 +51,7 @@ def _event(engine: Engine, aggregate_type: str, aggregate_id: str, event: str) -
 
 def test_creating_an_invoice_emits_the_invoice_and_its_detail_line(app, engine) -> None:
     _headers, cita = _booked_appointment(app, engine)
-    response = app.test_client().post(
-        "/api/v1/invoices", json={"cita_id": cita}, headers=_headers
-    )
+    response = app.test_client().post("/api/v1/invoices", json={"cita_id": cita}, headers=_headers)
     assert response.status_code == 201, response.get_json()
     factura_id = response.get_json()["id"]
 
@@ -71,9 +69,11 @@ def test_creating_an_invoice_emits_the_invoice_and_its_detail_line(app, engine) 
 
 def test_the_invoice_snapshot_has_no_gateway_identifiers_or_contact_data(app, engine) -> None:
     _headers, cita = _booked_appointment(app, engine)
-    factura_id = app.test_client().post(
-        "/api/v1/invoices", json={"cita_id": cita}, headers=_headers
-    ).get_json()["id"]
+    factura_id = (
+        app.test_client()
+        .post("/api/v1/invoices", json={"cita_id": cita}, headers=_headers)
+        .get_json()["id"]
+    )
 
     serialized = json.dumps(_event(engine, "factura", factura_id, "factura.creada")).lower()
 
@@ -84,17 +84,17 @@ def test_the_invoice_snapshot_has_no_gateway_identifiers_or_contact_data(app, en
 
 def test_the_invoice_patient_is_the_patient_of_the_appointment(app, engine) -> None:
     _headers, cita = _booked_appointment(app, engine)
-    factura_id = app.test_client().post(
-        "/api/v1/invoices", json={"cita_id": cita}, headers=_headers
-    ).get_json()["id"]
+    factura_id = (
+        app.test_client()
+        .post("/api/v1/invoices", json={"cita_id": cita}, headers=_headers)
+        .get_json()["id"]
+    )
 
     payload = _event(engine, "factura", factura_id, "factura.creada")
 
     with engine.connect() as conn:
         paciente = conn.execute(
-            text(
-                "SELECT c.paciente_id FROM citas AS c WHERE c.id = :c"
-            ),
+            text("SELECT c.paciente_id FROM citas AS c WHERE c.id = :c"),
             {"c": cita},
         ).scalar_one()
     assert payload["factura"]["paciente_id"] == str(paciente).lower()

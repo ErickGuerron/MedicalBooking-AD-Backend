@@ -18,9 +18,7 @@ def test_sql_refuses_a_reason_code_outside_the_closed_set(migrated_engine: Engin
     with pytest.raises(IntegrityError):
         with migrated_engine.begin() as conn:
             conn.execute(
-                text(
-                    "UPDATE citas SET motivo_cancelacion_codigo = 'PORQUE_SI' WHERE id = :c"
-                ),
+                text("UPDATE citas SET motivo_cancelacion_codigo = 'PORQUE_SI' WHERE id = :c"),
                 {"c": seed.cita_id},
             )
 

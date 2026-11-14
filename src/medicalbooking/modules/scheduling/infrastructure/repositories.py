@@ -513,9 +513,7 @@ _DOCTOR_CANCELS_IN_MONTH = text(
     "AND c.motivo_cancelacion_codigo IN ('IMPREVISTO_MEDICO', 'OTRO_MEDICO') "
     "AND c.cancelada_en >= :desde AND c.cancelada_en < :hasta"
 )
-_HAS_APPROVAL = text(
-    "SELECT 1 FROM aprobaciones_cancelacion_medico WHERE cita_id = :cita"
-)
+_HAS_APPROVAL = text("SELECT 1 FROM aprobaciones_cancelacion_medico WHERE cita_id = :cita")
 
 
 def _doctor_blockers(conn: Connection, command: CancelCommand, cita_id) -> tuple[str, ...]:

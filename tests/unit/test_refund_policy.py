@@ -80,9 +80,7 @@ def test_a_request_after_the_window_is_refused():
 
 def test_the_request_rate_limit_is_enforced():
     with pytest.raises(RefundRefused) as raised:
-        check_refund_eligibility(
-            _case(solicitudes_recientes=MAX_REQUESTS_PER_WINDOW), now=NOW
-        )
+        check_refund_eligibility(_case(solicitudes_recientes=MAX_REQUESTS_PER_WINDOW), now=NOW)
     assert raised.value.code == "DEMASIADAS_SOLICITUDES"
 
 

@@ -124,7 +124,7 @@ def test_the_consumer_projects_an_order_and_its_result_and_is_idempotent():
         assert (
             _owner_count(
                 "SELECT COUNT(*) FROM replica.ordenes_laboratorio "
-            "WHERE id = %s AND estado = 'COMPLETADA'",
+                "WHERE id = %s AND estado = 'COMPLETADA'",
                 (order,),
             )
             == 1

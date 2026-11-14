@@ -32,6 +32,7 @@ def finalize_reembolso(conn: Connection, reembolso_id: str, target: str, now: da
     )
     return result.rowcount == 1
 
+
 def mark_invoice_refunded(conn: Connection, reembolso_id: str) -> bool:
     """Move the invoice of a refunded payment from PAGADA to REEMBOLSADA (guarded)."""
     result = conn.execute(
