@@ -163,7 +163,7 @@ def test_a_treatment_upsert_keeps_only_a_newer_version() -> None:
     assert params[4] == "Control a las dos semanas (sintetico)"
 
 
-def test_a_follow_up_insert_is_idempotent_and_keeps_the_full_note() -> None:
+def test_a_follow_up_insert_needs_only_insert_privilege_and_keeps_the_full_note() -> None:
     cursor = _Cursor()
     seguimiento = {
         "id": "22222222-2222-4222-8222-222222222222",
@@ -177,7 +177,8 @@ def test_a_follow_up_insert_is_idempotent_and_keeps_the_full_note() -> None:
 
     sql, params = cursor.statements[-1]
     assert sql.startswith("INSERT INTO replica.tratamientos_seguimientos")
-    assert "ON CONFLICT (id) DO NOTHING" in sql
+    # ON CONFLICT would need SELECT, which replica_writer does not hold on this table.
+    assert "ON CONFLICT" not in sql
     assert params == (
         seguimiento["id"],
         seguimiento["tratamiento_id"],

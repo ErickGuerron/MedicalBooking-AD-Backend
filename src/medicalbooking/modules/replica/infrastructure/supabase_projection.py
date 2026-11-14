@@ -306,10 +306,15 @@ class _Transaction:
         )
 
     def upsert_seguimiento(self, seguimiento: dict[str, Any]) -> None:
-        """A follow-up is written once: notes are append-only, so a replay changes nothing."""
+        """A follow-up is inserted once: notes are append-only and the writer has no SELECT here.
+
+        INSERT ... ON CONFLICT needs SELECT on the conflict target, which replica_writer lacks on
+        this table (migration s0010 grants INSERT only). A replay never reaches this statement:
+        apply_event marks the event processed in the same transaction and skips a duplicate.
+        """
         self._cur.execute(
             "INSERT INTO replica.tratamientos_seguimientos (id, tratamiento_id, secuencia, nota, "
-            "creado_en) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+            "creado_en) VALUES (%s, %s, %s, %s, %s)",
             (
                 seguimiento["id"],
                 seguimiento["tratamiento_id"],
