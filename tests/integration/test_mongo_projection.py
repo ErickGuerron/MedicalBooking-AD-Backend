@@ -158,3 +158,113 @@ def test_event_types_without_a_projection_are_skipped(database) -> None:
 
     assert database["eventos_procesados"].count_documents({}) == 1
     assert database.list_collection_names() == ["eventos_procesados"]
+
+
+def _usuario_eliminado(user_id: str, version: int) -> OutboxEvent:
+    return _event("usuario.eliminado", user_id, version, {"usuario": {"id": user_id}})
+
+
+def _cita_actualizada(cita_id: str, estado: str, version: int) -> OutboxEvent:
+    cita = {
+        "id": cita_id,
+        "paciente_id": str(uuid.uuid4()),
+        "servicio_id": str(uuid.uuid4()),
+        "estado": estado,
+        "reservada_en": "2026-11-12T18:00:00",
+        "confirmada_en": None,
+        "cancelada_en": None,
+        "motivo_cancelacion_codigo": None,
+        "motivo_cancelacion_texto": None,
+        "inicio": "2026-11-15T10:00:00",
+        "fin": "2026-11-15T10:30:00",
+    }
+    return _event("cita.actualizada", cita_id, version, {"cita": cita}, aggregate_type="cita")
+
+
+def _cita_eliminada(cita_id: str, version: int) -> OutboxEvent:
+    return _event(
+        "cita.eliminada", cita_id, version, {"cita": {"id": cita_id}}, aggregate_type="cita"
+    )
+
+
+def _propuesta_revisada(propuesta_id: str, estado: str, version: int) -> OutboxEvent:
+    propuesta = {
+        "id": propuesta_id,
+        "orden_id": str(uuid.uuid4()),
+        "estado": estado,
+        "resumen_propuesto": "Revision",
+    }
+    return _event(
+        "propuesta.revisada",
+        propuesta_id,
+        version,
+        {"propuesta": propuesta, "hallazgos": []},
+        aggregate_type="propuesta_clinica",
+    )
+
+
+def test_usuario_eliminado_removes_the_account_roles_and_patient(database) -> None:
+    user_id = str(uuid.uuid4())
+    handler = MongoOutboxHandler(database)
+    handler.handle(_usuario_creado(user_id))
+
+    handler.handle(_usuario_eliminado(user_id, version=2))
+
+    assert database["usuarios"].count_documents({"_id": user_id}) == 0
+    assert database["pacientes"].count_documents({"usuario_id": user_id}) == 0
+
+
+def test_an_older_upsert_replayed_after_a_delete_stays_deleted(database) -> None:
+    user_id = str(uuid.uuid4())
+    handler = MongoOutboxHandler(database)
+    handler.handle(_usuario_creado(user_id))
+    handler.handle(_usuario_eliminado(user_id, version=2))
+
+    handler.handle(_usuario_creado(user_id))
+    handler.handle(_usuario_estado(user_id, "ACTIVO", version=1))
+
+    assert database["usuarios"].count_documents({"_id": user_id}) == 0
+    assert database["pacientes"].count_documents({"usuario_id": user_id}) == 0
+
+
+def test_deleting_an_account_twice_is_a_no_op(database) -> None:
+    user_id = str(uuid.uuid4())
+    handler = MongoOutboxHandler(database)
+    handler.handle(_usuario_creado(user_id))
+    handler.handle(_usuario_eliminado(user_id, version=2))
+
+    handler.handle(_usuario_eliminado(user_id, version=3))
+
+    assert database["usuarios"].count_documents({"_id": user_id}) == 0
+    assert database["eventos_procesados"].count_documents({}) == 3
+
+
+def test_a_cita_snapshot_replayed_after_its_delete_stays_deleted(database) -> None:
+    cita_id = str(uuid.uuid4())
+    handler = MongoOutboxHandler(database)
+    handler.handle(_cita_actualizada(cita_id, "PENDIENTE_PAGO", version=1))
+    handler.handle(_cita_eliminada(cita_id, version=2))
+
+    handler.handle(_cita_actualizada(cita_id, "PENDIENTE_PAGO", version=1))
+
+    assert database["citas"].count_documents({"_id": cita_id}) == 0
+
+
+def test_a_rejected_proposal_is_removed_from_mongo(database) -> None:
+    proposal_id = str(uuid.uuid4())
+    handler = MongoOutboxHandler(database)
+    handler.handle(_propuesta_revisada(proposal_id, "ACEPTADA", version=1))
+
+    handler.handle(_propuesta_revisada(proposal_id, "RECHAZADA", version=2))
+
+    assert database["propuestas_clinicas"].count_documents({"_id": proposal_id}) == 0
+
+
+def test_an_older_accepted_proposal_replayed_after_rejection_stays_removed(database) -> None:
+    proposal_id = str(uuid.uuid4())
+    handler = MongoOutboxHandler(database)
+    handler.handle(_propuesta_revisada(proposal_id, "RECHAZADA", version=2))
+
+    handler.handle(_propuesta_revisada(proposal_id, "ACEPTADA", version=1))
+
+    assert database["propuestas_clinicas"].count_documents({"_id": proposal_id}) == 0

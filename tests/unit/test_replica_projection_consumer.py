@@ -2,7 +2,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from medicalbooking.modules.replica.application.projection_consumer import apply_event
+from medicalbooking.modules.replica.application.projection_consumer import _HANDLERS, apply_event
 
 EVENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 USER = "77777777-7777-4777-8777-777777777777"
@@ -97,6 +97,12 @@ class FakeSink:
 
     def upsert_cita(self, cita):
         self._write("upsert_cita", dict(cita))
+
+    def delete_account(self, usuario_id):
+        self._write("delete_account", usuario_id)
+
+    def delete_cita(self, cita_id):
+        self._write("delete_cita", cita_id)
 
 
 def _envelope(event_type: str, aggregate_type: str, aggregate_id: str, payload: dict) -> dict:
@@ -538,3 +544,26 @@ def test_cita_actualizada_from_a_patient_cancellation_projects_null_reason_field
     written = sink.committed[0][1]
     assert written["motivo_cancelacion_codigo"] is None
     assert written["motivo_cancelacion_texto"] is None
+
+
+def test_the_handler_map_registers_the_two_delete_events():
+    assert "usuario.eliminado" in _HANDLERS
+    assert "cita.eliminada" in _HANDLERS
+
+
+def test_usuario_eliminado_deletes_the_account_through_the_sink():
+    sink = FakeSink()
+    event = _envelope("usuario.eliminado", "usuario", USER, {"usuario": {"id": USER}})
+
+    assert apply_event(event, sink, consumer="replica-supabase") is True
+
+    assert sink.committed == [("delete_account", USER)]
+
+
+def test_cita_eliminada_deletes_the_appointment_through_the_sink():
+    sink = FakeSink()
+    event = _envelope("cita.eliminada", "cita", CITA, {"cita": {"id": CITA}})
+
+    assert apply_event(event, sink, consumer="replica-supabase") is True
+
+    assert sink.committed == [("delete_cita", CITA)]

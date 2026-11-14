@@ -5,6 +5,12 @@ failed write leaves neither a projection nor a mark. A duplicate event_id is ski
 projections are upserts or deletes keyed by id, so replaying an event is harmless.
 
 Events of other types are ignored: the replica projects only what it needs (spec 8.3).
+
+Delete events (emitted in the same SQL Server transaction as the delete):
+- ``usuario.eliminado``: aggregate ``usuario``, payload ``{"usuario": {"id"}}``. Removes the
+  account, its roles and its patient profile (keyed by usuario_id).
+- ``cita.eliminada``: aggregate ``cita``, payload ``{"cita": {"id"}}``. Removes the appointment.
+Deleting a row that is already absent is a no-op, never an error.
 """
 
 from __future__ import annotations
@@ -150,9 +156,18 @@ def _cita_actualizada(envelope: dict[str, Any], tx: Any) -> None:
     tx.upsert_cita(_pick(envelope["payload"]["cita"], _CITA_FIELDS))
 
 
+def _usuario_eliminado(envelope: dict[str, Any], tx: Any) -> None:
+    tx.delete_account(envelope["payload"]["usuario"]["id"])
+
+
+def _cita_eliminada(envelope: dict[str, Any], tx: Any) -> None:
+    tx.delete_cita(envelope["payload"]["cita"]["id"])
+
+
 _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
     "usuario.creado": _usuario_creado,
     "usuario.activado": _usuario_activado,
+    "usuario.eliminado": _usuario_eliminado,
     "orden_laboratorio.creada": _orden_creada,
     "resultado_laboratorio.registrado": _resultado_registrado,
     "propuesta.revisada": _propuesta_revisada,
@@ -160,4 +175,5 @@ _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
     "pago.actualizado": _pago_actualizado,
     "reembolso.actualizado": _reembolso_actualizado,
     "cita.actualizada": _cita_actualizada,
+    "cita.eliminada": _cita_eliminada,
 }

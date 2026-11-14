@@ -6,6 +6,11 @@ aggregate version (``_v``); an update applies only when the stored version is no
 older event never overwrites a newer state. The processed mark is written after the projection
 succeeds, so a failed projection is retried. Writes are idempotent, so a replay changes nothing.
 
+Deletes leave a tombstone in the ``tombstones`` collection: the aggregate id and the version of
+the delete (``_v``, kept as the maximum). Any upsert of that aggregate with a version not newer
+than the tombstone is ignored, so a late older event cannot resurrect a deleted row. A delete of
+a missing row is a no-op.
+
 Errors: a MongoDB failure is transient (the dispatcher retries); an event whose payload does not
 fit the mapping is permanent. Payloads are never logged.
 """
@@ -30,6 +35,7 @@ from medicalbooking.modules.synchronization.domain.events import OutboxEvent
 
 CONSUMER = "replica-mongo"
 PROCESSED = "eventos_procesados"
+TOMBSTONES = "tombstones"
 
 
 class MongoProjectionSink:
@@ -69,11 +75,17 @@ class _MongoTransaction:
 
     # --- versioned writes -------------------------------------------------------------
 
-    def _set(self, collection: str, key: Any, fields: dict[str, Any]) -> None:
+    def _set(
+        self, collection: str, key: Any, fields: dict[str, Any], aggregate_id: Any = None
+    ) -> None:
         """Merge ``fields`` into one document, but only when its stored version is not newer.
 
-        A duplicate-key error means the stored document is newer: the update is ignored.
+        ``aggregate_id`` names the aggregate whose tombstone guards the write; it defaults to the
+        document key. A duplicate-key error means the stored document is newer: the update is
+        ignored.
         """
+        if self._tombstoned(key if aggregate_id is None else aggregate_id):
+            return
         clean = {name: _mongo_value(value) for name, value in fields.items() if value is not None}
         clean["_v"] = self._version
         try:
@@ -85,7 +97,18 @@ class _MongoTransaction:
         except DuplicateKeyError:
             return
 
-    def _delete(self, collection: str, key: Any) -> None:
+    def _tombstoned(self, aggregate_id: Any) -> bool:
+        """True when the aggregate was deleted at this version or a later one."""
+        found = self._db[TOMBSTONES].find_one(
+            {"_id": aggregate_id, "_v": {"$gte": self._version}}, {"_id": 1}
+        )
+        return found is not None
+
+    def _delete(self, collection: str, key: Any, aggregate_id: Any) -> None:
+        """Record the delete as a tombstone, then remove the document."""
+        self._db[TOMBSTONES].update_one(
+            {"_id": aggregate_id}, {"$max": {"_v": self._version}}, upsert=True
+        )
         self._db[collection].delete_one({"_id": key})
 
     def upsert_account(self, usuario_id: str, estado: str) -> None:
@@ -99,7 +122,13 @@ class _MongoTransaction:
             "pacientes",
             id,
             {"usuario_id": usuario_id, "nombre": nombre, "apellido": apellido},
+            aggregate_id=usuario_id,
         )
+
+    def delete_account(self, usuario_id: str) -> None:
+        """The account, its roles (stored in the account) and its patient profile."""
+        self._delete("usuarios", usuario_id, usuario_id)
+        self._db["pacientes"].delete_many({"usuario_id": usuario_id})
 
     def upsert_order(self, orden: dict[str, Any]) -> None:
         fields = {name: value for name, value in orden.items() if name not in ("id", "detalles")}
@@ -126,7 +155,7 @@ class _MongoTransaction:
         self._set("propuestas_clinicas", propuesta["id"], fields)
 
     def delete_proposal(self, propuesta_id: str) -> None:
-        self._delete("propuestas_clinicas", propuesta_id)
+        self._delete("propuestas_clinicas", propuesta_id, propuesta_id)
 
     def upsert_invoice(self, factura: dict[str, Any]) -> None:
         fields = {name: value for name, value in factura.items() if name not in ("id", "detalles")}
@@ -151,6 +180,9 @@ class _MongoTransaction:
     def upsert_cita(self, cita: dict[str, Any]) -> None:
         fields = {name: value for name, value in cita.items() if name != "id"}
         self._set("citas", cita["id"], fields)
+
+    def delete_cita(self, cita_id: str) -> None:
+        self._delete("citas", cita_id, cita_id)
 
 
 def _mongo_value(value: Any) -> Any:
