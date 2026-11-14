@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from medicalbooking.modules.clinical.application.knowledge_candidates import (
     _evidence_hint,
     build_report,
@@ -33,7 +35,17 @@ def test_the_file_is_written_once_with_a_utc_stamp(tmp_path) -> None:
         generated_at=datetime(2026, 11, 2, 12, 0, tzinfo=UTC),
     )
 
-    path = write_report(report, tmp_path / "candidates")
+    path = write_report(report, tmp_path / "candidates", tmp_path)
 
     assert path.name == "candidates-20261102T120000Z.json"
     assert json.loads(path.read_text(encoding="utf-8"))["analytes"][0]["analito_id"] == "x"
+
+
+def test_the_report_cannot_be_written_outside_the_knowledge_folder(tmp_path) -> None:
+    report = build_report(analytes=[], rules=[], generated_at=datetime(2026, 11, 2, tzinfo=UTC))
+    root = tmp_path / "knowledge"
+
+    with pytest.raises(ValueError):
+        write_report(report, root / ".." / "escaped", root)
+
+    assert not (tmp_path / "escaped").exists()

@@ -33,7 +33,8 @@ from medicalbooking.modules.clinical.infrastructure.external_sources import (
 from medicalbooking.workers.import_knowledge import _missing_credentials, _secret
 
 DEFAULT_CONFIG = Path("knowledge") / "sources.json"
-DEFAULT_OUT = Path("knowledge") / "candidates"
+KNOWLEDGE_ROOT = Path("knowledge")
+DEFAULT_OUT = KNOWLEDGE_ROOT / "candidates"
 MAX_STUDIES_PER_QUERY = 5
 
 
@@ -89,7 +90,11 @@ def main(argv: list[str] | None = None) -> int:
         rules=collected["rules"],
         generated_at=datetime.now(UTC),
     )
-    path = write_report(report, args.out)
+    try:
+        path = write_report(report, args.out, KNOWLEDGE_ROOT)
+    except ValueError:
+        print("report not written: --out must be inside knowledge/")
+        return 1
     print(f"candidate report written: {path}")
     print("this file is not knowledge: a reviewer records ranges in knowledge/references.csv")
     return 0
