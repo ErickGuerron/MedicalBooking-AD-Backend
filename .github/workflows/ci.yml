@@ -182,3 +182,83 @@ jobs:
       - name: Stop container
         if: always()
         run: docker rm -f api || true
+
+  # Publishes to Docker Hub only after every check above passed on a push to develop or main.
+  #   develop -> <user>/medicalbooking-backend:develop and :develop-<short sha>   (test images for the VMs)
+  #   main    -> <user>/medicalbooking-backend:<project.version> and :latest      (release images)
+  # Off until the repository variable IMAGE_PUBLISH_ENABLED is "true". A release version is immutable:
+  # the job refuses to publish a version that already exists. Bump project.version before merging to main.
+  publish:
+    name: Publish image
+    needs: [lint, audit, test, deploy-config, docker]
+    if: >-
+      github.event_name == 'push' &&
+      vars.IMAGE_PUBLISH_ENABLED == 'true' &&
+      (github.ref_name == 'develop' || github.ref_name == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: DOCKER_HUB
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve channel and tags
+        id: plan
+        env:
+          BRANCH: ${{ github.ref_name }}
+          HEAD_SHA: ${{ github.sha }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKERHUB_USERNAME" ]; then
+            echo "::error::vars.DOCKERHUB_USERNAME is not set in the DOCKER_HUB environment"
+            exit 1
+          fi
+          image="${DOCKERHUB_USERNAME,,}/medicalbooking-backend"
+          short_sha="${HEAD_SHA:0:7}"
+          case "$BRANCH" in
+            develop)
+              tags=("$image:develop" "$image:develop-$short_sha")
+              ;;
+            main)
+              version="$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")"
+              release="$image:$version"
+              if inspect_output="$(docker buildx imagetools inspect "$release" 2>&1)"; then
+                echo "::error::$release already exists. Bump project.version in pyproject.toml before merging to main."
+                exit 1
+              fi
+              if ! grep -qiE 'not found|manifest unknown' <<<"$inspect_output"; then
+                echo "::error::could not confirm that $release is unused; refusing to publish"
+                exit 1
+              fi
+              tags=("$release" "$image:latest")
+              ;;
+            *)
+              echo "::error::no publish channel for branch $BRANCH"
+              exit 1
+              ;;
+          esac
+          {
+            echo "tags<<TAGS"
+            printf '%s\n' "${tags[@]}"
+            echo "TAGS"
+          } >> "$GITHUB_OUTPUT"
+          echo "Publishing for $BRANCH: ${tags[*]}"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.plan.outputs.tags }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
