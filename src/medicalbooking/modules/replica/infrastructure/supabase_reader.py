@@ -108,6 +108,7 @@ class SupabaseReplicaReader:
             orders=_attach_diagnosis(_group(rows), proposal_rows),
         )
 
+
 def _group(rows: list[tuple]) -> dict[str, dict[str, Any]]:
     orders: dict[str, dict[str, Any]] = {}
     for (

@@ -79,14 +79,30 @@ class FakeConnection:
 
 def _row(result_id=RESULT, analito="Glucosa"):
     return (
-        ORDER, NOW, "COMPLETADA",
-        DETAIL, "COMPLETADO",
-        result_id, analito, "95", 95.0, "mg/dL", 70.0, 99.0, "NORMAL", NOW,
+        ORDER,
+        NOW,
+        "COMPLETADA",
+        DETAIL,
+        "COMPLETADO",
+        result_id,
+        analito,
+        "95",
+        95.0,
+        "mg/dL",
+        70.0,
+        99.0,
+        "NORMAL",
+        NOW,
     )
 
 
-def _proposal(estado, resumen="texto automatico", conclusion="conclusion medica",
-              tipo="PREDIABETES", explicacion="glucosa en ayunas elevada"):
+def _proposal(
+    estado,
+    resumen="texto automatico",
+    conclusion="conclusion medica",
+    tipo="PREDIABETES",
+    explicacion="glucosa en ayunas elevada",
+):
     return (ORDER, estado, resumen, conclusion, tipo, explicacion, 1)
 
 
@@ -109,10 +125,9 @@ def test_the_patient_and_the_user_are_fixed_inside_the_transaction_before_any_se
     assert (str(PATIENT),) in set_config_params
     assert (str(USER),) in set_config_params
     first_select = next(i for i, e in enumerate(statements) if "set_config" not in e[1])
-    assert all(
-        i < first_select for i, e in enumerate(statements) if "set_config" in e[1]
-    )
+    assert all(i < first_select for i, e in enumerate(statements) if "set_config" in e[1])
     assert connection.log[-1] == ("commit",)
+
 
 def test_ids_are_parameters_never_part_of_the_sql_text():
     connection = FakeConnection()
@@ -170,6 +185,7 @@ def test_the_permission_checked_is_the_one_the_sql_api_uses():
     assert permission_calls, "the permission must be checked"
     assert permission_calls[0][2] == (str(USER), "resultados.leer_propios")
 
+
 def test_rows_are_grouped_into_orders_with_their_validated_results():
     connection = FakeConnection(order_rows=[_row(), _row(result_id=UUID(int=7), analito="HbA1c")])
 
@@ -182,8 +198,22 @@ def test_rows_are_grouped_into_orders_with_their_validated_results():
 
 
 def test_an_order_without_results_still_comes_back_with_an_empty_list():
-    row = (ORDER, NOW, "SOLICITADA", DETAIL, "PENDIENTE",
-           None, None, None, None, None, None, None, None, None)
+    row = (
+        ORDER,
+        NOW,
+        "SOLICITADA",
+        DETAIL,
+        "PENDIENTE",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 
     result = _read(FakeConnection(order_rows=[row]))
 

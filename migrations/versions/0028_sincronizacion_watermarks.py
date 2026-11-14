@@ -1,4 +1,4 @@
-"""Watermarks for the external-write sync: one row per source table with the last delivered rowversion.
+"""Watermarks for the external-write sync: one row per source table, last delivered rowversion.
 
 Revision ID: 0028_sincronizacion_watermarks
 Revises: 0027_doctor_cancel_limits

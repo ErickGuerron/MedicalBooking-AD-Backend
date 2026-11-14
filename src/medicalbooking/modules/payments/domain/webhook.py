@@ -149,7 +149,6 @@ def _payment_intent(session: dict) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-
 def refund_target_status(status: object) -> str | None:
     """Map a Stripe refund status to the reembolso outcome; None means no change."""
     if not isinstance(status, str):

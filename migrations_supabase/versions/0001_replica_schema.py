@@ -1,4 +1,4 @@
-﻿"""Supabase replica schema: projections, idempotency evidence and lag watermarks.
+"""Supabase replica schema: projections, idempotency evidence and lag watermarks.
 
 Revision ID: s0001_replica_schema
 Revises:

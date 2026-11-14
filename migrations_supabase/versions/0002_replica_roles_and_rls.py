@@ -1,4 +1,4 @@
-﻿"""Replica roles privileges and row-level security (authoritative, idempotent).
+"""Replica roles privileges and row-level security (authoritative, idempotent).
 
 Revision ID: s0002_replica_roles_rls
 Revises: s0001_replica_schema

@@ -365,7 +365,7 @@ def clinical_fragment() -> dict[str, Any]:
                         **_AUTH_ERRORS,
                         "422": _problem("Invalid altitude, smoking or cigarette count"),
                     },
-                }
+                },
             },
             (
                 "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/"

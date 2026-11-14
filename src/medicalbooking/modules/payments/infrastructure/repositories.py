@@ -185,5 +185,3 @@ class SqlPaymentsStore:
                 {"factura": pago.factura_id},
             )
         emit_pago_snapshot(conn, pago.pago_id, now)
-
-    

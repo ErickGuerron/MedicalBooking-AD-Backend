@@ -97,6 +97,7 @@ def database_name(url: str) -> str:
             return value.strip()
     return ""
 
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Seed a demonstration database.")
     parser.add_argument("--confirm", required=True, help="exact database name to seed")

@@ -238,6 +238,7 @@ class RefundService:
         except Exception as unexpected:  # the cancellation has already committed
             logger.error("automatic refund error: %s", type(unexpected).__name__)
 
+
 __all__ = [
     "RefundDenied",
     "RefundOutcome",
