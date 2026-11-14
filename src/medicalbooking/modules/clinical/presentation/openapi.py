@@ -15,6 +15,14 @@ from medicalbooking.modules.clinical.presentation.routes import (
 )
 
 _BEARER = [{"bearerAuth": []}]
+_DEMOGRAPHICS_PROPS = {
+    "sexo": {"type": ["string", "null"], "enum": ["M", "F", None]},
+    "fecha_nacimiento": {
+        "type": ["string", "null"],
+        "format": "date",
+        "description": "YYYY-MM-DD, not in the future, age at most 120 years",
+    },
+}
 _UUID = {"type": "string", "format": "uuid"}
 _PROBLEM = {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
 
@@ -285,11 +293,12 @@ def clinical_fragment() -> dict[str, Any]:
                 "get": {
                     "tags": ["Clinical proposals"],
                     "operationId": "readClinicalProfile",
-                    "summary": "Read own declared altitude of residence and smoking (patient)",
+                    "summary": "Read own altitude, smoking, sex and birth date (patient)",
                     "description": (
-                        "Returns what the patient declared with the PUT. A field is null until "
-                        "it is declared, so altitude or smoking null means the profile is not "
-                        "complete yet."
+                        "Returns what the patient declared with the PUT or at registration. A "
+                        "field is null until it is declared, so altitude or smoking null means "
+                        "the profile is not complete yet. Sex and birth date are always present, "
+                        "null when unknown. Only the authenticated patient's own data."
                     ),
                     "security": _BEARER,
                     "responses": {
@@ -303,6 +312,8 @@ def clinical_fragment() -> dict[str, Any]:
                                             "altitud_residencia_m",
                                             "fumador",
                                             "cigarrillos_dia",
+                                            "sexo",
+                                            "fecha_nacimiento",
                                         ],
                                         "properties": {
                                             "altitud_residencia_m": {
@@ -316,6 +327,7 @@ def clinical_fragment() -> dict[str, Any]:
                                                 "minimum": 0,
                                                 "maximum": 200,
                                             },
+                                            **_DEMOGRAPHICS_PROPS,
                                         },
                                     }
                                 }
@@ -328,11 +340,14 @@ def clinical_fragment() -> dict[str, Any]:
                 "put": {
                     "tags": ["Clinical proposals"],
                     "operationId": "saveClinicalProfile",
-                    "summary": "Declare own altitude of residence and smoking (patient)",
+                    "summary": "Declare own altitude, smoking, sex and birth date (patient)",
                     "description": (
                         "Self-reported data for the WHO 2024 haemoglobin adjustments. Altitude and "
-                        "smoking are mandatory; a smoker declares cigarettes per day. Only the "
-                        "patient writes it."
+                        "smoking are mandatory; a smoker declares cigarettes per day. Sex and "
+                        "birth date are optional: omitting one leaves the stored value unchanged, "
+                        "an explicit null clears it, a value replaces it. Sex is M or F; the birth "
+                        "date is YYYY-MM-DD, not in the future, for an age of at most 120 years. "
+                        "Only the patient writes it. Any other field is rejected."
                     ),
                     "security": _BEARER,
                     "requestBody": {
@@ -355,17 +370,42 @@ def clinical_fragment() -> dict[str, Any]:
                                             "minimum": 0,
                                             "maximum": 200,
                                         },
+                                        **_DEMOGRAPHICS_PROPS,
                                     },
                                 }
                             }
                         },
                     },
                     "responses": {
-                        "200": {"description": "Profile saved"},
+                        "200": {
+                            "description": "Profile saved; the body is the stored profile",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "required": [
+                                            "altitud_residencia_m",
+                                            "fumador",
+                                            "cigarrillos_dia",
+                                            "sexo",
+                                            "fecha_nacimiento",
+                                        ],
+                                        "properties": {
+                                            "altitud_residencia_m": {"type": "integer"},
+                                            "fumador": {"type": "boolean"},
+                                            "cigarrillos_dia": {"type": ["integer", "null"]},
+                                            **_DEMOGRAPHICS_PROPS,
+                                        },
+                                    }
+                                }
+                            },
+                        },
                         **_AUTH_ERRORS,
-                        "422": _problem("Invalid altitude, smoking or cigarette count"),
+                        "422": _problem(
+                            "Invalid altitude, smoking, cigarette count, sex or birth date"
+                        ),
                     },
-                }
+                },
             },
             (
                 "/api/v1/lab/orders/{order_id}/sombra/snapshots/{snapshot_id}/"

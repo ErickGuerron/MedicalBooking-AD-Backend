@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from datetime import date
 
 import pytest
 
@@ -121,6 +122,49 @@ def test_existing_email_gets_the_same_answer_and_no_second_email() -> None:
 
     assert first == second == REGISTRATION_ACCEPTED
     assert len(mailer.sent) == 1
+
+
+def test_registration_carries_the_optional_demographics_to_the_patient() -> None:
+    service, directory, _ = _service()
+
+    service.register_patient(
+        email="a@synthetic.test",
+        password=PASSWORD,
+        first_name="A",
+        last_name="B",
+        sex="F",
+        birth_date="1990-05-17",
+    )
+
+    (user,) = directory.users.values()
+    assert (user.sex, user.birth_date) == ("F", date(1990, 5, 17))
+
+
+def test_registration_without_demographics_stores_none() -> None:
+    service, directory, _ = _service()
+    _register(service)
+
+    (user,) = directory.users.values()
+    assert (user.sex, user.birth_date) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("sex", "birth_date"), [("X", None), (None, "2999-01-01"), (None, "1800-01-01"), (None, "x")]
+)
+def test_invalid_demographics_are_rejected_before_anything_is_stored(sex, birth_date) -> None:
+    service, directory, mailer = _service()
+
+    with pytest.raises(ValidationFailed):
+        service.register_patient(
+            email="a@synthetic.test",
+            password=PASSWORD,
+            first_name="A",
+            last_name="B",
+            sex=sex,
+            birth_date=birth_date,
+        )
+    assert directory.users == {}
+    assert mailer.sent == []
 
 
 def test_short_password_is_rejected_before_anything_is_stored() -> None:

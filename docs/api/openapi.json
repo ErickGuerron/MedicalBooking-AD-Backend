@@ -1652,6 +1652,20 @@
             "title": "Email",
             "type": "string"
           },
+          "fecha_nacimiento": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional YYYY-MM-DD, not in the future, age at most 120 years",
+            "title": "Fecha Nacimiento"
+          },
           "first_name": {
             "maxLength": 100,
             "minLength": 1,
@@ -1669,6 +1683,23 @@
             "minLength": 12,
             "title": "Password",
             "type": "string"
+          },
+          "sexo": {
+            "anyOf": [
+              {
+                "enum": [
+                  "M",
+                  "F"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional: M or F",
+            "title": "Sexo"
           }
         },
         "required": [
@@ -2689,7 +2720,7 @@
     },
     "/api/v1/auth/register": {
       "post": {
-        "description": "Always answers 202 with the same message, whether or not the email already has an account. The account stays inactive until the link sent by email is opened.",
+        "description": "Always answers 202 with the same message, whether or not the email already has an account. The account stays inactive until the link sent by email is opened. sexo (M or F) and fecha_nacimiento (YYYY-MM-DD) are optional and stored on the patient record.",
         "operationId": "registerPatient",
         "requestBody": {
           "content": {
@@ -5477,7 +5508,7 @@
     },
     "/api/v1/me/perfil-clinico": {
       "get": {
-        "description": "Returns what the patient declared with the PUT. A field is null until it is declared, so altitude or smoking null means the profile is not complete yet.",
+        "description": "Returns what the patient declared with the PUT or at registration. A field is null until it is declared, so altitude or smoking null means the profile is not complete yet. Sex and birth date are always present, null when unknown. Only the authenticated patient's own data.",
         "operationId": "readClinicalProfile",
         "responses": {
           "200": {
@@ -5501,9 +5532,28 @@
                         "null"
                       ]
                     },
+                    "fecha_nacimiento": {
+                      "description": "YYYY-MM-DD, not in the future, age at most 120 years",
+                      "format": "date",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "fumador": {
                       "type": [
                         "boolean",
+                        "null"
+                      ]
+                    },
+                    "sexo": {
+                      "enum": [
+                        "M",
+                        "F",
+                        null
+                      ],
+                      "type": [
+                        "string",
                         "null"
                       ]
                     }
@@ -5511,7 +5561,9 @@
                   "required": [
                     "altitud_residencia_m",
                     "fumador",
-                    "cigarrillos_dia"
+                    "cigarrillos_dia",
+                    "sexo",
+                    "fecha_nacimiento"
                   ],
                   "type": "object"
                 }
@@ -5555,13 +5607,13 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Read own declared altitude of residence and smoking (patient)",
+        "summary": "Read own altitude, smoking, sex and birth date (patient)",
         "tags": [
           "Clinical proposals"
         ]
       },
       "put": {
-        "description": "Self-reported data for the WHO 2024 haemoglobin adjustments. Altitude and smoking are mandatory; a smoker declares cigarettes per day. Only the patient writes it.",
+        "description": "Self-reported data for the WHO 2024 haemoglobin adjustments. Altitude and smoking are mandatory; a smoker declares cigarettes per day. Sex and birth date are optional: omitting one leaves the stored value unchanged, an explicit null clears it, a value replaces it. Sex is M or F; the birth date is YYYY-MM-DD, not in the future, for an age of at most 120 years. Only the patient writes it. Any other field is rejected.",
         "operationId": "saveClinicalProfile",
         "requestBody": {
           "content": {
@@ -5582,8 +5634,27 @@
                       "null"
                     ]
                   },
+                  "fecha_nacimiento": {
+                    "description": "YYYY-MM-DD, not in the future, age at most 120 years",
+                    "format": "date",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "fumador": {
                     "type": "boolean"
+                  },
+                  "sexo": {
+                    "enum": [
+                      "M",
+                      "F",
+                      null
+                    ],
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
@@ -5598,7 +5669,54 @@
         },
         "responses": {
           "200": {
-            "description": "Profile saved"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "altitud_residencia_m": {
+                      "type": "integer"
+                    },
+                    "cigarrillos_dia": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "fecha_nacimiento": {
+                      "description": "YYYY-MM-DD, not in the future, age at most 120 years",
+                      "format": "date",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "fumador": {
+                      "type": "boolean"
+                    },
+                    "sexo": {
+                      "enum": [
+                        "M",
+                        "F",
+                        null
+                      ],
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "altitud_residencia_m",
+                    "fumador",
+                    "cigarrillos_dia",
+                    "sexo",
+                    "fecha_nacimiento"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Profile saved; the body is the stored profile"
           },
           "401": {
             "content": {
@@ -5628,7 +5746,7 @@
                 }
               }
             },
-            "description": "Invalid altitude, smoking or cigarette count"
+            "description": "Invalid altitude, smoking, cigarette count, sex or birth date"
           }
         },
         "security": [
@@ -5636,7 +5754,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Declare own altitude of residence and smoking (patient)",
+        "summary": "Declare own altitude, smoking, sex and birth date (patient)",
         "tags": [
           "Clinical proposals"
         ]

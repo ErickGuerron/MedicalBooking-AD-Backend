@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import Any, Literal
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -108,6 +108,12 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=12, max_length=256)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
+    sexo: Literal["M", "F"] | None = Field(default=None, description="Optional: M or F")
+    fecha_nacimiento: str | None = Field(
+        default=None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Optional YYYY-MM-DD, not in the future, age at most 120 years",
+    )
 
 
 @identity_bp.post("/auth/register")
@@ -119,6 +125,8 @@ def register() -> tuple[Response, int]:
         password=body.password,
         first_name=body.first_name,
         last_name=body.last_name,
+        sex=body.sexo,
+        birth_date=body.fecha_nacimiento,
     )
     return jsonify(message=message), 202
 

@@ -139,7 +139,9 @@ def identity_fragment() -> dict[str, Any]:
                     "description": (
                         "Always answers 202 with the same message, whether or not the email "
                         "already has an account. The account stays inactive until the link "
-                        "sent by email is opened."
+                        "sent by email is opened. sexo (M or F) and fecha_nacimiento "
+                        "(YYYY-MM-DD) are "
+                        "optional and stored on the patient record."
                     ),
                     "requestBody": _json_body("RegisterRequest"),
                     "responses": {
