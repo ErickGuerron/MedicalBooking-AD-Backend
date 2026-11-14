@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from datetime import date, datetime
+from typing import NoReturn
 
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
@@ -214,7 +215,7 @@ class TreatmentService:
         entidad: str,
         entidad_id: str,
         accion: str,
-    ) -> None:
+    ) -> NoReturn:
         # Denied access is audited too; the resource may not exist, so the patient may be unknown.
         self._audit(actor, paciente_id, entidad, entidad_id, accion, "DENEGADO")
         raise Forbidden(_FORBIDDEN)
