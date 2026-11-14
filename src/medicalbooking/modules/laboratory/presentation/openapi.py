@@ -221,6 +221,65 @@ def laboratory_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/patients": {
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "listPatients",
+                    "summary": "List patient profiles for the lab order form",
+                    "description": (
+                        "Requires ordenes.crear (ordering doctors). Returns the profile id "
+                        "(pacientes.id) and the names only. Ordered by apellido, nombre, id. "
+                        "Each call is audited without values."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 100,
+                                "default": 50,
+                            },
+                        },
+                        {
+                            "name": "offset",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "default": 0,
+                            },
+                        },
+                    ],
+                    "responses": {
+                        "200": _json("Patient page", "PatientList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks ordenes.crear"),
+                        "422": _problem("limit outside 1 to 100, or an invalid offset"),
+                    },
+                }
+            },
+            "/api/v1/lab/test-types": {
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "listLabTestTypes",
+                    "summary": "List the active laboratory test types",
+                    "description": (
+                        "Any authenticated caller. Static synthetic catalog: only active rows, "
+                        "ordered by nombre then id. Not audited (no personal data)."
+                    ),
+                    "security": _BEARER,
+                    "responses": {
+                        "200": _json("Active test types", "LabTestTypeList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                    },
+                }
+            },
             "/api/v1/documents/{document_id}/download": {
                 "get": {
                     "tags": ["Laboratory"],
@@ -324,6 +383,48 @@ def laboratory_fragment() -> dict[str, Any]:
                         "items": {
                             "type": "array",
                             "items": {"$ref": "#/components/schemas/LabResult"},
+                        }
+                    },
+                },
+                "PatientSummary": {
+                    "type": "object",
+                    "required": ["id", "nombres", "apellidos"],
+                    "properties": {
+                        "id": _UUID_PARAM,
+                        "nombres": {"type": "string"},
+                        "apellidos": {"type": "string"},
+                    },
+                },
+                "PatientList": {
+                    "type": "object",
+                    "required": ["items", "limit", "offset"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/PatientSummary"},
+                        },
+                        "limit": {"type": "integer"},
+                        "offset": {"type": "integer"},
+                    },
+                },
+                "LabTestType": {
+                    "type": "object",
+                    "required": ["id", "codigo", "nombre", "descripcion", "unidad_predeterminada"],
+                    "properties": {
+                        "id": _UUID_PARAM,
+                        "codigo": {"type": "string"},
+                        "nombre": {"type": "string"},
+                        "descripcion": {"type": ["string", "null"]},
+                        "unidad_predeterminada": {"type": ["string", "null"]},
+                    },
+                },
+                "LabTestTypeList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/LabTestType"},
                         }
                     },
                 },

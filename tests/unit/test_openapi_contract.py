@@ -33,6 +33,8 @@ EXPECTED_PATHS = {
     "/api/v1/lab/orders/{order_id}/review",
     "/api/v1/lab/orders/{order_id}/documents",
     "/api/v1/documents/{document_id}/download",
+    "/api/v1/patients",
+    "/api/v1/lab/test-types",
     "/api/v1/knowledge/analytes",
     "/api/v1/knowledge/analytes/{analyte_id}/references",
     "/api/v1/knowledge/references",

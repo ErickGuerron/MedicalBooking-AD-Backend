@@ -22,8 +22,10 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabOrderSummary,
     LabResult,
     LabStore,
+    LabTestType,
     NewDocument,
     NewOrder,
+    PatientSummary,
     ResultEntry,
     StoredDocument,
 )
@@ -144,6 +146,25 @@ class LabService:
             limit=limit,
             offset=offset,
         )
+
+    # ---------- patient directory and test catalog ----------
+
+    def list_patients(
+        self,
+        actor: AccessProfile,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[PatientSummary]:
+        """Patient profiles for the order form: ordering doctors only, audited without values."""
+        _require(actor, PERM_ORDER_CREATE)
+        rows = self._store.list_patients(limit=limit, offset=offset)
+        self._audit(actor, None, "paciente", None, "listar")
+        return rows
+
+    def list_test_types(self) -> list[LabTestType]:
+        """Static synthetic catalog: any authenticated actor, no personal data, no audit row."""
+        return self._store.list_test_types()
 
     # ---------- results ----------
 
@@ -380,7 +401,7 @@ class LabService:
         actor: AccessProfile,
         paciente_id: str | None,
         entidad: str,
-        entidad_id: str,
+        entidad_id: str | None,
         accion: str,
         resultado: str = "OK",
     ) -> None:

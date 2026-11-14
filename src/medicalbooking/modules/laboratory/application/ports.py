@@ -40,6 +40,26 @@ class LabOrderSummary:
 
 
 @dataclass(frozen=True)
+class PatientSummary:
+    """A patient for the order form: the profile id and the names only."""
+
+    id: str
+    nombre: str
+    apellido: str
+
+
+@dataclass(frozen=True)
+class LabTestType:
+    """One active entry of the laboratory test catalog (static, no personal data)."""
+
+    id: str
+    codigo: str
+    nombre: str
+    descripcion: str | None
+    unidad_predeterminada: str | None
+
+
+@dataclass(frozen=True)
 class LabResult:
     id: str
     detalle_id: str
@@ -113,7 +133,8 @@ class AuditEvent:
     actor_user_id: str
     paciente_id: str | None
     entidad: str
-    entidad_id: str
+    # None when the event covers a listing of many records and names no single entity.
+    entidad_id: str | None
     accion: str
     resultado: str
     occurred_at: datetime
@@ -148,6 +169,14 @@ class LabStore(Protocol):
     def create_order(self, command: NewOrder) -> LabOrder: ...
 
     def get_order(self, order_id: str) -> LabOrder | None: ...
+
+    def list_patients(self, *, limit: int, offset: int) -> list[PatientSummary]:
+        """Patient profiles with their names, ordered by apellido, nombre, id; one page."""
+        ...
+
+    def list_test_types(self) -> list[LabTestType]:
+        """Active test types only, ordered by nombre then id."""
+        ...
 
     def list_orders(
         self,

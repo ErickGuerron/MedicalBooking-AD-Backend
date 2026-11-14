@@ -21,8 +21,10 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabOrder,
     LabOrderSummary,
     LabResult,
+    LabTestType,
     NewDocument,
     NewOrder,
+    PatientSummary,
     ResultEntry,
     StoredDocument,
 )
@@ -302,6 +304,43 @@ class SqlLabStore:
                 paciente_id=_canonical(row.paciente_id),
                 estado=row.estado,
                 fecha=row.fecha_orden,
+            )
+            for row in rows
+        ]
+
+    # ---------- patient directory and test catalog ----------
+
+    def list_patients(self, *, limit: int, offset: int) -> list[PatientSummary]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT p.id, u.nombre, u.apellido FROM pacientes p "
+                    "JOIN usuarios u ON u.id = p.usuario_id "
+                    "ORDER BY u.apellido, u.nombre, p.id "
+                    "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY"
+                ),
+                {"skip": offset, "take": limit},
+            ).all()
+        return [
+            PatientSummary(id=_canonical(row.id), nombre=row.nombre, apellido=row.apellido)
+            for row in rows
+        ]
+
+    def list_test_types(self) -> list[LabTestType]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, codigo, nombre, descripcion, unidad_predeterminada "
+                    "FROM tipos_prueba_laboratorio WHERE activo = 1 ORDER BY nombre, id"
+                )
+            ).all()
+        return [
+            LabTestType(
+                id=_canonical(row.id),
+                codigo=row.codigo,
+                nombre=row.nombre,
+                descripcion=row.descripcion,
+                unidad_predeterminada=row.unidad_predeterminada,
             )
             for row in rows
         ]
