@@ -14,6 +14,8 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabOrder,
     LabOrderSummary,
     LabResult,
+    LabTestType,
+    PatientSummary,
     ResultEntry,
     StoredDocument,
 )
@@ -72,6 +74,13 @@ class ListOrdersQuery(BaseModel):
     offset: int = Field(default=0, ge=0, le=2_147_483_647)
 
 
+class PatientListQuery(BaseModel):
+    """Query string of GET /patients: one page of the patient directory (default 50, max 100)."""
+
+    limit: int = Field(default=50, ge=1, le=100)
+    offset: int = Field(default=0, ge=0, le=2_147_483_647)
+
+
 def _service() -> LabService:
     return current_app.extensions["medicalbooking.laboratory"]
 
@@ -112,6 +121,20 @@ def _summary_json(order: LabOrderSummary) -> dict[str, Any]:
         "paciente_id": order.paciente_id,
         "estado": order.estado,
         "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+
+def _patient_json(patient: PatientSummary) -> dict[str, Any]:
+    return {"id": patient.id, "nombres": patient.nombre, "apellidos": patient.apellido}
+
+
+def _test_type_json(test_type: LabTestType) -> dict[str, Any]:
+    return {
+        "id": test_type.id,
+        "codigo": test_type.codigo,
+        "nombre": test_type.nombre,
+        "descripcion": test_type.descripcion,
+        "unidad_predeterminada": test_type.unidad_predeterminada,
     }
 
 
@@ -159,6 +182,28 @@ def list_orders() -> tuple[Response, int]:
         g.actor, estado=query.estado, limit=query.limit, offset=query.offset
     )
     return jsonify(items=[_summary_json(row) for row in rows]), 200
+
+
+@lab_bp.get("/patients")
+@authenticated
+def list_patients() -> tuple[Response, int]:
+    query = _validate(PatientListQuery, request.args.to_dict())
+    rows = _service().list_patients(g.actor, limit=query.limit, offset=query.offset)
+    return (
+        jsonify(
+            items=[_patient_json(row) for row in rows],
+            limit=query.limit,
+            offset=query.offset,
+        ),
+        200,
+    )
+
+
+@lab_bp.get("/lab/test-types")
+@authenticated
+def list_test_types() -> tuple[Response, int]:
+    rows = _service().list_test_types()
+    return jsonify(items=[_test_type_json(row) for row in rows]), 200
 
 
 @lab_bp.get("/lab/orders/<uuid:order_id>")

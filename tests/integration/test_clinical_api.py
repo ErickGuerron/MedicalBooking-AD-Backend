@@ -23,6 +23,7 @@ from tests.integration.test_lab_api import (
     _doctor,
     _order_for,
     _patient_id,
+    _relate,
     _test_type,
 )
 from tests.integration.test_scheduling_api import _count, _token, _user
@@ -509,6 +510,7 @@ def _order_with_test(app, engine, code: str):
     """An order for one specific synthetic test type. Returns (order_id, doctor_headers)."""
     patient = _user(engine, "PACIENTE")
     doctor = _doctor(engine)
+    _relate(app, engine, patient, doctor)
     headers = _token(app, doctor)
     response = _create_order(
         app.test_client(), headers, _patient_id(engine, patient), [_test_type(engine, code)]
