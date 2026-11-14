@@ -8,10 +8,16 @@ S3. Source requirement (rubric criterion 4): "Servicios REST funcionales para ci
 S4. A treatment belongs to one cita (appointment) and is created only by the doctor of that cita. Each treatment has a description, a state (ACTIVO, FINALIZADO, SUSPENDIDO), a start date, and an optional end date.
 S5. Follow-up entries (seguimientos) are append-only notes linked to a treatment, written by the doctor of the cita. They are never edited or deleted through the API.
 S6. The owning patient may read their own treatments and follow-ups. A missing resource and a foreign one both answer 403 (same convention as laboratory).
-S7. Treatment data and follow-up notes are clinical notes: they are NOT replicated to Supabase or MongoDB (same privacy rule as consultas_medicas notes in kafka-replication.md). Add them to the never-replicated list.
+S7. Treatments (tratamientos) and follow-ups (tratamientos_seguimientos) ARE replicated to Supabase and MongoDB, including their text fields (descripcion and the follow-up nota). Per the user's option A (L10). This overrides the earlier rule that kept them out of the replication.
 S8. plan_tratamiento in consultas_medicas is untouched. It stays a free-text summary and is not read or written by the new endpoints.
 S9. Assumption (to be confirmed by the user if wrong): the link is cita_id because no code path writes consultas_medicas today.
 S10. Writes are audited without clinical values (same as laboratory).
+S11. Replicated events (aggregate "tratamiento", same outbox and Kafka path as the other replicated aggregates; see kafka-replication S1). Each event is appended in the same SQL Server transaction as its write, with the next version of its aggregate.
+- tratamiento.creado and tratamiento.actualizado: payload {"tratamiento": {id, cita_id, paciente_id, medico_id, descripcion, estado, fecha_inicio, fecha_fin}}. The full descripcion text is included. The version is the envelope aggregate_version (the SQL schema has no version column).
+- seguimiento.registrado: payload {"seguimiento": {id, tratamiento_id, secuencia, nota, creado_en}}. The full nota text is included.
+- Not replicated: registrado_por, the doctor's user id and the audit trail.
+- Supabase: replica.tratamientos and replica.tratamientos_seguimientos (migration s0010, new file, not applied). The tratamiento upsert ignores an event whose version is not newer than the stored one. Follow-ups are inserted once by id.
+- MongoDB: collections tratamientos and tratamientos_seguimientos, versioned by _v with the same stale-version rule.
 
 ## Tasks
 T1. Migration 0029: tables tratamientos and tratamientos_seguimientos, constraints, indexes, and any permission seed the existing permisos model needs. Status: done (no permission seed: existing permissions reused; down_revision 0027_doctor_cancel_limits, see Log L5). Not applied to any database.
@@ -23,6 +29,7 @@ T6. Register the blueprint in app.py and the composition root. Status: done (_bu
 T7. Unit tests for policies, service, and routes (RED first for each rule). Status: done (test_treatments_*.py; see Log L6 for the RED record and the one exception).
 T8. Never-replicated list update in docs/kafka-replication.md. Status: blocked (docs/kafka-replication.md does not exist; the list lives in odd/tasks/kafka-replication.md line 51, outside this unit's surfaces; see Log L7).
 T9. Docs: endpoints in the API documentation. Status: done (docs/treatments.md).
+T10. Replicate tratamientos and seguimientos (user option A, L10, S7 and S11): outbox events in the write path, Supabase migration s0010 (new file, not applied), projection handlers, MongoDB upserts. Status: done for code and local evidence (commits 1100e37, 5fb2de9). Unit 1137 passed, 1 skipped (+25). Integration 461 passed, 46 skipped, 1 xfailed (+2; the outbox assertions were observed RED against HEAD). Live Supabase and MongoDB verification not run (no credentials; by instruction). Migration s0010_treatments_replica is NOT applied.
 
 ## Log
 L1. User request (verbatim): "termina de implementar los endpoints que son del tratamiento" (after confirming option A: entidad estructurada con seguimientos, plan_tratamiento as summary).
@@ -34,3 +41,4 @@ L6. TDD record: RED for policies, service and routes was observed (module missin
 L7. T8 blocked: docs/kafka-replication.md is absent. The never-replicated list is in odd/tasks/kafka-replication.md (line 51). Parent to decide: add the two tables to that file (outside this unit) or create docs/kafka-replication.md.
 L8. Integration not run: the T-SQL adapter (repositories.py) and migration 0029 were not executed against SQL Server. They need the integration suite on a test database.
 L9. Integration done: tests/integration/test_treatments_api.py (9 tests) runs against the MedicalBooking_test database through the real app and SqlTreatmentStore, with migration 0029 applied by the fixtures. Covers S1-S6 and S10 access/audit paths: create and list by doctor and owning patient; PATCH and FINALIZADO end-date rule; follow-up order; append-only trigger asserted via SQL; foreign doctor, foreign patient and missing ids all answer the same 403 body; 401 without token. Goal 7 (migration downgrade) skipped: no integration downgrade pattern in the repo; tests/unit/test_treatments_migration.py covers it statically. No implementation bug found. RED caveat: implementation pre-existed, so these were characterization tests that passed on first run after one test-side fix (correlation_id differs per response). Counts: integration 445 passed, 40 skipped, 1 xfailed before; 454 passed, 40 skipped, 1 xfailed after. Unit 1093 passed, 1 skipped. Ruff check and format clean on the new file.
+L10. User request (verbatim): "agrégalas a kafka para que también queden dentro de la replicación", then "A" (option A: full content, text included). Overrides S7's earlier rule (not replicated). Reopens the replication work as T10. Risk: replicated personal clinical text now leaves SQL Server to Supabase and MongoDB.
