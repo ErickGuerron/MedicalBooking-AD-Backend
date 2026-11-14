@@ -64,6 +64,10 @@ from medicalbooking.modules.scheduling.application.use_cases import SchedulingSe
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
 from medicalbooking.modules.scheduling.presentation.routes import scheduling_bp
+from medicalbooking.modules.treatments.application.use_cases import TreatmentService
+from medicalbooking.modules.treatments.infrastructure.repositories import SqlTreatmentStore
+from medicalbooking.modules.treatments.presentation.openapi import treatments_fragment
+from medicalbooking.modules.treatments.presentation.routes import treatments_bp
 from medicalbooking.shared.domain.errors import AppError
 from medicalbooking.shared.infrastructure.database import create_database_engine
 from medicalbooking.shared.presentation.api_docs import register_api_docs
@@ -83,6 +87,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
+    app.extensions["medicalbooking.treatments"] = _build_treatments(engine)
     app.extensions["medicalbooking.laboratory_status"] = LaboratoryStatusService(
         orders=app.extensions["medicalbooking.laboratory"], clock=_utc_now
     )
@@ -105,6 +110,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(identity_bp)
     app.register_blueprint(scheduling_bp)
     app.register_blueprint(lab_bp)
+    app.register_blueprint(treatments_bp)
     app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
     app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
@@ -116,6 +122,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 identity_fragment(),
                 scheduling_fragment(),
                 laboratory_fragment(),
+                treatments_fragment(),
                 clinical_fragment(),
                 payments_fragment(),
             ],
@@ -165,6 +172,15 @@ def _build_laboratory(settings: Settings, engine: Any) -> LabService:
     return LabService(
         store=SqlLabStore(engine),
         storage=LocalDocumentStorage(Path(settings.lab_documents_dir)),
+        clock=lambda: datetime.now(UTC),
+        correlation_id=lambda: g.get("correlation_id"),
+    )
+
+
+def _build_treatments(engine: Any) -> TreatmentService:
+    """Composition root for treatments (S4-S6): SQL store and the request's correlation id."""
+    return TreatmentService(
+        store=SqlTreatmentStore(engine),
         clock=lambda: datetime.now(UTC),
         correlation_id=lambda: g.get("correlation_id"),
     )
