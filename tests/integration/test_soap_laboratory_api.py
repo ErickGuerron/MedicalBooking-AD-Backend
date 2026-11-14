@@ -25,6 +25,7 @@ from tests.integration.test_lab_api import (
     _doctor,
     _order_for,
     _patient_id,
+    _relate,
     _result_body,
 )
 from tests.integration.test_scheduling_api import _token, _user
@@ -60,6 +61,7 @@ def _own_order(app, engine) -> tuple[str, str, str, dict[str, str]]:
         )
     patient = _user(engine, "PACIENTE")
     doctor = _doctor(engine)
+    _relate(app, engine, patient, doctor)
     headers = _token(app, doctor)
     response = _create_order(
         app.test_client(),

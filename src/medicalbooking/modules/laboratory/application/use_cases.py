@@ -92,8 +92,9 @@ class LabService:
         validate_priority(prioridad)
         validate_observations(observaciones)
         test_ids = validate_test_ids(list(tipo_prueba_ids))
-        if not self._store.patient_exists(str(paciente_id)):
-            raise NotFound("Patient not found")
+        if not self._store.patient_is_related(medico_id, str(paciente_id)):
+            # Unknown and unrelated patients get the same answer, so patient ids do not leak.
+            raise Forbidden(_FORBIDDEN)
         if set(test_ids) - self._store.active_test_ids(test_ids):
             raise ValidationFailed("Unknown or inactive test type")
 
@@ -156,9 +157,16 @@ class LabService:
         limit: int,
         offset: int,
     ) -> list[PatientSummary]:
-        """Patient profiles for the order form: ordering doctors only, audited without values."""
+        """Patients the calling doctor treats, for the order form; audited without values.
+
+        The relation and the ACTIVO filter are applied by the store. A caller without a doctor
+        profile has no patients to treat, so it gets the uniform 403.
+        """
         _require(actor, PERM_ORDER_CREATE)
-        rows = self._store.list_patients(limit=limit, offset=offset)
+        medico_id = self._store.resolve_medico_id(actor.user_id)
+        if medico_id is None:
+            raise Forbidden(_FORBIDDEN)
+        rows = self._store.list_patients(medico_id=medico_id, limit=limit, offset=offset)
         self._audit(actor, None, "paciente", None, "listar")
         return rows
 

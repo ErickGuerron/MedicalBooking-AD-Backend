@@ -47,6 +47,18 @@ def _as_guid(value: str) -> str | None:
         return None
 
 
+# A patient is treated by a doctor when a cita (any status) or a lab order links them. The
+# predicate expects the alias p for pacientes and the bound parameter :medico for the doctor.
+_TREATED_BY_DOCTOR = (
+    "(EXISTS (SELECT 1 FROM citas c "
+    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id "
+    "WHERE c.paciente_id = p.id AND a.medico_id = :medico) "
+    "OR EXISTS (SELECT 1 FROM ordenes_laboratorio o "
+    "WHERE o.paciente_id = p.id AND o.medico_id = :medico))"
+)
+
+
 class SqlLabStore:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
@@ -137,15 +149,15 @@ class SqlLabStore:
             ).scalar()
         return None if value is None else _canonical(value)
 
-    def patient_exists(self, paciente_id: str) -> bool:
-        guid = _as_guid(paciente_id)
-        if guid is None:
+    def patient_is_related(self, medico_id: str, paciente_id: str) -> bool:
+        medico, paciente = _as_guid(medico_id), _as_guid(paciente_id)
+        if medico is None or paciente is None:
             return False
+        # Only the constant predicate is concatenated; every value is a bound parameter.
+        query = "SELECT 1 FROM pacientes p WHERE p.id = :paciente AND " + _TREATED_BY_DOCTOR  # noqa: S608
         with self._engine.connect() as conn:
-            return (
-                conn.execute(text("SELECT 1 FROM pacientes WHERE id = :p"), {"p": guid}).first()
-                is not None
-            )
+            found = conn.execute(text(query), {"paciente": paciente, "medico": medico}).first()
+        return found is not None
 
     def active_test_ids(self, ids: list[str]) -> set[str]:
         guids = [g for g in (_as_guid(i) for i in ids) if g is not None]
@@ -310,16 +322,22 @@ class SqlLabStore:
 
     # ---------- patient directory and test catalog ----------
 
-    def list_patients(self, *, limit: int, offset: int) -> list[PatientSummary]:
+    def list_patients(self, *, medico_id: str, limit: int, offset: int) -> list[PatientSummary]:
+        medico = _as_guid(medico_id)
+        if medico is None:
+            return []
+        # Only the constant predicate is concatenated; the doctor and the paging are bound.
+        query = (
+            "SELECT p.id, u.nombre, u.apellido FROM pacientes p "  # noqa: S608
+            "JOIN usuarios u ON u.id = p.usuario_id "
+            "WHERE u.estado = 'ACTIVO' AND " + _TREATED_BY_DOCTOR + " "
+            "ORDER BY u.apellido, u.nombre, p.id "
+            "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY"
+        )
         with self._engine.connect() as conn:
             rows = conn.execute(
-                text(
-                    "SELECT p.id, u.nombre, u.apellido FROM pacientes p "
-                    "JOIN usuarios u ON u.id = p.usuario_id "
-                    "ORDER BY u.apellido, u.nombre, p.id "
-                    "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY"
-                ),
-                {"skip": offset, "take": limit},
+                text(query),
+                {"medico": medico, "skip": offset, "take": limit},
             ).all()
         return [
             PatientSummary(id=_canonical(row.id), nombre=row.nombre, apellido=row.apellido)

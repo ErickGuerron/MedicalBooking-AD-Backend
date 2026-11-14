@@ -58,6 +58,7 @@ class FakeStore:
     orders: list[LabOrder] = field(default_factory=list)
     fecha_by_order: dict[str, datetime] = field(default_factory=dict)
     list_calls: list[dict] = field(default_factory=list)
+    related: set = field(default_factory=set)  # (medico_id, paciente_id) pairs with a relation
 
     def add(self, order: LabOrder, fecha: datetime = NOW) -> LabOrder:
         # The adapter joins the owning user ids; the fake fills them the same way.
@@ -76,8 +77,8 @@ class FakeStore:
     def resolve_medico_id(self, user_id):
         return self.medico_by_user.get(user_id)
 
-    def patient_exists(self, paciente_id):
-        return paciente_id in self.patient_by_user.values()
+    def patient_is_related(self, medico_id, paciente_id):
+        return (medico_id, paciente_id) in self.related
 
     def active_test_ids(self, ids):
         return set(ids)
@@ -165,6 +166,9 @@ def world() -> World:
     store.patient_by_user[other_patient.user_id] = _id()
     store.medico_by_user[doctor.user_id] = _id()
     store.medico_by_user[other_doctor.user_id] = _id()
+    store.related.add(
+        (store.medico_by_user[doctor.user_id], store.patient_by_user[patient.user_id])
+    )
     return World(
         store=store,
         patient=patient,

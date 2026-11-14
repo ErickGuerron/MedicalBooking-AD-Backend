@@ -104,15 +104,17 @@ def laboratory_fragment() -> dict[str, Any]:
                     "operationId": "createLabOrder",
                     "summary": "Create a laboratory order for a patient",
                     "description": (
-                        "Requires ordenes.crear and a doctor profile. Starts SOLICITADA."
+                        "Requires ordenes.crear and a doctor profile. The patient must have a "
+                        "cita or a lab order with the caller. Starts SOLICITADA."
                     ),
                     "security": _BEARER,
                     "requestBody": _body("CreateOrderRequest"),
                     "responses": {
                         "201": _json("Order created", "LabOrder"),
                         "401": _problem("Missing, malformed or inactive credentials"),
-                        "403": _problem("Caller is not an ordering doctor"),
-                        "404": _problem("Patient not found"),
+                        "403": _problem(
+                            "Caller is not an ordering doctor or the patient is not theirs"
+                        ),
                         "422": _problem("Invalid body or unknown test type"),
                     },
                 },
@@ -227,9 +229,10 @@ def laboratory_fragment() -> dict[str, Any]:
                     "operationId": "listPatients",
                     "summary": "List patient profiles for the lab order form",
                     "description": (
-                        "Requires ordenes.crear (ordering doctors). Returns the profile id "
-                        "(pacientes.id) and the names only. Ordered by apellido, nombre, id. "
-                        "Each call is audited without values."
+                        "Requires ordenes.crear and a doctor profile. Lists only the patients "
+                        "the caller treats (a cita or a lab order, any status) with an ACTIVO "
+                        "account. Returns the profile id (pacientes.id) and the names only. "
+                        "Ordered by apellido, nombre, id. Each call is audited without values."
                     ),
                     "security": _BEARER,
                     "parameters": [

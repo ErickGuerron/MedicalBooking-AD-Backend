@@ -162,7 +162,9 @@ class LabStore(Protocol):
 
     def resolve_medico_id(self, user_id: str) -> str | None: ...
 
-    def patient_exists(self, paciente_id: str) -> bool: ...
+    def patient_is_related(self, medico_id: str, paciente_id: str) -> bool:
+        """True when the doctor has a cita or a lab order with this patient (any status)."""
+        ...
 
     def active_test_ids(self, ids: list[str]) -> set[str]: ...
 
@@ -170,8 +172,11 @@ class LabStore(Protocol):
 
     def get_order(self, order_id: str) -> LabOrder | None: ...
 
-    def list_patients(self, *, limit: int, offset: int) -> list[PatientSummary]:
-        """Patient profiles with their names, ordered by apellido, nombre, id; one page."""
+    def list_patients(self, *, medico_id: str, limit: int, offset: int) -> list[PatientSummary]:
+        """Patients the doctor treats (cita or lab order, any status) with an ACTIVO account.
+
+        Ordered by apellido, nombre, id; one page.
+        """
         ...
 
     def list_test_types(self) -> list[LabTestType]:

@@ -1,7 +1,9 @@
 """Patient directory and lab test catalog (lab order form) against real SQL Server.
 
 Each test creates its own users and test types, so counts do not depend on other tests.
-Patients share the same synthetic names, so directory checks page through the whole list.
+Patients are listed only when they have a relation with the calling doctor (an appointment or a
+lab order), and only when their account is ACTIVO. Patients share the same synthetic names, so
+directory checks page through the whole list.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
-from tests.integration.test_lab_api import _doctor, _patient_id, _test_type
+from tests.integration.test_lab_api import _doctor, _patient_id, _relate, _test_type
 from tests.integration.test_scheduling_api import _count, _token, _user
 
 pytestmark = pytest.mark.integration
@@ -26,6 +28,7 @@ PATIENTS_URL = "/api/v1/patients"
 CATALOG_URL = "/api/v1/lab/test-types"
 ORDERS_URL = "/api/v1/lab/orders"
 PAGE = 100
+UNIFORM_FORBIDDEN = "Access to this resource is not allowed"
 
 
 @pytest.fixture(scope="module")
@@ -58,6 +61,65 @@ def _all_patients(app: Flask, headers: dict) -> list[dict]:
         offset += PAGE
 
 
+def _listed_ids(app: Flask, doctor: str) -> set[str]:
+    return {item["id"] for item in _all_patients(app, _token(app, doctor))}
+
+
+def _doctor_profile(engine: Engine, user_id: str) -> str:
+    with engine.connect() as conn:
+        value = conn.execute(
+            text("SELECT id FROM medicos WHERE usuario_id = :u"), {"u": user_id}
+        ).scalar_one()
+    return str(uuid.UUID(str(value)))
+
+
+def _insert_history_order(engine: Engine, patient_profile: str, doctor_user: str) -> None:
+    """A lab order placed by the doctor with no appointment behind it (a relation by history)."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO ordenes_laboratorio (id, paciente_id, medico_id, fecha_orden, "
+                "prioridad, estado) VALUES (NEWID(), :p, :m, SYSUTCDATETIME(), 'NORMAL', "
+                "'COMPLETADA')"
+            ),
+            {"p": patient_profile, "m": _doctor_profile(engine, doctor_user)},
+        )
+
+
+def _cancel_appointments(engine: Engine, patient_profile: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE citas SET estado = 'CANCELADA', cancelada_en = SYSUTCDATETIME() "
+                "WHERE paciente_id = :p"
+            ),
+            {"p": patient_profile},
+        )
+
+
+def _set_account_status(engine: Engine, user_id: str, estado: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE usuarios SET estado = :e WHERE id = :u"), {"e": estado, "u": user_id}
+        )
+
+
+def _post_order(app: Flask, headers: dict, patient_profile: str, test_type: str):
+    return app.test_client().post(
+        ORDERS_URL,
+        json={"paciente_id": patient_profile, "tipo_prueba_ids": [test_type]},
+        headers=headers,
+    )
+
+
+def _orders_of(engine: Engine, patient_profile: str) -> int:
+    return _count(
+        engine,
+        "SELECT COUNT(*) FROM ordenes_laboratorio WHERE paciente_id = :p",
+        p=patient_profile,
+    )
+
+
 def _inactive_test_type(engine: Engine) -> str:
     test_id = str(uuid.uuid4())
     with engine.begin() as conn:
@@ -77,7 +139,9 @@ def _inactive_test_type(engine: Engine) -> str:
 def test_doctor_lists_patients_and_the_profile_id_places_an_order(app, engine) -> None:
     patient_user = _user(engine, "PACIENTE")
     profile_id = _patient_id(engine, patient_user)
-    headers = _token(app, _doctor(engine))
+    doctor = _doctor(engine)
+    _relate(app, engine, patient_user, doctor)
+    headers = _token(app, doctor)
 
     listed = {item["id"]: item for item in _all_patients(app, headers)}
 
@@ -92,16 +156,19 @@ def test_doctor_lists_patients_and_the_profile_id_places_an_order(app, engine) -
 
 
 def test_patient_rows_carry_only_id_and_names(app, engine) -> None:
-    _user(engine, "PACIENTE")
-    items = _all_patients(app, _token(app, _doctor(engine)))
+    doctor = _doctor(engine)
+    _relate(app, engine, _user(engine, "PACIENTE"), doctor)
+    items = _all_patients(app, _token(app, doctor))
 
     assert items
     assert all(set(item) == {"id", "nombres", "apellidos"} for item in items)
 
 
 def test_patient_directory_is_ordered_by_apellido_nombre_and_id(app, engine) -> None:
-    _user(engine, "PACIENTE")
-    items = _all_patients(app, _token(app, _doctor(engine)))
+    doctor = _doctor(engine)
+    for _ in range(3):
+        _relate(app, engine, _user(engine, "PACIENTE"), doctor)
+    items = _all_patients(app, _token(app, doctor))
 
     with engine.connect() as conn:
         expected = [
@@ -109,16 +176,27 @@ def test_patient_directory_is_ordered_by_apellido_nombre_and_id(app, engine) -> 
             for row in conn.execute(
                 text(
                     "SELECT p.id FROM pacientes p JOIN usuarios u ON u.id = p.usuario_id "
+                    "WHERE u.estado = 'ACTIVO' AND ("
+                    "EXISTS (SELECT 1 FROM citas c "
+                    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+                    "JOIN agendas a ON a.id = h.agenda_id "
+                    "WHERE c.paciente_id = p.id AND a.medico_id = :m) "
+                    "OR EXISTS (SELECT 1 FROM ordenes_laboratorio o "
+                    "WHERE o.paciente_id = p.id AND o.medico_id = :m)) "
                     "ORDER BY u.apellido, u.nombre, p.id"
-                )
+                ),
+                {"m": _doctor_profile(engine, doctor)},
             ).all()
         ]
     assert [item["id"] for item in items] == expected
+    assert len(expected) == 3
 
 
 def test_patient_pages_do_not_overlap(app, engine) -> None:
-    _user(engine, "PACIENTE")
-    headers = _token(app, _doctor(engine))
+    doctor = _doctor(engine)
+    for _ in range(3):
+        _relate(app, engine, _user(engine, "PACIENTE"), doctor)
+    headers = _token(app, doctor)
 
     first = app.test_client().get(f"{PATIENTS_URL}?limit=2&offset=0", headers=headers)
     second = app.test_client().get(f"{PATIENTS_URL}?limit=2&offset=2", headers=headers)
@@ -126,6 +204,7 @@ def test_patient_pages_do_not_overlap(app, engine) -> None:
     first_ids = {item["id"] for item in first.get_json()["items"]}
     second_ids = {item["id"] for item in second.get_json()["items"]}
     assert len(first_ids) == 2
+    assert len(second_ids) == 1
     assert first_ids.isdisjoint(second_ids)
 
 
@@ -156,6 +235,58 @@ def test_patient_listing_writes_one_audit_row_without_values(app, engine) -> Non
     assert row.entidad_id is None
 
 
+# ---------- patient directory: relation and account rules ----------
+
+
+def test_directory_lists_only_patients_related_to_the_doctor(app, engine) -> None:
+    doctor, other_doctor = _doctor(engine), _doctor(engine)
+    mine = _user(engine, "PACIENTE")
+    theirs = _user(engine, "PACIENTE")
+    stranger = _user(engine, "PACIENTE")
+    _relate(app, engine, mine, doctor)
+    _relate(app, engine, theirs, other_doctor)
+
+    listed = _listed_ids(app, doctor)
+
+    assert _patient_id(engine, mine) in listed
+    assert _patient_id(engine, theirs) not in listed
+    assert _patient_id(engine, stranger) not in listed
+
+
+def test_a_patient_whose_only_relation_is_a_lab_order_is_listed(app, engine) -> None:
+    doctor = _doctor(engine)
+    patient = _user(engine, "PACIENTE")
+    _insert_history_order(engine, _patient_id(engine, patient), doctor)
+
+    assert _patient_id(engine, patient) in _listed_ids(app, doctor)
+
+
+def test_a_cancelled_appointment_still_counts_as_history(app, engine) -> None:
+    doctor = _doctor(engine)
+    patient = _user(engine, "PACIENTE")
+    _relate(app, engine, patient, doctor)
+    _cancel_appointments(engine, _patient_id(engine, patient))
+
+    assert _patient_id(engine, patient) in _listed_ids(app, doctor)
+
+
+def test_inactive_and_blocked_accounts_are_not_listed(app, engine) -> None:
+    doctor = _doctor(engine)
+    active = _user(engine, "PACIENTE")
+    inactive = _user(engine, "PACIENTE")
+    blocked = _user(engine, "PACIENTE")
+    for user in (active, inactive, blocked):
+        _relate(app, engine, user, doctor)
+    _set_account_status(engine, inactive, "INACTIVO")
+    _set_account_status(engine, blocked, "BLOQUEADO")
+
+    listed = _listed_ids(app, doctor)
+
+    assert _patient_id(engine, active) in listed
+    assert _patient_id(engine, inactive) not in listed
+    assert _patient_id(engine, blocked) not in listed
+
+
 # ---------- patient directory: HTTP codes ----------
 
 
@@ -175,6 +306,70 @@ def test_invalid_patient_page_is_422(app, engine, query) -> None:
 
 def test_patient_directory_requires_authentication(app) -> None:
     assert app.test_client().get(PATIENTS_URL).status_code == 401
+
+
+# ---------- order creation: the patient must be the doctor's patient ----------
+
+
+def test_order_for_an_unrelated_patient_is_403_with_the_uniform_message(app, engine) -> None:
+    doctor = _doctor(engine)
+    headers = _token(app, doctor)
+    stranger = _patient_id(engine, _user(engine, "PACIENTE"))
+
+    response = _post_order(app, headers, stranger, _test_type(engine))
+    missing = _post_order(app, headers, str(uuid.uuid4()), _test_type(engine))
+
+    assert response.status_code == 403
+    assert response.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert missing.status_code == 403
+    assert missing.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert _orders_of(engine, stranger) == 0
+
+
+def test_order_for_a_patient_of_another_doctor_is_403_for_a_foreign_doctor(app, engine) -> None:
+    owner, foreign = _doctor(engine), _doctor(engine)
+    patient = _user(engine, "PACIENTE")
+    _relate(app, engine, patient, owner)
+    profile = _patient_id(engine, patient)
+    before = _orders_of(engine, profile)
+
+    response = _post_order(app, _token(app, foreign), profile, _test_type(engine))
+
+    assert response.status_code == 403
+    assert response.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert _orders_of(engine, profile) == before
+
+
+def test_order_for_a_related_patient_still_answers_201(app, engine) -> None:
+    doctor = _doctor(engine)
+    patient = _user(engine, "PACIENTE")
+    _relate(app, engine, patient, doctor)
+    profile = _patient_id(engine, patient)
+
+    response = _post_order(app, _token(app, doctor), profile, _test_type(engine))
+
+    assert response.status_code == 201, response.get_json()
+    assert response.get_json()["paciente_id"] == profile
+
+
+def test_order_for_a_patient_with_only_an_order_history_still_answers_201(app, engine) -> None:
+    doctor = _doctor(engine)
+    patient = _user(engine, "PACIENTE")
+    profile = _patient_id(engine, patient)
+    _insert_history_order(engine, profile, doctor)
+
+    response = _post_order(app, _token(app, doctor), profile, _test_type(engine))
+
+    assert response.status_code == 201, response.get_json()
+
+
+def test_order_creation_without_a_token_is_401(app, engine) -> None:
+    response = app.test_client().post(
+        ORDERS_URL,
+        json={"paciente_id": str(uuid.uuid4()), "tipo_prueba_ids": [_test_type(engine)]},
+    )
+
+    assert response.status_code == 401
 
 
 # ---------- test-type catalog ----------

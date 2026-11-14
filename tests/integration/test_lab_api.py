@@ -19,7 +19,14 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
-from tests.integration.test_scheduling_api import _count, _token, _user
+from tests.integration.test_scheduling_api import (
+    _book,
+    _count,
+    _service,
+    _slot,
+    _token,
+    _user,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -78,10 +85,24 @@ def _create_order(client, headers, patient_id: str, tests: list[str] | None = No
     )
 
 
+def _relate(app, engine, patient_user: str, doctor_user: str) -> None:
+    """Give the patient a cita with this doctor, booked through the API (the relation rule)."""
+    slot = _slot(engine, doctor=doctor_user)
+    response = _book(
+        app.test_client(),
+        _token(app, patient_user),
+        key=f"lab-relation-{uuid.uuid4()}",
+        slot=slot,
+        servicio=_service(engine),
+    )
+    assert response.status_code == 201, response.get_json()
+
+
 def _order_for(app, engine) -> tuple[str, str, str, dict[str, str]]:
     """Return (order_id, patient_user, doctor_user, doctor_headers) for a fresh order."""
     patient = _user(engine, "PACIENTE")
     doctor = _doctor(engine)
+    _relate(app, engine, patient, doctor)
     headers = _token(app, doctor)
     response = _create_order(
         app.test_client(), headers, _patient_id(engine, patient), [_test_type(engine)]
@@ -201,10 +222,12 @@ def test_patient_cannot_create_orders(app, engine) -> None:
 
 def test_unknown_test_type_is_rejected_with_422(app, engine) -> None:
     patient = _user(engine, "PACIENTE")
+    doctor = _doctor(engine)
+    _relate(app, engine, patient, doctor)
 
     response = _create_order(
         app.test_client(),
-        _token(app, _doctor(engine)),
+        _token(app, doctor),
         _patient_id(engine, patient),
         [str(uuid.uuid4())],
     )

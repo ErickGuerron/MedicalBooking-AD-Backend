@@ -66,6 +66,7 @@ class FakeStore:
     references: list = field(default_factory=list)
     profile: tuple = (None, None)
     linked: set | None = None  # None: every analyte is linked (no restriction in the fake)
+    related: set = field(default_factory=set)  # (medico_id, paciente_id) pairs with a relation
 
     def analyte_linked_to_test(self, analito_id, tipo_prueba_id):
         return self.linked is None or (analito_id, tipo_prueba_id) in self.linked
@@ -85,8 +86,8 @@ class FakeStore:
     def resolve_medico_id(self, user_id):
         return self.medico_by_user.get(user_id)
 
-    def patient_exists(self, paciente_id):
-        return paciente_id in self.patient_by_user.values()
+    def patient_is_related(self, medico_id, paciente_id):
+        return (medico_id, paciente_id) in self.related
 
     def active_test_ids(self, ids):
         return {i for i in ids if i in self.active_tests}
@@ -224,6 +225,9 @@ def world(store):
     store.patient_by_user[other_patient.user_id] = _id()
     store.medico_by_user[doctor.user_id] = _id()
     store.medico_by_user[other_doctor.user_id] = _id()
+    store.related.add(
+        (store.medico_by_user[doctor.user_id], store.patient_by_user[patient.user_id])
+    )
     return {
         "patient": patient,
         "doctor": doctor,
@@ -291,6 +295,44 @@ def test_a_user_with_permission_but_no_doctor_profile_cannot_order(store, storag
             observaciones=None,
             tipo_prueba_ids=[HEMO],
         )
+
+
+def test_an_order_for_a_patient_the_doctor_does_not_treat_is_refused_before_any_write(
+    store, storage, world
+) -> None:
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["doctor"],
+            paciente_id=world_patient_id(world["other_patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.detail == "Access to this resource is not allowed"
+    assert store.orders == {}
+
+
+def test_an_unknown_patient_gets_the_same_403_as_an_unrelated_one(store, storage, world) -> None:
+    service = _service(store, storage)
+    with pytest.raises(Forbidden) as unknown:
+        service.create_order(
+            world["doctor"],
+            paciente_id=_id(),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+    with pytest.raises(Forbidden) as unrelated:
+        service.create_order(
+            world["doctor"],
+            paciente_id=world_patient_id(world["other_patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert unknown.value.detail == unrelated.value.detail
 
 
 def test_order_starts_requested_with_pending_details(store, storage, world) -> None:

@@ -53,9 +53,15 @@ class FakeStore:
     patient_calls: list[dict] = field(default_factory=list)
     orders: list[LabOrderSummary] = field(default_factory=list)
     patient_profile_id: str | None = None
+    medico_profile_id: str | None = None
+    list_medico_ids: list = field(default_factory=list)
 
-    def list_patients(self, *, limit: int, offset: int) -> list[PatientSummary]:
+    def list_patients(
+        self, *, limit: int, offset: int, medico_id: str | None = None
+    ) -> list[PatientSummary]:
+        # The relation and account filter run in SQL (see the statement tests below).
         self.patient_calls.append({"limit": limit, "offset": offset})
+        self.list_medico_ids.append(medico_id)
         return self.patients[offset : offset + limit]
 
     def list_test_types(self) -> list[LabTestType]:
@@ -68,7 +74,7 @@ class FakeStore:
         return self.patient_profile_id
 
     def resolve_medico_id(self, user_id):
-        return None
+        return self.medico_profile_id
 
     def list_orders(self, *, paciente_id, medico_id, estado, limit, offset):
         return list(self.orders)
@@ -136,7 +142,7 @@ class World:
 @pytest.fixture
 def world() -> World:
     return World(
-        store=FakeStore(),
+        store=FakeStore(medico_profile_id=_id()),
         doctor=_actor(MEDICO),
         patient=_actor(PACIENTE),
         lab=_actor(LABORATORISTA),
@@ -154,6 +160,20 @@ def _bearer(token: str) -> dict[str, str]:
 def test_patient_list_is_forbidden_without_order_create(world) -> None:
     with pytest.raises(Forbidden):
         _service(world.store).list_patients(world.lab, limit=50, offset=0)
+
+
+def test_patient_list_is_scoped_to_the_doctor_profile(world) -> None:
+    _service(world.store).list_patients(world.doctor, limit=50, offset=0)
+
+    assert world.store.list_medico_ids[-1] == world.store.medico_profile_id
+
+
+def test_a_doctor_without_a_profile_gets_403_on_the_patient_directory(world) -> None:
+    world.store.medico_profile_id = None
+
+    with pytest.raises(Forbidden):
+        _service(world.store).list_patients(world.doctor, limit=50, offset=0)
+    assert world.store.patient_calls == []
 
 
 def test_patient_list_answers_403_over_http_for_a_patient(world) -> None:
@@ -300,18 +320,47 @@ class _CapturingEngine:
 def test_patient_query_orders_by_apellido_nombre_and_id_with_bound_paging() -> None:
     engine = _CapturingEngine()
 
-    SqlLabStore(engine).list_patients(limit=5, offset=10)
+    SqlLabStore(engine).list_patients(medico_id=_id(), limit=5, offset=10)
 
     sql, params = engine.log[-1]
     assert "ORDER BY u.apellido, u.nombre, p.id" in sql
     assert "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY" in sql
-    assert params == {"skip": 10, "take": 5}
+    assert params["skip"] == 10
+    assert params["take"] == 5
+
+
+def test_patient_query_is_bound_to_the_doctor_relation_and_active_accounts() -> None:
+    engine = _CapturingEngine()
+    doctor = _id()
+
+    SqlLabStore(engine).list_patients(medico_id=doctor, limit=5, offset=0)
+
+    sql, params = engine.log[-1]
+    assert "u.estado = 'ACTIVO'" in sql
+    assert "EXISTS (SELECT 1 FROM citas c" in sql
+    assert "EXISTS (SELECT 1 FROM ordenes_laboratorio o" in sql
+    assert params["medico"] == doctor
+    assert doctor not in sql
+
+
+def test_relation_check_binds_the_doctor_and_the_patient_as_parameters() -> None:
+    engine = _CapturingEngine()
+    doctor, patient = _id(), _id()
+
+    related = SqlLabStore(engine).patient_is_related(doctor, patient)
+
+    sql, params = engine.log[-1]
+    assert related is False
+    assert "citas" in sql and "ordenes_laboratorio" in sql
+    assert params["medico"] == doctor
+    assert params["paciente"] == patient
+    assert doctor not in sql and patient not in sql
 
 
 def test_patient_query_joins_only_the_name_columns() -> None:
     engine = _CapturingEngine()
 
-    SqlLabStore(engine).list_patients(limit=5, offset=0)
+    SqlLabStore(engine).list_patients(medico_id=_id(), limit=5, offset=0)
 
     sql, _ = engine.log[-1]
     assert "u.email" not in sql
