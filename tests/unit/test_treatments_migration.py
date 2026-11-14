@@ -22,7 +22,7 @@ def _load(filename: str) -> ModuleType:
 
 
 def test_0029_follows_the_current_head_in_one_linear_step() -> None:
-    previous = _load("0027_doctor_cancel_limits.py")
+    previous = _load("0028_sincronizacion_watermarks.py")
     current = _load("0029_treatments.py")
 
     assert current.revision == "0029_treatments"

@@ -1,7 +1,7 @@
 """Treatments (S4-S6): a structured treatment per appointment and its append-only follow-ups.
 
 Revision ID: 0029_treatments
-Revises: 0027_doctor_cancel_limits
+Revises: 0028_sincronizacion_watermarks
 
 Creates two new tables only. No existing table changes and no permission is seeded: the treating
 doctor uses revisiones.registrar and the reads use the existing resultados.* permissions
@@ -15,7 +15,7 @@ from alembic import op
 from medicalbooking.shared.infrastructure.tsql import split_batches
 
 revision = "0029_treatments"
-down_revision = "0027_doctor_cancel_limits"
+down_revision = "0028_sincronizacion_watermarks"
 branch_labels = None
 depends_on = None
 
