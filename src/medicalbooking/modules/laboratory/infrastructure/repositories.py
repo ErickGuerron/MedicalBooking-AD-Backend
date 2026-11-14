@@ -23,9 +23,15 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabResult,
     NewDocument,
     NewOrder,
+    OrderAppointment,
     ResultEntry,
     StoredDocument,
 )
+from medicalbooking.modules.scheduling.infrastructure.repositories import (
+    ensure_consultation,
+    lock_agenda_appointment,
+)
+from medicalbooking.shared.domain.errors import Conflict
 from medicalbooking.shared.infrastructure.sql_errors import retry_on_deadlock
 
 
@@ -165,16 +171,49 @@ class SqlLabStore:
 
     # ---------- orders ----------
 
+    def find_appointment_for_order(self, cita_id: str) -> OrderAppointment | None:
+        guid = _as_guid(cita_id)
+        if guid is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT c.id, c.paciente_id, c.estado, a.medico_id FROM citas c "
+                    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+                    "JOIN agendas a ON a.id = h.agenda_id WHERE c.id = :c"
+                ),
+                {"c": guid},
+            ).first()
+        if row is None:
+            return None
+        return OrderAppointment(
+            cita_id=_canonical(row.id),
+            paciente_id=_canonical(row.paciente_id),
+            medico_id=_canonical(row.medico_id),
+            estado=row.estado,
+        )
+
     def create_order(self, command: NewOrder) -> LabOrder:
         now = _utc_naive(datetime.now(UTC))
         with self._engine.begin() as conn:
+            # The appointment is locked and re-checked: it may have changed since the use case
+            # read it (cancelled, or moved out of the allowed states).
+            cita = lock_agenda_appointment(conn, command.cita_id, command.medico_user_id)
+            if (
+                cita is None
+                or cita.estado not in command.allowed_states
+                or _canonical(cita.paciente_id) != command.paciente_id
+            ):
+                raise Conflict("The appointment no longer allows lab orders")
+            consulta_id, _ = ensure_consultation(conn, command.cita_id, datetime.now(UTC))
             conn.execute(
                 text(
-                    "INSERT INTO ordenes_laboratorio (id, paciente_id, medico_id, fecha_orden, "
-                    "prioridad, estado, observaciones) "
-                    "VALUES (:id, :p, :m, :ahora, :prioridad, 'SOLICITADA', :obs)"
+                    "INSERT INTO ordenes_laboratorio (id, paciente_id, medico_id, consulta_id, "
+                    "fecha_orden, prioridad, estado, observaciones) "
+                    "VALUES (:id, :p, :m, :consulta, :ahora, :prioridad, 'SOLICITADA', :obs)"
                 ),
                 {
+                    "consulta": consulta_id,
                     "id": command.order_id,
                     "p": command.paciente_id,
                     "m": command.medico_id,
@@ -225,8 +264,8 @@ class SqlLabStore:
             header = conn.execute(
                 text(
                     "SELECT o.id, o.paciente_id, pa.usuario_id AS paciente_user_id, o.medico_id, "
-                    "me.usuario_id AS medico_user_id, o.prioridad, o.estado, o.observaciones "
-                    "FROM ordenes_laboratorio o "
+                    "me.usuario_id AS medico_user_id, o.prioridad, o.estado, o.observaciones, "
+                    "o.consulta_id FROM ordenes_laboratorio o "
                     "JOIN pacientes pa ON pa.id = o.paciente_id "
                     "JOIN medicos me ON me.id = o.medico_id WHERE o.id = :o"
                 ),
@@ -250,6 +289,7 @@ class SqlLabStore:
             prioridad=header.prioridad,
             estado=header.estado,
             observaciones=header.observaciones,
+            consulta_id=_canonical(header.consulta_id) if header.consulta_id else None,
             details=tuple(
                 LabDetail(
                     id=_canonical(row.id),

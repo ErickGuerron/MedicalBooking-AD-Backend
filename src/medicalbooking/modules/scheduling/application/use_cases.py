@@ -14,13 +14,18 @@ from medicalbooking.modules.scheduling.application.ports import (
     AvailableSlot,
     CancelCommand,
     CancelStatus,
+    Consultation,
+    ConsultationStatus,
+    OpenConsultationCommand,
     ReserveCommand,
     ReserveStatus,
     SchedulingStore,
 )
 from medicalbooking.modules.scheduling.domain.policies import (
+    CONSULTATION_APPOINTMENT_STATES,
     PERM_BOOK,
     PERM_CANCEL_MEDICO,
+    PERM_OPEN_CONSULTATION,
     PERM_REVIEW_CANCELLATIONS,
     ROLE_PATIENT,
     is_same_request,
@@ -173,6 +178,30 @@ class SchedulingService:
             raise Conflict(",".join(outcome.blockers))
         assert outcome.appointment is not None
         return outcome.appointment
+
+    def open_consultation(
+        self, actor: AccessProfile, appointment_id: str
+    ) -> tuple[Consultation, bool]:
+        """The doctor of the agenda opens the consultation of one own appointment.
+
+        Idempotent: a repeat returns the existing consultation (created=False). Missing and
+        foreign appointments answer the same 403; a state outside the allowed set is a 409.
+        """
+        _require(actor, PERM_OPEN_CONSULTATION)
+        outcome = self._store.open_consultation(
+            OpenConsultationCommand(
+                actor_user_id=actor.user_id,
+                appointment_id=str(appointment_id),
+                now=self._clock(),
+                allowed_states=CONSULTATION_APPOINTMENT_STATES,
+            )
+        )
+        if outcome.status is ConsultationStatus.NOT_FOUND_OR_FORBIDDEN:
+            raise Forbidden("Access to this resource is not allowed")
+        if outcome.status is ConsultationStatus.STATE_NOT_ALLOWED:
+            raise Conflict("The appointment is not in a state that allows a consultation")
+        assert outcome.consultation is not None
+        return outcome.consultation, outcome.status is ConsultationStatus.CREATED
 
     def approve_doctor_cancellation(
         self, actor: AccessProfile, appointment_id: str, *, motivo: str | None

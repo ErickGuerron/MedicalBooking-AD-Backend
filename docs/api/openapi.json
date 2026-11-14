@@ -124,6 +124,23 @@
           "inicio": {
             "format": "date-time",
             "type": "string"
+          },
+          "paciente": {
+            "description": "Only on a doctor's agenda rows (additive, optional)",
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "nombre": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "nombre"
+            ],
+            "type": "object"
           }
         },
         "required": [
@@ -373,9 +390,54 @@
         ],
         "type": "object"
       },
+      "Consultation": {
+        "properties": {
+          "cita_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "estado": {
+            "enum": [
+              "ABIERTA",
+              "CERRADA"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inicio_atencion": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "motivo_consulta": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "cita_id",
+          "estado",
+          "inicio_atencion",
+          "motivo_consulta"
+        ],
+        "type": "object"
+      },
       "CreateOrderRequest": {
         "additionalProperties": false,
         "properties": {
+          "cita_id": {
+            "format": "uuid",
+            "title": "Cita Id",
+            "type": "string"
+          },
           "observaciones": {
             "anyOf": [
               {
@@ -413,6 +475,7 @@
         },
         "required": [
           "paciente_id",
+          "cita_id",
           "tipo_prueba_ids"
         ],
         "title": "CreateOrderRequest",
@@ -785,6 +848,18 @@
       },
       "LabOrder": {
         "properties": {
+          "consulta_id": {
+            "description": "Null only for orders created before the link",
+            "oneOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "estado": {
             "enum": [
               "SOLICITADA",
@@ -2082,7 +2157,7 @@
   "paths": {
     "/api/v1/appointments": {
       "get": {
-        "description": "A patient sees own appointments; a doctor with a doctor profile sees appointments of his or her agenda; any other caller gets 403. Ordered by slot start, then id. Rows carry no patient data.",
+        "description": "A patient sees own appointments; a doctor with a doctor profile sees appointments of his or her agenda; any other caller gets 403. Ordered by slot start, then id. A doctor's rows also carry 'paciente' ({id, nombre}; id is the patient profile id used by lab orders); a patient's own rows never do.",
         "operationId": "listAppointments",
         "parameters": [
           {
@@ -2477,6 +2552,84 @@
           }
         ],
         "summary": "Approve one doctor cancellation beyond the quota or notice window",
+        "tags": [
+          "Scheduling"
+        ]
+      }
+    },
+    "/api/v1/appointments/{appointment_id}/consultation": {
+      "post": {
+        "description": "Requires consultas.abrir (MEDICO) and an appointment of the caller's own agenda. There is one consultation per appointment and the call is idempotent: 201 when it is created, 200 with the existing one on a repeat. The appointment must be CONFIRMADA or COMPLETADA (409 otherwise). Missing and foreign appointments both answer 403.",
+        "operationId": "openConsultation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "appointment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Consultation"
+                }
+              }
+            },
+            "description": "Consultation already open"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Consultation"
+                }
+              }
+            },
+            "description": "Consultation opened"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Missing, malformed or inactive credentials"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Caller lacks consultas.abrir, or the appointment is missing or not of the caller's agenda"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The appointment is not CONFIRMADA or COMPLETADA"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Open the consultation of an appointment of the doctor's agenda",
         "tags": [
           "Scheduling"
         ]
@@ -3993,7 +4146,7 @@
         ]
       },
       "post": {
-        "description": "Requires ordenes.crear and a doctor profile. Starts SOLICITADA.",
+        "description": "Requires ordenes.crear and a doctor profile. Starts SOLICITADA. 'cita_id' is required: an appointment of the caller's own agenda, for the same patient, that is CONFIRMADA or COMPLETADA. The order stores the appointment's consultation ('consulta_id'), opened when needed. Breaking change: orders without 'cita_id' are no longer accepted.",
         "operationId": "createLabOrder",
         "requestBody": {
           "content": {
@@ -4034,7 +4187,7 @@
                 }
               }
             },
-            "description": "Caller is not an ordering doctor"
+            "description": "Caller is not an ordering doctor, or the appointment is missing or not of the caller's agenda"
           },
           "404": {
             "content": {
@@ -4046,6 +4199,16 @@
             },
             "description": "Patient not found"
           },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The appointment is not CONFIRMADA or COMPLETADA"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -4054,7 +4217,7 @@
                 }
               }
             },
-            "description": "Invalid body or unknown test type"
+            "description": "Invalid body, unknown test type, or the appointment is of another patient"
           }
         },
         "security": [

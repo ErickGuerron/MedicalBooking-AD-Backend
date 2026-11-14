@@ -104,16 +104,27 @@ def laboratory_fragment() -> dict[str, Any]:
                     "operationId": "createLabOrder",
                     "summary": "Create a laboratory order for a patient",
                     "description": (
-                        "Requires ordenes.crear and a doctor profile. Starts SOLICITADA."
+                        "Requires ordenes.crear and a doctor profile. Starts SOLICITADA. "
+                        "'cita_id' is required: an appointment of the caller's own agenda, for "
+                        "the same patient, that is CONFIRMADA or COMPLETADA. The order stores "
+                        "the appointment's consultation ('consulta_id'), opened when needed. "
+                        "Breaking change: orders without 'cita_id' are no longer accepted."
                     ),
                     "security": _BEARER,
                     "requestBody": _body("CreateOrderRequest"),
                     "responses": {
                         "201": _json("Order created", "LabOrder"),
                         "401": _problem("Missing, malformed or inactive credentials"),
-                        "403": _problem("Caller is not an ordering doctor"),
+                        "403": _problem(
+                            "Caller is not an ordering doctor, or the appointment is missing or "
+                            "not of the caller's agenda"
+                        ),
                         "404": _problem("Patient not found"),
-                        "422": _problem("Invalid body or unknown test type"),
+                        "409": _problem("The appointment is not CONFIRMADA or COMPLETADA"),
+                        "422": _problem(
+                            "Invalid body, unknown test type, or the appointment is of another "
+                            "patient"
+                        ),
                     },
                 },
             },
@@ -256,6 +267,10 @@ def laboratory_fragment() -> dict[str, Any]:
                     "properties": {
                         "id": _UUID_PARAM,
                         "paciente_id": _UUID_PARAM,
+                        "consulta_id": {
+                            "oneOf": [_UUID_PARAM, {"type": "null"}],
+                            "description": "Null only for orders created before the link",
+                        },
                         "prioridad": {"type": "string", "enum": ["NORMAL", "URGENTE"]},
                         "estado": {
                             "type": "string",

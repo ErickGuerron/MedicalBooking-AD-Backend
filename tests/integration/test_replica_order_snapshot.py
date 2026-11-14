@@ -13,7 +13,13 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
-from tests.integration.test_lab_api import _create_order, _doctor, _patient_id, _test_type
+from tests.integration.test_lab_api import (
+    _cita_for,
+    _create_order,
+    _doctor,
+    _patient_id,
+    _test_type,
+)
 from tests.integration.test_scheduling_api import _token, _user
 
 pytestmark = pytest.mark.integration
@@ -77,14 +83,17 @@ def test_the_created_event_carries_the_order_and_its_detail_lines(app, engine) -
 def test_free_text_observations_are_never_projected(app, engine) -> None:
     patient = _user(engine, "PACIENTE")
     doctor = _doctor(engine)
-    response = app.test_client().post(
+    client = app.test_client()
+    headers = _token(app, doctor)
+    response = client.post(
         "/api/v1/lab/orders",
         json={
             "paciente_id": _patient_id(engine, patient),
+            "cita_id": _cita_for(client, headers, _patient_id(engine, patient)),
             "tipo_prueba_ids": [_test_type(engine, "HEMO-SINT")],
             "observaciones": "nota clinica privada",
         },
-        headers=_token(app, doctor),
+        headers=headers,
     )
     assert response.status_code == 201, response.get_json()
 

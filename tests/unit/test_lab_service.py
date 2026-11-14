@@ -18,12 +18,14 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabResult,
     NewDocument,
     NewOrder,
+    OrderAppointment,
     StoredDocument,
 )
 from medicalbooking.modules.laboratory.application.use_cases import (
     DocumentIntegrityError,
     LabService,
 )
+from medicalbooking.modules.scheduling.domain.policies import CONSULTATION_APPOINTMENT_STATES
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, ValidationFailed
 
 NOW = datetime(2026, 11, 2, 9, 0, tzinfo=UTC)
@@ -66,6 +68,7 @@ class FakeStore:
     references: list = field(default_factory=list)
     profile: tuple = (None, None)
     linked: set | None = None  # None: every analyte is linked (no restriction in the fake)
+    appointments: dict[str, OrderAppointment] = field(default_factory=dict)
 
     def analyte_linked_to_test(self, analito_id, tipo_prueba_id):
         return self.linked is None or (analito_id, tipo_prueba_id) in self.linked
@@ -91,6 +94,9 @@ class FakeStore:
     def active_test_ids(self, ids):
         return {i for i in ids if i in self.active_tests}
 
+    def find_appointment_for_order(self, cita_id):
+        return self.appointments.get(cita_id)
+
     def create_order(self, command: NewOrder) -> LabOrder:
         medico_user = next(u for u, m in self.medico_by_user.items() if m == command.medico_id)
         paciente_user = next(u for u, p in self.patient_by_user.items() if p == command.paciente_id)
@@ -107,6 +113,7 @@ class FakeStore:
                 LabDetail(id=_id(), tipo_prueba_id=t, estado="PENDIENTE")
                 for t in command.tipo_prueba_ids
             ),
+            consulta_id=f"consulta-{command.cita_id}",
         )
         self.orders[order.id] = order
         return order
@@ -237,10 +244,23 @@ def _service(store, storage) -> LabService:
     return LabService(store=store, storage=storage, clock=lambda: NOW)
 
 
+def _cita(store, world, *, doctor="doctor", patient="patient", estado="CONFIRMADA") -> str:
+    """An appointment of ``doctor``'s agenda for ``patient``, registered in the fake store."""
+    cita_id = _id()
+    store.appointments[cita_id] = OrderAppointment(
+        cita_id=cita_id,
+        paciente_id=store.patient_by_user[world[patient].user_id],
+        medico_id=store.medico_by_user[world[doctor].user_id],
+        estado=estado,
+    )
+    return cita_id
+
+
 def _order(service, world, *, tests=(HEMO,)):
     return service.create_order(
         world["doctor"],
         paciente_id=world_patient_id(world["patient"].user_id, service._store),
+        cita_id=_cita(service._store, world),
         prioridad="NORMAL",
         observaciones=None,
         tipo_prueba_ids=list(tests),
@@ -274,6 +294,7 @@ def test_only_a_doctor_with_permission_can_create_an_order(store, storage, world
         service.create_order(
             world["patient"],
             paciente_id=world_patient_id(world["patient"].user_id, store),
+            cita_id=_id(),
             prioridad="NORMAL",
             observaciones=None,
             tipo_prueba_ids=[HEMO],
@@ -287,6 +308,7 @@ def test_a_user_with_permission_but_no_doctor_profile_cannot_order(store, storag
         _service(store, storage).create_order(
             nobody,
             paciente_id=world_patient_id(world["patient"].user_id, store),
+            cita_id=_id(),
             prioridad="NORMAL",
             observaciones=None,
             tipo_prueba_ids=[HEMO],
@@ -311,10 +333,61 @@ def test_order_rejects_unknown_priority(store, storage, world) -> None:
         _service(store, storage).create_order(
             world["doctor"],
             paciente_id=world_patient_id(world["patient"].user_id, store),
+            cita_id=_cita(store, world),
             prioridad="INMEDIATA",
             observaciones=None,
             tipo_prueba_ids=[HEMO],
         )
+
+
+def _order_from(store, storage, world, cita_id, patient="patient"):
+    return _service(store, storage).create_order(
+        world["doctor"],
+        paciente_id=world_patient_id(world[patient].user_id, store),
+        cita_id=cita_id,
+        prioridad="NORMAL",
+        observaciones=None,
+        tipo_prueba_ids=[HEMO],
+    )
+
+
+@pytest.mark.parametrize("estado", sorted(CONSULTATION_APPOINTMENT_STATES))
+def test_order_from_an_allowed_appointment_stores_its_consultation(
+    store, storage, world, estado
+) -> None:
+    cita = _cita(store, world, estado=estado)
+
+    order = _order_from(store, storage, world, cita)
+
+    assert order.consulta_id == f"consulta-{cita}"
+
+
+@pytest.mark.parametrize("estado", ["PENDIENTE_PAGO", "CANCELADA", "EXPIRADA", "NO_ASISTIO"])
+def test_order_from_an_appointment_in_a_disallowed_state_is_a_conflict(
+    store, storage, world, estado
+) -> None:
+    with pytest.raises(Conflict):
+        _order_from(store, storage, world, _cita(store, world, estado=estado))
+
+
+def test_the_allowed_states_are_confirmed_and_completed() -> None:
+    assert CONSULTATION_APPOINTMENT_STATES == {"CONFIRMADA", "COMPLETADA"}
+
+
+def test_missing_and_foreign_appointments_answer_the_same_403(store, storage, world) -> None:
+    foreign = _cita(store, world, doctor="other_doctor")
+
+    for cita in (_id(), foreign):
+        with pytest.raises(Forbidden) as error:
+            _order_from(store, storage, world, cita)
+        assert error.value.detail == "Access to this resource is not allowed"
+
+
+def test_the_appointment_must_belong_to_the_ordered_patient(store, storage, world) -> None:
+    cita = _cita(store, world, patient="other_patient")
+
+    with pytest.raises(ValidationFailed):
+        _order_from(store, storage, world, cita, patient="patient")
 
 
 def test_patient_reads_only_own_orders(store, storage, world) -> None:

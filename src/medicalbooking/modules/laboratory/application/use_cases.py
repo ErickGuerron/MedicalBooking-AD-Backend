@@ -42,6 +42,7 @@ from medicalbooking.modules.laboratory.domain.policies import (
     validate_result_values,
     validate_test_ids,
 )
+from medicalbooking.modules.scheduling.domain.policies import CONSULTATION_APPOINTMENT_STATES
 from medicalbooking.shared.domain.errors import (
     AppError,
     Conflict,
@@ -79,10 +80,17 @@ class LabService:
         actor: AccessProfile,
         *,
         paciente_id: str,
+        cita_id: str,
         prioridad: str,
         observaciones: str | None,
         tipo_prueba_ids: list[str],
     ) -> LabOrder:
+        """Order lab tests from an appointment of the doctor's own agenda.
+
+        The appointment must be of the caller's agenda (403 when missing or foreign, the same
+        answer for both), for this very patient (422) and in CONSULTATION_APPOINTMENT_STATES
+        (409). The order stores the appointment's consultation, opened here when needed.
+        """
         _require(actor, PERM_ORDER_CREATE)
         medico_id = self._store.resolve_medico_id(actor.user_id)
         if medico_id is None:
@@ -94,12 +102,22 @@ class LabService:
             raise NotFound("Patient not found")
         if set(test_ids) - self._store.active_test_ids(test_ids):
             raise ValidationFailed("Unknown or inactive test type")
+        cita = self._store.find_appointment_for_order(str(cita_id))
+        if cita is None or cita.medico_id != medico_id:
+            raise Forbidden(_FORBIDDEN)
+        if cita.paciente_id != str(paciente_id):
+            raise ValidationFailed("The appointment does not belong to this patient")
+        if cita.estado not in CONSULTATION_APPOINTMENT_STATES:
+            raise Conflict("The appointment is not in a state that allows lab orders")
 
         order = self._store.create_order(
             NewOrder(
                 order_id=str(uuid.uuid4()),
                 paciente_id=str(paciente_id),
                 medico_id=medico_id,
+                medico_user_id=actor.user_id,
+                cita_id=str(cita_id),
+                allowed_states=CONSULTATION_APPOINTMENT_STATES,
                 prioridad=prioridad,
                 observaciones=observaciones,
                 tipo_prueba_ids=test_ids,

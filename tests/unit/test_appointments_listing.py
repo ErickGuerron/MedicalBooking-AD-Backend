@@ -6,7 +6,7 @@ Runs the real scheduling service behind the real blueprint, with an in-memory st
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -51,6 +51,8 @@ class Row:
     fin_utc: datetime
     patient_user: str
     doctor_user: str
+    paciente_id: str | None = None
+    paciente_nombre: str | None = None
 
 
 @dataclass
@@ -72,9 +74,17 @@ class ListingStore(FakeStore):
 
     def list_agenda_appointments(self, doctor_user_id, estado, limit, offset):
         self.list_calls.append(("agenda", doctor_user_id, estado, limit, offset))
-        return self._page(
-            [row for row in self.rows if row.doctor_user == doctor_user_id], estado, limit, offset
-        )
+        # The adapter adds the patient on the doctor's agenda rows only.
+        rows = [
+            replace(
+                row,
+                paciente_id=f"pid-{row.patient_user}",
+                paciente_nombre=f"Name {row.patient_user}",
+            )
+            for row in self.rows
+            if row.doctor_user == doctor_user_id
+        ]
+        return self._page(rows, estado, limit, offset)
 
     @staticmethod
     def _page(rows, estado, limit, offset):
@@ -188,17 +198,29 @@ def test_doctor_sees_only_appointments_of_his_or_her_agenda(
     assert [item["id"] for item in items] == [mine.id]
 
 
-def test_response_never_carries_another_patients_data(
+def test_the_doctors_agenda_names_the_patient_of_each_own_row(
+    client: FlaskClient, store: ListingStore
+) -> None:
+    store.rows = [_row(PATIENT_A, DOCTOR), _row(PATIENT_B, OTHER_DOCTOR)]
+
+    response = client.get(PATH, headers=_auth("tok-doctor"))
+
+    assert response.status_code == 200
+    assert [item["paciente"] for item in response.get_json()["items"]] == [
+        {"id": f"pid-{PATIENT_A}", "nombre": f"Name {PATIENT_A}"}
+    ]
+    assert PATIENT_B not in response.get_data(as_text=True)
+
+
+def test_a_patients_own_listing_never_carries_patient_data(
     client: FlaskClient, store: ListingStore
 ) -> None:
     store.rows = [_row(PATIENT_A, DOCTOR), _row(PATIENT_B, DOCTOR)]
 
-    response = client.get(PATH, headers=_auth("tok-doctor"))
-    body = response.get_data(as_text=True)
+    body = client.get(PATH, headers=_auth("tok-a")).get_json()
 
-    assert response.status_code == 200
-    assert PATIENT_A not in body
-    assert PATIENT_B not in body
+    assert all("paciente" not in item for item in body["items"])
+    assert PATIENT_B not in str(body)
 
 
 # ---------- estado filter ----------

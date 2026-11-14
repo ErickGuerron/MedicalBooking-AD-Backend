@@ -27,6 +27,8 @@ class LabOrder:
     estado: str
     observaciones: str | None
     details: tuple[LabDetail, ...]
+    # The consultation the order was placed from; None only for orders created before it existed.
+    consulta_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,10 +73,24 @@ class ResultEntry:
 
 
 @dataclass(frozen=True)
+class OrderAppointment:
+    """The appointment an order is placed from, with the doctor who owns its agenda."""
+
+    cita_id: str
+    paciente_id: str
+    medico_id: str
+    estado: str
+
+
+@dataclass(frozen=True)
 class NewOrder:
     order_id: str
     paciente_id: str
     medico_id: str
+    # Appointment of the doctor's own agenda; its consultation is opened with the order.
+    medico_user_id: str
+    cita_id: str
+    allowed_states: frozenset[str]
     prioridad: str
     observaciones: str | None
     tipo_prueba_ids: list[str]
@@ -142,6 +158,8 @@ class LabStore(Protocol):
     def resolve_medico_id(self, user_id: str) -> str | None: ...
 
     def patient_exists(self, paciente_id: str) -> bool: ...
+
+    def find_appointment_for_order(self, cita_id: str) -> OrderAppointment | None: ...
 
     def active_test_ids(self, ids: list[str]) -> set[str]: ...
 

@@ -10,6 +10,11 @@ from medicalbooking.shared.domain.errors import ValidationFailed
 PERM_BOOK = "citas.reservar"
 PERM_CANCEL_MEDICO = "citas.cancelar_medico"
 ROLE_PATIENT = "PACIENTE"
+PERM_OPEN_CONSULTATION = "consultas.abrir"
+# THE appointment states in which a doctor may open the consultation and order lab tests for it.
+# Payment confirmation does not move an appointment to CONFIRMADA yet (pagos and facturas change,
+# citas.estado does not): until it does, widen this set or fix that step.
+CONSULTATION_APPOINTMENT_STATES = frozenset({"CONFIRMADA", "COMPLETADA"})
 # Closed catalog of the reasons a doctor gives when cancelling an appointment of an own agenda.
 MOTIVOS_CANCELACION_MEDICO = frozenset({"IMPREVISTO_MEDICO", "OTRO_MEDICO"})
 MOTIVO_TEXTO_MAX = 1500  # mirrors citas.motivo_cancelacion_texto nvarchar(1500)

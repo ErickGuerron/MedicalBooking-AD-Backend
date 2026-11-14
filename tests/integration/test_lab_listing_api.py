@@ -16,7 +16,7 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
-from tests.integration.test_lab_api import _doctor, _patient_id, _test_type
+from tests.integration.test_lab_api import _cita_for, _doctor, _patient_id, _test_type
 from tests.integration.test_scheduling_api import _token, _user
 
 pytestmark = pytest.mark.integration
@@ -43,7 +43,11 @@ def _create(app: Flask, doctor_headers: dict, patient_id: str) -> str:
     test_type = _test_type(app.extensions["medicalbooking.engine"])
     response = app.test_client().post(
         "/api/v1/lab/orders",
-        json={"paciente_id": patient_id, "tipo_prueba_ids": [test_type]},
+        json={
+            "paciente_id": patient_id,
+            "cita_id": _cita_for(app.test_client(), doctor_headers, patient_id),
+            "tipo_prueba_ids": [test_type],
+        },
         headers=doctor_headers,
     )
     assert response.status_code == 201, response.get_json()

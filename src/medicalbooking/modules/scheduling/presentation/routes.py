@@ -104,12 +104,16 @@ def _positive_int_query(name: str) -> int | None:
 
 
 def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
-    return {
+    item: dict[str, Any] = {
         "id": appointment.id,
         "estado": appointment.estado,
         "inicio": appointment.inicio_utc.isoformat(),
         "fin": appointment.fin_utc.isoformat(),
     }
+    # Only the doctor's agenda listing carries the patient; a patient's own listing never does.
+    if appointment.paciente_id is not None:
+        item["paciente"] = {"id": appointment.paciente_id, "nombre": appointment.paciente_nombre}
+    return item
 
 
 def _slot_json(slot: AvailableSlot) -> dict[str, Any]:
@@ -181,6 +185,22 @@ def cancel(appointment_id: uuid.UUID) -> tuple[Response, int]:
     if hook is not None:
         hook(g.actor, str(appointment_id))
     return jsonify(_appointment_json(appointment)), 200
+
+
+@scheduling_bp.post("/appointments/<uuid:appointment_id>/consultation")
+@authenticated
+def open_consultation(appointment_id: uuid.UUID) -> tuple[Response, int]:
+    """The doctor of the agenda opens the consultation: 201 when created, 200 when it existed."""
+    consultation, created = _service().open_consultation(g.actor, str(appointment_id))
+    started = consultation.inicio_atencion
+    body = {
+        "id": consultation.id,
+        "cita_id": consultation.cita_id,
+        "estado": consultation.estado,
+        "inicio_atencion": started.isoformat() if started else None,
+        "motivo_consulta": consultation.motivo_consulta,
+    }
+    return jsonify(body), 201 if created else 200
 
 
 @scheduling_bp.post("/appointments/<uuid:appointment_id>/cancellation-approval")

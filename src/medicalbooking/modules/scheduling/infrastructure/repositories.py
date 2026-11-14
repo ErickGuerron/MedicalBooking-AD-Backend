@@ -21,6 +21,10 @@ from medicalbooking.modules.scheduling.application.ports import (
     CancelCommand,
     CancelOutcome,
     CancelStatus,
+    Consultation,
+    ConsultationOutcome,
+    ConsultationStatus,
+    OpenConsultationCommand,
     ReserveCommand,
     ReserveOutcome,
     ReserveStatus,
@@ -165,6 +169,48 @@ def confirm_appointment_of_invoice(conn: Connection, factura_id: str, moment: da
     return True
 
 
+_LOCK_AGENDA_APPOINTMENT = text(
+    "SELECT c.id, c.estado, c.paciente_id, h.agenda_id, a.medico_id "
+    "FROM citas AS c WITH (UPDLOCK, ROWLOCK) "
+    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
+    "WHERE c.id = :cita AND m.usuario_id = :usuario"
+)
+
+
+def lock_agenda_appointment(conn: Connection, cita_id: str, doctor_user_id: str):
+    """Lock an appointment of the doctor's own agenda for the rest of the transaction.
+
+    Returns the row (id, estado, paciente_id, agenda_id, medico_id), or None when the
+    appointment does not exist or belongs to another doctor's agenda.
+    """
+    return conn.execute(
+        _LOCK_AGENDA_APPOINTMENT, {"cita": cita_id, "usuario": doctor_user_id}
+    ).first()
+
+
+def ensure_consultation(conn: Connection, cita_id: str, now: datetime) -> tuple[str, bool]:
+    """Return (consultation id, created) for an appointment, creating it when missing.
+
+    One consultation per appointment (UNIQUE cita_id). The caller holds the appointment lock
+    (``lock_agenda_appointment``), so two concurrent callers cannot both insert.
+    """
+    existing = conn.execute(
+        text("SELECT id FROM consultas_medicas WHERE cita_id = :c"), {"c": cita_id}
+    ).scalar()
+    if existing is not None:
+        return _canonical(existing), False
+    consulta_id = str(uuid.uuid4())
+    conn.execute(
+        text(
+            "INSERT INTO consultas_medicas (id, cita_id, inicio_atencion, motivo_consulta) "
+            "SELECT :id, c.id, :ahora, c.motivo FROM citas c WHERE c.id = :c"
+        ),
+        {"id": consulta_id, "c": cita_id, "ahora": _utc_naive(now)},
+    )
+    return consulta_id, True
+
+
 class SqlSchedulingStore:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
@@ -244,11 +290,13 @@ class SqlSchedulingStore:
         return self._list_summaries(_PATIENT_SOURCE, patient_user_id, estado, limit, offset)
 
     def list_agenda_appointments(self, doctor_user_id, estado, limit, offset):
-        return self._list_summaries(_AGENDA_SOURCE, doctor_user_id, estado, limit, offset)
+        return self._list_summaries(
+            _AGENDA_SOURCE, doctor_user_id, estado, limit, offset, with_patient=True
+        )
 
-    def _list_summaries(self, source: str, user_id, estado, limit, offset):
-        """Only id, estado and slot times leave the database: no patient columns are selected."""
-        sql = _SUMMARY_SELECT + source
+    def _list_summaries(self, source: str, user_id, estado, limit, offset, with_patient=False):
+        """A patient's listing selects no patient columns; the doctor's agenda adds the patient."""
+        sql = (_AGENDA_SUMMARY_SELECT if with_patient else _SUMMARY_SELECT) + source
         params: dict[str, object] = {
             "usuario": str(user_id),
             "saltar": offset,
@@ -266,9 +314,62 @@ class SqlSchedulingStore:
                 estado=row.estado,
                 inicio_utc=_utc_aware(row.inicio_utc),
                 fin_utc=_utc_aware(row.fin_utc),
+                **(
+                    {
+                        "paciente_id": _canonical(row.paciente_id),
+                        "paciente_nombre": f"{row.paciente_nombre} {row.paciente_apellido}".strip(),
+                    }
+                    if with_patient
+                    else {}
+                ),
             )
             for row in rows
         ]
+
+    def open_consultation(self, command: OpenConsultationCommand) -> ConsultationOutcome:
+        return retry_on_deadlock(lambda: self._open_consultation_once(command))
+
+    def _open_consultation_once(self, command: OpenConsultationCommand) -> ConsultationOutcome:
+        with self._engine.begin() as conn:
+            cita = lock_agenda_appointment(conn, command.appointment_id, command.actor_user_id)
+            if cita is None:
+                return ConsultationOutcome(ConsultationStatus.NOT_FOUND_OR_FORBIDDEN, None)
+            if cita.estado not in command.allowed_states:
+                return ConsultationOutcome(ConsultationStatus.STATE_NOT_ALLOWED, None)
+            consulta_id, created = ensure_consultation(conn, str(cita.id), command.now)
+            if created:
+                conn.execute(
+                    text(
+                        "INSERT INTO auditoria_accesos (id, usuario_id, paciente_id, entidad, "
+                        "entidad_id, accion, fecha_evento, resultado) "
+                        "VALUES (:id, :u, :p, 'consulta_medica', :e, 'abrir', :ahora, 'OK')"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "u": command.actor_user_id,
+                        "p": str(cita.paciente_id),
+                        "e": consulta_id,
+                        "ahora": _utc_naive(command.now),
+                    },
+                )
+            row = conn.execute(
+                text(
+                    "SELECT id, cita_id, estado, inicio_atencion, motivo_consulta "
+                    "FROM consultas_medicas WHERE id = :id"
+                ),
+                {"id": consulta_id},
+            ).one()
+        status = ConsultationStatus.CREATED if created else ConsultationStatus.EXISTING
+        return ConsultationOutcome(
+            status,
+            Consultation(
+                id=_canonical(row.id),
+                cita_id=_canonical(row.cita_id),
+                estado=row.estado,
+                inicio_atencion=_utc_aware(row.inicio_atencion),
+                motivo_consulta=row.motivo_consulta,
+            ),
+        )
 
     def reserve(self, command: ReserveCommand) -> ReserveOutcome:
         return retry_on_deadlock(lambda: self._reserve_once(command))
@@ -513,6 +614,10 @@ class SqlSchedulingStore:
 
 
 _SUMMARY_SELECT = "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc "
+_AGENDA_SUMMARY_SELECT = (
+    "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc, c.paciente_id, "
+    "pu.nombre AS paciente_nombre, pu.apellido AS paciente_apellido "
+)
 # Patient ownership: citas.paciente_id -> pacientes.usuario_id.
 _PATIENT_SOURCE = (
     "FROM citas c JOIN pacientes p ON p.id = c.paciente_id "
@@ -522,6 +627,7 @@ _PATIENT_SOURCE = (
 _AGENDA_SOURCE = (
     "FROM citas c JOIN horarios_disponibles h ON h.id = c.horario_id "
     "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
+    "JOIN pacientes pa ON pa.id = c.paciente_id JOIN usuarios pu ON pu.id = pa.usuario_id "
     "WHERE m.usuario_id = :usuario "
 )
 _APPOINTMENT_SELECT = (

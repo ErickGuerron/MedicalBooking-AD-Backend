@@ -28,6 +28,8 @@ class CreateOrderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     paciente_id: uuid.UUID
+    # Required: an appointment of the doctor's own agenda, for this patient (breaking change).
+    cita_id: uuid.UUID
     prioridad: str = Field(default="NORMAL", max_length=20)
     observaciones: str | None = Field(default=None, max_length=1000)
     tipo_prueba_ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_TESTS_PER_ORDER)
@@ -95,6 +97,7 @@ def _order_json(order: LabOrder) -> dict[str, Any]:
     return {
         "id": order.id,
         "paciente_id": order.paciente_id,
+        "consulta_id": order.consulta_id,
         "prioridad": order.prioridad,
         "estado": order.estado,
         "observaciones": order.observaciones,
@@ -144,6 +147,7 @@ def create_order() -> tuple[Response, int]:
     order = _service().create_order(
         g.actor,
         paciente_id=str(body.paciente_id),
+        cita_id=str(body.cita_id),
         prioridad=body.prioridad,
         observaciones=body.observaciones,
         tipo_prueba_ids=[str(item) for item in body.tipo_prueba_ids],

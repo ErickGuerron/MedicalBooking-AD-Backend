@@ -99,7 +99,9 @@ def scheduling_fragment() -> dict[str, Any]:
                     "description": (
                         "A patient sees own appointments; a doctor with a doctor profile sees "
                         "appointments of his or her agenda; any other caller gets 403. Ordered "
-                        "by slot start, then id. Rows carry no patient data."
+                        "by slot start, then id. A doctor's rows also carry 'paciente' "
+                        "({id, nombre}; id is the patient profile id used by lab orders); a "
+                        "patient's own rows never do."
                     ),
                     "security": _BEARER,
                     "parameters": [
@@ -236,6 +238,39 @@ def scheduling_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/appointments/{appointment_id}/consultation": {
+                "post": {
+                    "tags": ["Scheduling"],
+                    "operationId": "openConsultation",
+                    "summary": "Open the consultation of an appointment of the doctor's agenda",
+                    "description": (
+                        "Requires consultas.abrir (MEDICO) and an appointment of the caller's own "
+                        "agenda. There is one consultation per appointment and the call is "
+                        "idempotent: 201 when it is created, 200 with the existing one on a "
+                        "repeat. The appointment must be CONFIRMADA or COMPLETADA (409 "
+                        "otherwise). Missing and foreign appointments both answer 403."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "appointment_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "responses": {
+                        "201": _json_response("Consultation opened", "Consultation"),
+                        "200": _json_response("Consultation already open", "Consultation"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem(
+                            "Caller lacks consultas.abrir, or the appointment is missing or not "
+                            "of the caller's agenda"
+                        ),
+                        "409": _problem("The appointment is not CONFIRMADA or COMPLETADA"),
+                    },
+                }
+            },
             "/api/v1/appointments/{appointment_id}/cancellation-approval": {
                 "post": {
                     "tags": ["Scheduling"],
@@ -297,10 +332,30 @@ def scheduling_fragment() -> dict[str, Any]:
                         "aprobada": {"type": "boolean"},
                     },
                 },
+                "Consultation": {
+                    "type": "object",
+                    "required": ["id", "cita_id", "estado", "inicio_atencion", "motivo_consulta"],
+                    "properties": {
+                        "id": {"type": "string", "format": "uuid"},
+                        "cita_id": {"type": "string", "format": "uuid"},
+                        "estado": {"type": "string", "enum": ["ABIERTA", "CERRADA"]},
+                        "inicio_atencion": {"type": ["string", "null"], "format": "date-time"},
+                        "motivo_consulta": {"type": ["string", "null"]},
+                    },
+                },
                 "AppointmentSummary": {
                     "type": "object",
                     "required": ["id", "estado", "inicio", "fin"],
                     "properties": {
+                        "paciente": {
+                            "type": "object",
+                            "description": "Only on a doctor's agenda rows (additive, optional)",
+                            "required": ["id", "nombre"],
+                            "properties": {
+                                "id": {"type": "string", "format": "uuid"},
+                                "nombre": {"type": "string"},
+                            },
+                        },
                         "id": {"type": "string", "format": "uuid"},
                         "estado": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
                         "inicio": {"type": "string", "format": "date-time"},
