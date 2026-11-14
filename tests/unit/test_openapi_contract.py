@@ -51,6 +51,9 @@ EXPECTED_PATHS = {
     "/api/v1/invoices",
     "/api/v1/payments/checkout",
     "/api/v1/invoices/{factura_id}/checkout-status",
+    "/api/v1/citas/{cita_id}/tratamientos",
+    "/api/v1/tratamientos/{tratamiento_id}",
+    "/api/v1/tratamientos/{tratamiento_id}/seguimientos",
 }
 
 
@@ -196,6 +199,42 @@ PRODUCTION_SETTINGS = {
 def _client(**overrides):
     settings = Settings(_env_file=None, sqlserver_port=1, sqlserver_database="unused", **overrides)
     return create_app(settings).test_client()
+
+
+def test_treatment_operations_are_declared_with_bearer_auth(spec) -> None:
+    assert set(spec["paths"]["/api/v1/citas/{cita_id}/tratamientos"]) == {"get", "post"}
+    assert set(spec["paths"]["/api/v1/tratamientos/{tratamiento_id}"]) == {"patch"}
+    assert set(spec["paths"]["/api/v1/tratamientos/{tratamiento_id}/seguimientos"]) == {
+        "get",
+        "post",
+    }
+    protected = [
+        ("/api/v1/citas/{cita_id}/tratamientos", "get"),
+        ("/api/v1/citas/{cita_id}/tratamientos", "post"),
+        ("/api/v1/tratamientos/{tratamiento_id}", "patch"),
+        ("/api/v1/tratamientos/{tratamiento_id}/seguimientos", "get"),
+        ("/api/v1/tratamientos/{tratamiento_id}/seguimientos", "post"),
+    ]
+    for path, method in protected:
+        assert spec["paths"][path][method]["security"] == [{"bearerAuth": []}], path
+
+
+def test_treatment_request_schemas_forbid_unknown_fields(spec) -> None:
+    from medicalbooking.modules.treatments.presentation.routes import (
+        CreateTreatmentRequest,
+        FollowUpRequest,
+        UpdateTreatmentRequest,
+    )
+
+    schemas = spec["components"]["schemas"]
+    for name, model in [
+        ("CreateTreatmentRequest", CreateTreatmentRequest),
+        ("UpdateTreatmentRequest", UpdateTreatmentRequest),
+        ("FollowUpRequest", FollowUpRequest),
+    ]:
+        assert schemas[name] == model.model_json_schema(), name
+        assert schemas[name]["additionalProperties"] is False, name
+    assert "plan_tratamiento" not in schemas["CreateTreatmentRequest"]["properties"]
 
 
 def test_docs_are_hidden_in_production_by_default() -> None:

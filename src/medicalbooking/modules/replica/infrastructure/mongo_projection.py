@@ -184,6 +184,15 @@ class _MongoTransaction:
     def delete_cita(self, cita_id: str) -> None:
         self._delete("citas", cita_id, cita_id)
 
+    def upsert_tratamiento(self, tratamiento: dict[str, Any], version: int) -> None:
+        # The envelope version is this event's version, the one the sink was built with.
+        fields = {name: value for name, value in tratamiento.items() if name != "id"}
+        self._set("tratamientos", tratamiento["id"], fields)
+
+    def upsert_seguimiento(self, seguimiento: dict[str, Any]) -> None:
+        fields = {name: value for name, value in seguimiento.items() if name != "id"}
+        self._set("tratamientos_seguimientos", seguimiento["id"], fields)
+
 
 def _mongo_value(value: Any) -> Any:
     """Values BSON cannot encode: exact decimals as strings, dates as datetimes."""

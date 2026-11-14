@@ -164,6 +164,32 @@ def _cita_eliminada(envelope: dict[str, Any], tx: Any) -> None:
     tx.delete_cita(envelope["payload"]["cita"]["id"])
 
 
+_TRATAMIENTO_FIELDS = (
+    "id",
+    "cita_id",
+    "paciente_id",
+    "medico_id",
+    "descripcion",
+    "estado",
+    "fecha_inicio",
+    "fecha_fin",
+)
+_SEGUIMIENTO_FIELDS = ("id", "tratamiento_id", "secuencia", "nota", "creado_en")
+
+
+def _tratamiento_proyectado(envelope: dict[str, Any], tx: Any) -> None:
+    """Created and updated events both carry the full treatment, with its text.
+
+    The envelope version orders the writes: the sink keeps a stored row only over an older one.
+    """
+    tratamiento = _pick(envelope["payload"]["tratamiento"], _TRATAMIENTO_FIELDS)
+    tx.upsert_tratamiento(tratamiento, envelope["aggregate_version"])
+
+
+def _seguimiento_registrado(envelope: dict[str, Any], tx: Any) -> None:
+    tx.upsert_seguimiento(_pick(envelope["payload"]["seguimiento"], _SEGUIMIENTO_FIELDS))
+
+
 _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
     "usuario.creado": _usuario_creado,
     "usuario.activado": _usuario_activado,
@@ -176,4 +202,7 @@ _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
     "reembolso.actualizado": _reembolso_actualizado,
     "cita.actualizada": _cita_actualizada,
     "cita.eliminada": _cita_eliminada,
+    "tratamiento.creado": _tratamiento_proyectado,
+    "tratamiento.actualizado": _tratamiento_proyectado,
+    "seguimiento.registrado": _seguimiento_registrado,
 }

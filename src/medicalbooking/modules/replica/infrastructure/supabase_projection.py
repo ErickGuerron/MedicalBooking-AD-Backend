@@ -282,6 +282,48 @@ class _Transaction:
             ),
         )
 
+    def upsert_tratamiento(self, tratamiento: dict[str, Any], version: int) -> None:
+        """A newer version replaces the row; an older or equal one leaves it unchanged."""
+        self._cur.execute(
+            "INSERT INTO replica.tratamientos (id, cita_id, paciente_id, medico_id, descripcion, "
+            "estado, fecha_inicio, fecha_fin, version) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET descripcion = excluded.descripcion, "
+            "estado = excluded.estado, fecha_fin = excluded.fecha_fin, "
+            "version = excluded.version "
+            "WHERE replica.tratamientos.version < excluded.version",
+            (
+                tratamiento["id"],
+                tratamiento["cita_id"],
+                tratamiento["paciente_id"],
+                tratamiento["medico_id"],
+                tratamiento["descripcion"],
+                tratamiento["estado"],
+                tratamiento["fecha_inicio"],
+                tratamiento.get("fecha_fin"),
+                version,
+            ),
+        )
+
+    def upsert_seguimiento(self, seguimiento: dict[str, Any]) -> None:
+        """A follow-up is inserted once: notes are append-only and the writer has no SELECT here.
+
+        INSERT ... ON CONFLICT needs SELECT on the conflict target, which replica_writer lacks on
+        this table (migration s0010 grants INSERT only). A replay never reaches this statement:
+        apply_event marks the event processed in the same transaction and skips a duplicate.
+        """
+        self._cur.execute(
+            "INSERT INTO replica.tratamientos_seguimientos (id, tratamiento_id, secuencia, nota, "
+            "creado_en) VALUES (%s, %s, %s, %s, %s)",
+            (
+                seguimiento["id"],
+                seguimiento["tratamiento_id"],
+                seguimiento["secuencia"],
+                seguimiento["nota"],
+                seguimiento["creado_en"],
+            ),
+        )
+
 
 class SupabaseProjectionSink:
     def __init__(self, connect: Callable[[], Any]) -> None:
