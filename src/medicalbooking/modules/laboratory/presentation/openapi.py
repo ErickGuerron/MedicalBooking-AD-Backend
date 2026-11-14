@@ -99,7 +99,8 @@ def laboratory_fragment() -> dict[str, Any]:
                         "401": _problem("Missing, malformed or inactive credentials"),
                         "403": _problem(
                             "Caller has no order read access, or has the doctor permission but no "
-                            "doctor profile ('A doctor profile is required for this action')"
+                            "doctor profile ('A doctor profile is required for this action', "
+                            "code DOCTOR_PROFILE_REQUIRED)"
                         ),
                         "422": _problem("Invalid estado, limit or offset"),
                     },
@@ -111,7 +112,8 @@ def laboratory_fragment() -> dict[str, Any]:
                     "description": (
                         "Requires ordenes.crear and a doctor profile. The patient must have a "
                         "cita or a lab order with the caller. Starts SOLICITADA. A patient the "
-                        "caller does not treat (or an unknown id) gets the same generic 403."
+                        "caller does not treat (or an unknown id) gets the same 403 with code "
+                        "PATIENT_NOT_AVAILABLE."
                     ),
                     "security": _BEARER,
                     "requestBody": _body("CreateOrderRequest"),
@@ -119,12 +121,15 @@ def laboratory_fragment() -> dict[str, Any]:
                         "201": _json("Order created", "LabOrder"),
                         "401": _problem("Missing, malformed or inactive credentials"),
                         "403": _problem(
-                            "Forbidden. Three messages in the detail: "
-                            "'Access to this resource is not allowed' (no ordenes.crear, or the "
-                            "patient is unknown or not treated by the caller); "
-                            "'A doctor profile is required for this action' (ordenes.crear but "
-                            "no medicos profile); 'The patient account is not active' (a patient "
-                            "the caller treats whose account is not ACTIVO)"
+                            "Forbidden. Each refusal carries a stable 'code' in the problem body. "
+                            "'The patient is not available to this doctor' (code "
+                            "PATIENT_NOT_AVAILABLE; the patient is unknown or not treated by the "
+                            "caller, and both cases look the same); 'The patient account is not "
+                            "active' (code PATIENT_ACCOUNT_INACTIVE; a patient the caller treats "
+                            "whose account is not ACTIVO); 'A doctor profile is required for this "
+                            "action' (code DOCTOR_PROFILE_REQUIRED; ordenes.crear but no medicos "
+                            "profile); 'Access to this resource is not allowed' (no ordenes.crear; "
+                            "no code)"
                         ),
                         "422": _problem("Invalid body or unknown test type"),
                     },
@@ -276,8 +281,9 @@ def laboratory_fragment() -> dict[str, Any]:
                         "403": _problem(
                             "Forbidden. Two messages in the detail: "
                             "'Access to this resource is not allowed' (caller lacks "
-                            "ordenes.crear); 'A doctor profile is required for this action' "
-                            "(ordenes.crear but no medicos profile)"
+                            "ordenes.crear; no code); 'A doctor profile is required for this "
+                            "action' (ordenes.crear but no medicos profile; code "
+                            "DOCTOR_PROFILE_REQUIRED)"
                         ),
                         "422": _problem("limit outside 1 to 100, or an invalid offset"),
                     },

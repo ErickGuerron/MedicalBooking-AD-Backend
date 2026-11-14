@@ -313,7 +313,8 @@ def test_an_order_for_a_patient_the_doctor_does_not_treat_is_refused_before_any_
             tipo_prueba_ids=[HEMO],
         )
 
-    assert refused.value.detail == "Access to this resource is not allowed"
+    assert refused.value.detail == NOT_AVAILABLE
+    assert refused.value.code == "PATIENT_NOT_AVAILABLE"
     assert store.orders == {}
 
 
@@ -340,6 +341,7 @@ def test_an_unknown_patient_gets_the_same_403_as_an_unrelated_one(store, storage
 
 
 UNIFORM = "Access to this resource is not allowed"
+NOT_AVAILABLE = "The patient is not available to this doctor"
 INACTIVE_PATIENT = "The patient account is not active"
 NO_DOCTOR_PROFILE = "A doctor profile is required for this action"
 
@@ -377,7 +379,8 @@ def test_rule_b_unrelated_inactive_patient_keeps_the_uniform_message(store, stor
             tipo_prueba_ids=[HEMO],
         )
 
-    assert refused.value.detail == UNIFORM
+    assert refused.value.detail == NOT_AVAILABLE
+    assert refused.value.code == "PATIENT_NOT_AVAILABLE"
     assert store.orders == {}
 
 
@@ -411,6 +414,72 @@ def test_rule_d_actor_without_the_permission_keeps_the_uniform_message(
             tipo_prueba_ids=[HEMO],
         )
 
+    assert refused.value.detail == UNIFORM
+    assert refused.value.code is None
+
+
+def test_unknown_and_unrelated_patients_share_one_code_and_detail(store, storage, world) -> None:
+    service = _service(store, storage)
+    refusals = []
+    for paciente_id in (_id(), world_patient_id(world["other_patient"].user_id, store)):
+        with pytest.raises(Forbidden) as refused:
+            service.create_order(
+                world["doctor"],
+                paciente_id=paciente_id,
+                prioridad="NORMAL",
+                observaciones=None,
+                tipo_prueba_ids=[HEMO],
+            )
+        refusals.append((refused.value.status, refused.value.code, refused.value.detail))
+
+    assert refusals[0] == refusals[1]
+    assert refusals[0] == (403, "PATIENT_NOT_AVAILABLE", NOT_AVAILABLE)
+
+
+def test_related_inactive_patient_gets_the_inactive_code(store, storage, world) -> None:
+    patient_id = world_patient_id(world["patient"].user_id, store)
+    store.inactive.add(patient_id)
+
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["doctor"],
+            paciente_id=patient_id,
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.code == "PATIENT_ACCOUNT_INACTIVE"
+    assert refused.value.detail == INACTIVE_PATIENT
+
+
+def test_doctor_without_profile_gets_the_profile_code_on_create_order(
+    store, storage, world
+) -> None:
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            _actor(*MEDICO),
+            paciente_id=world_patient_id(world["patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.code == "DOCTOR_PROFILE_REQUIRED"
+    assert refused.value.detail == NO_DOCTOR_PROFILE
+
+
+def test_actor_without_permission_gets_no_code_on_create_order(store, storage, world) -> None:
+    with pytest.raises(Forbidden) as refused:
+        _service(store, storage).create_order(
+            world["patient"],
+            paciente_id=world_patient_id(world["patient"].user_id, store),
+            prioridad="NORMAL",
+            observaciones=None,
+            tipo_prueba_ids=[HEMO],
+        )
+
+    assert refused.value.code is None
     assert refused.value.detail == UNIFORM
 
 

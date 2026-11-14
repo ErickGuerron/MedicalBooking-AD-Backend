@@ -53,11 +53,15 @@ from medicalbooking.shared.domain.errors import (
 )
 
 _FORBIDDEN = "Access to this resource is not allowed"
-# Distinct only where the caller already knows the patient or holds the permission: a
-# related patient with an inactive account, and an actor with the permission but no doctor
-# profile. Unrelated or unknown patients keep _FORBIDDEN so patient ids do not leak.
+# Unknown and unrelated patients share one refusal, so patient ids do not leak. A related
+# patient with an inactive account and an actor with the permission but no doctor profile
+# each get their own stable code; the messages are kept as they were.
+_NOT_AVAILABLE = "The patient is not available to this doctor"
 _INACTIVE_PATIENT = "The patient account is not active"
 _NO_DOCTOR_PROFILE = "A doctor profile is required for this action"
+PATIENT_NOT_AVAILABLE = "PATIENT_NOT_AVAILABLE"
+PATIENT_ACCOUNT_INACTIVE = "PATIENT_ACCOUNT_INACTIVE"
+DOCTOR_PROFILE_REQUIRED = "DOCTOR_PROFILE_REQUIRED"
 
 
 class DocumentIntegrityError(AppError):
@@ -93,16 +97,16 @@ class LabService:
         _require(actor, PERM_ORDER_CREATE)
         medico_id = self._store.resolve_medico_id(actor.user_id)
         if medico_id is None:
-            raise Forbidden(_NO_DOCTOR_PROFILE)
+            raise Forbidden(_NO_DOCTOR_PROFILE, code=DOCTOR_PROFILE_REQUIRED)
         validate_priority(prioridad)
         validate_observations(observaciones)
         test_ids = validate_test_ids(list(tipo_prueba_ids))
         if not self._store.patient_is_related(medico_id, str(paciente_id)):
             # Unknown and unrelated patients get the same answer, so patient ids do not leak.
-            raise Forbidden(_FORBIDDEN)
+            raise Forbidden(_NOT_AVAILABLE, code=PATIENT_NOT_AVAILABLE)
         if not self._store.patient_account_is_active(str(paciente_id)):
             # The doctor already treats this patient, so the account status is not a leak.
-            raise Forbidden(_INACTIVE_PATIENT)
+            raise Forbidden(_INACTIVE_PATIENT, code=PATIENT_ACCOUNT_INACTIVE)
         if set(test_ids) - self._store.active_test_ids(test_ids):
             raise ValidationFailed("Unknown or inactive test type")
 
@@ -149,7 +153,7 @@ class LabService:
         )
         if paciente_id is None and medico_id is None:
             if PERM_RESULT_READ_CONTEXT in actor.permissions:
-                raise Forbidden(_NO_DOCTOR_PROFILE)
+                raise Forbidden(_NO_DOCTOR_PROFILE, code=DOCTOR_PROFILE_REQUIRED)
             raise Forbidden(_FORBIDDEN)
         return self._store.list_orders(
             paciente_id=paciente_id,
@@ -176,7 +180,7 @@ class LabService:
         _require(actor, PERM_ORDER_CREATE)
         medico_id = self._store.resolve_medico_id(actor.user_id)
         if medico_id is None:
-            raise Forbidden(_NO_DOCTOR_PROFILE)
+            raise Forbidden(_NO_DOCTOR_PROFILE, code=DOCTOR_PROFILE_REQUIRED)
         rows = self._store.list_patients(medico_id=medico_id, limit=limit, offset=offset)
         self._audit(actor, None, "paciente", None, "listar")
         return rows

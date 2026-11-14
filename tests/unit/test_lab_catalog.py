@@ -171,8 +171,9 @@ def test_patient_list_is_scoped_to_the_doctor_profile(world) -> None:
 def test_a_doctor_without_a_profile_gets_403_on_the_patient_directory(world) -> None:
     world.store.medico_profile_id = None
 
-    with pytest.raises(Forbidden):
+    with pytest.raises(Forbidden) as refused:
         _service(world.store).list_patients(world.doctor, limit=50, offset=0)
+    assert refused.value.code == "DOCTOR_PROFILE_REQUIRED"
     assert world.store.patient_calls == []
 
 

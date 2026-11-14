@@ -29,6 +29,7 @@ CATALOG_URL = "/api/v1/lab/test-types"
 ORDERS_URL = "/api/v1/lab/orders"
 PAGE = 100
 UNIFORM_FORBIDDEN = "Access to this resource is not allowed"
+NOT_AVAILABLE = "The patient is not available to this doctor"
 
 
 @pytest.fixture(scope="module")
@@ -320,10 +321,31 @@ def test_order_for_an_unrelated_patient_is_403_with_the_uniform_message(app, eng
     missing = _post_order(app, headers, str(uuid.uuid4()), _test_type(engine))
 
     assert response.status_code == 403
-    assert response.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert response.get_json()["detail"] == NOT_AVAILABLE
+    assert response.get_json()["code"] == "PATIENT_NOT_AVAILABLE"
     assert missing.status_code == 403
-    assert missing.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert missing.get_json()["detail"] == NOT_AVAILABLE
+    assert missing.get_json()["code"] == "PATIENT_NOT_AVAILABLE"
     assert _orders_of(engine, stranger) == 0
+
+
+def test_unknown_and_unrelated_patients_return_identical_problem_bodies(app, engine) -> None:
+    doctor = _doctor(engine)
+    headers = _token(app, doctor)
+    stranger = _patient_id(engine, _user(engine, "PACIENTE"))
+    test_type = _test_type(engine)
+
+    unrelated = _post_order(app, headers, stranger, test_type)
+    unknown = _post_order(app, headers, str(uuid.uuid4()), test_type)
+
+    assert unrelated.status_code == unknown.status_code == 403
+    assert unrelated.mimetype == unknown.mimetype == "application/problem+json"
+    unrelated_body = unrelated.get_json()
+    unknown_body = unknown.get_json()
+    assert unrelated_body.pop("correlation_id") != ""
+    assert unknown_body.pop("correlation_id") != ""
+    assert unrelated_body == unknown_body
+    assert unrelated_body["code"] == "PATIENT_NOT_AVAILABLE"
 
 
 def test_order_for_a_patient_of_another_doctor_is_403_for_a_foreign_doctor(app, engine) -> None:
@@ -336,7 +358,8 @@ def test_order_for_a_patient_of_another_doctor_is_403_for_a_foreign_doctor(app, 
     response = _post_order(app, _token(app, foreign), profile, _test_type(engine))
 
     assert response.status_code == 403
-    assert response.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert response.get_json()["detail"] == NOT_AVAILABLE
+    assert response.get_json()["code"] == "PATIENT_NOT_AVAILABLE"
     assert _orders_of(engine, profile) == before
 
 
@@ -375,6 +398,7 @@ def test_order_for_a_related_patient_with_an_inactive_account_gets_its_own_403(a
 
     assert response.status_code == 403
     assert response.get_json()["detail"] == "The patient account is not active"
+    assert response.get_json()["code"] == "PATIENT_ACCOUNT_INACTIVE"
     assert _orders_of(engine, profile) == before
 
 
@@ -388,8 +412,10 @@ def test_doctor_permission_without_a_doctor_profile_gets_the_profile_message(app
 
     assert listing.status_code == 403
     assert listing.get_json()["detail"] == "A doctor profile is required for this action"
+    assert listing.get_json()["code"] == "DOCTOR_PROFILE_REQUIRED"
     assert ordering.status_code == 403
     assert ordering.get_json()["detail"] == "A doctor profile is required for this action"
+    assert ordering.get_json()["code"] == "DOCTOR_PROFILE_REQUIRED"
     assert _orders_of(engine, profile) == 0
 
 
@@ -402,8 +428,10 @@ def test_actor_without_the_permission_keeps_the_uniform_message(app, engine) -> 
 
     assert listing.status_code == 403
     assert listing.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert "code" not in listing.get_json()
     assert ordering.status_code == 403
     assert ordering.get_json()["detail"] == UNIFORM_FORBIDDEN
+    assert "code" not in ordering.get_json()
 
 
 def test_order_creation_without_a_token_is_401(app, engine) -> None:
