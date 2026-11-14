@@ -65,7 +65,9 @@ follow-ups: the database also refuses UPDATE and DELETE on them.
   their order.
 - Each read and write writes one `auditoria_accesos` row with entity, action and result. The
   row never contains the description or the note.
-- Treatments and follow-ups are clinical notes. They are not replicated to Supabase or MongoDB.
+- Treatments and follow-ups are replicated with their full text (`descripcion` and `nota`) through
+  the outbox and Kafka into the Supabase replica and MongoDB. This is an explicit product decision
+  (option A). Audit rows still exclude these values.
 
 ## Permissions
 
