@@ -6,6 +6,8 @@ name: Publish image
 # A release tag is immutable: the job refuses to publish a version that already exists.
 # Bump project.version in pyproject.toml before merging to main.
 # Credentials come from the DOCKER_HUB environment: vars.DOCKERHUB_USERNAME and secrets.DOCKERHUB_TOKEN.
+# Publishing stays OFF until the repository variable IMAGE_PUBLISH_ENABLED is set to "true".
+# The workflow runs and skips the job while it is unset, so it can live on main without publishing.
 
 on:
   workflow_run:
@@ -23,7 +25,10 @@ concurrency:
 jobs:
   publish:
     name: Build and push image
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: >-
+      vars.IMAGE_PUBLISH_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: DOCKER_HUB
