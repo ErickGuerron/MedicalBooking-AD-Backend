@@ -10,7 +10,6 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from datetime import date, datetime
-from typing import NoReturn
 
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
@@ -69,7 +68,9 @@ class TreatmentService:
         _require(actor, PERM_REVIEW)
         cita = self._store.get_cita(str(cita_id))
         if cita is None or not self._is_treating_doctor(actor, cita.medico_id):
-            self._deny(actor, cita.paciente_id if cita else None, "cita", str(cita_id), "crear")
+            raise self._denied(
+                actor, cita.paciente_id if cita else None, "cita", str(cita_id), "crear"
+            )
         validate_descripcion(descripcion)
         validate_estado(estado)
         validate_fechas(fecha_inicio, fecha_fin, estado)
@@ -92,7 +93,7 @@ class TreatmentService:
         """Treatments of one appointment, for its treating doctor or its owning patient."""
         cita = self._store.get_cita(str(cita_id))
         if cita is None or not self._can_read_cita(actor, cita.paciente_id, cita.medico_id):
-            self._deny(
+            raise self._denied(
                 actor,
                 cita.paciente_id if cita else None,
                 _TREATMENT,
@@ -114,7 +115,7 @@ class TreatmentService:
         _require(actor, PERM_REVIEW)
         current = self._store.get_treatment(str(treatment_id))
         if current is None or not self._is_treating_doctor(actor, current.medico_id):
-            self._deny(
+            raise self._denied(
                 actor,
                 current.paciente_id if current else None,
                 _TREATMENT,
@@ -155,7 +156,7 @@ class TreatmentService:
         _require(actor, PERM_REVIEW)
         treatment = self._store.get_treatment(str(treatment_id))
         if treatment is None or not self._is_treating_doctor(actor, treatment.medico_id):
-            self._deny(
+            raise self._denied(
                 actor,
                 treatment.paciente_id if treatment else None,
                 _FOLLOW_UP,
@@ -181,7 +182,7 @@ class TreatmentService:
         if treatment is None or not self._can_read_cita(
             actor, treatment.paciente_id, treatment.medico_id
         ):
-            self._deny(
+            raise self._denied(
                 actor,
                 treatment.paciente_id if treatment else None,
                 _FOLLOW_UP,
@@ -208,17 +209,18 @@ class TreatmentService:
             and self._store.resolve_medico_id(actor.user_id) == medico_id
         )
 
-    def _deny(
+    def _denied(
         self,
         actor: AccessProfile,
         paciente_id: str | None,
         entidad: str,
         entidad_id: str,
         accion: str,
-    ) -> NoReturn:
+    ) -> Forbidden:
         # Denied access is audited too; the resource may not exist, so the patient may be unknown.
+        # Callers raise the returned error so the control flow is explicit to readers and tools.
         self._audit(actor, paciente_id, entidad, entidad_id, accion, "DENEGADO")
-        raise Forbidden(_FORBIDDEN)
+        return Forbidden(_FORBIDDEN)
 
     def _audit(
         self,
