@@ -6,7 +6,7 @@ run never moves the watermark backwards.
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 
 from medicalbooking.shared.infrastructure.sql_errors import retry_on_deadlock
 
@@ -35,11 +35,21 @@ class SqlWatermarkStore:
 
     def advance(self, table: str, version: int) -> None:
         """Raise the watermark to ``version``. A lower or equal version changes nothing."""
-        if version < 0:
-            raise ValueError("watermark version must be non-negative")
+        _check_version(version)
 
         def work() -> None:
             with self._engine.begin() as conn:
-                conn.execute(_ADVANCE, {"tabla": table, "version": version})
+                advance_in(conn, table, version)
 
         retry_on_deadlock(work)
+
+
+def _check_version(version: int) -> None:
+    if version < 0:
+        raise ValueError("watermark version must be non-negative")
+
+
+def advance_in(conn: Connection, table: str, version: int) -> None:
+    """Raise the watermark inside the caller's transaction, so it commits with the covered work."""
+    _check_version(version)
+    conn.execute(_ADVANCE, {"tabla": table, "version": version})

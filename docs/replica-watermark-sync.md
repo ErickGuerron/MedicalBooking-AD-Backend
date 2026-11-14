@@ -1,7 +1,7 @@
 # External-write sync (watermark)
 
-> Status: describes the planned worker (T3). The store (T1) and the appointment reader (T2) are built;
-> the worker and its CLI are not, so the commands below do not run yet.
+> Status: the worker (T3) is built and unit-tested. The SQL integration path and the scheduled
+> deployment are not verified yet.
 
 Phase 1 reconciliation (`docs/replica-reconciliation.md`) repairs replicas from the outbox. It cannot
 see writes that bypass the API, such as external SQL inserts, or writes made while Supabase or MongoDB
@@ -32,22 +32,23 @@ and publishes them to the replicas through the same projection path the outbox u
 
 ## Deployment
 
-Run on one machine only, the same as the reconciliation worker, so two schedulers do not duplicate the
-delivery. Windows Task Scheduler: repeat every 15 minutes, program `uv`, arguments
-`run python -m medicalbooking.workers.sync_external_writes`, start in the backend directory.
+Run on one machine only, so two schedulers do not queue the same rows twice. Windows Task Scheduler:
+repeat every 15 minutes, program `uv`, arguments `run python -m medicalbooking.workers.sync_external_writes`,
+start in the backend directory.
+
+Each batch of up to 500 rows is queued together with its watermark in one SQL transaction. A rerun after
+a crash therefore never skips rows, and it never queues a row twice for the same watermark.
 
 ## Outage recovery
 
-If Supabase or MongoDB is down, the outbox dispatcher keeps the events it could not deliver. Rows written
-through the API in that window are sent when the dispatcher runs again. Rows written outside the API are
-sent by the next watermark cycle after the replica comes back, because the watermark did not advance past
-them.
+If Supabase or MongoDB is down, the worker still queues external writes in the outbox, because it needs only
+SQL Server. The dispatcher keeps retrying delivery until the replica returns. The watermark advances when
+the event is queued, not when it reaches the replica: delivery after an outage is the outbox's job.
 
 ## Configuration
 
-| Setting | Effect when unset |
-| --- | --- |
-| `SUPABASE_DATABASE_URL` | Supabase delivery skipped; watermark does not advance for the skipped destination |
-| `MONGODB_PROJECTION_URI` and `MONGODB_DATABASE` | MongoDB delivery skipped; watermark does not advance for the skipped destination |
+The worker needs only the SQL Server settings (`SQLSERVER_*` or `AZURE_DATABASE_URL`). It never
+connects to Supabase or MongoDB: it queues outbox events, and the dispatcher delivers them. Connection
+strings are secrets and are never printed or logged.
 
-Connection strings are secrets and are never printed or logged.
+Output: `queued=<n>`. Exit code 0 means the cycle finished; 1 means it failed.

@@ -14,7 +14,7 @@ S7. Re-running the worker with no new rows changes nothing.
 T1. Watermark store (table DDL + repository), unit tests. Route: inline. Status: done in code (unit 1 passed, ruff clean; integration not run locally). Integration test pending a test DB run.
 T2. Changed-row reader for citas (CAST version_fila), unit tests (b43e4b3). Route: inline. Status: done for citas; usuarios pending (needs roles and paciente projection, see T2b). Integration test pending a test DB run.
 T2b. Changed-row reader for usuarios (roles and patient profile in the payload). Status: pending.
-T3. Worker: read changes, publish through outbox path, advance watermark after success, unit tests (S1, S2, S5, S7). Route: inline. Status: pending.
+T3. Worker: read changes, publish through outbox path, advance watermark in the same transaction, unit tests (S1, S2, S5, S7). Route: inline. Status: done in code; full unit suite 1031 passed, 1 skipped. SQL integration path not run. Design note: S2 "delivered" is implemented as "queued in the outbox in the same transaction"; the dispatcher handles delivery retries.
 T4. CLI entry point and docs/replica-reconciliation.md section (S6). Route: inline. Status: pending.
 T5. Migration for sincronizacion_watermarks, applied to Azure only after explicit user confirmation. Status: pending, blocked on user go-ahead.
 
