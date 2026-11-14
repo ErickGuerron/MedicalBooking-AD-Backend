@@ -37,6 +37,9 @@ class UserSummary:
     roles: tuple[str, ...]
 
 
+DEFAULT_APPOINTMENT_MINUTES = 30
+
+
 @dataclass(frozen=True)
 class NewUser:
     user_id: str
@@ -46,6 +49,8 @@ class NewUser:
     password_hash: str
     roles: tuple[str, ...]
     status: str = "ACTIVO"
+    # Set only for a MEDICO: the repository then writes the clinician's profile (medicos) too.
+    professional_registration: str | None = None
 
 
 class MailDeliveryError(Exception):
