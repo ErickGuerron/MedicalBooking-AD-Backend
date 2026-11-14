@@ -52,7 +52,8 @@ Clients (Flutter, Angular)
 On each VM, with Docker installed:
 
 ```bash
-# 1. Publish the image from CI, then pull it on the VM (registry publish is not in CI yet).
+# 1. Pull an image published by the CI `publish` job to Docker Hub:
+#    develop-<short sha> or develop (test images), or <version> / latest (releases).
 export MEDICALBOOKING_IMAGE=<registry>/medicalbooking:<tag>
 
 # 2. Place the VM's .env next to the repository (SQLSERVER_* for Azure SQL,
@@ -119,7 +120,9 @@ Results are not yet measured. These will be recorded in `docs/experiments/`.
   `LAB_DOCUMENTS_DIR` on the local disk of the host that handles the upload. Replicas on
   VM1 and VM2 do not share that disk, so a PDF uploaded through one VM is not found by a
   download routed to the other. Move storage to Azure Blob or a shared volume before E7.
-- Publishing the image to a registry from CI.
+- Deploying the published image to the VMs. The CI `publish` job pushes `develop` and `<version>` images
+  to Docker Hub after every check passes, but only once `IMAGE_PUBLISH_ENABLED` is `true`. The VM pull
+  and restart are still manual.
 - HTTPS, DuckDNS, and Let's Encrypt on the VMs.
 - Azure resources, which are not provisioned from this repository.
 - Replica load tests and failure experiments.
