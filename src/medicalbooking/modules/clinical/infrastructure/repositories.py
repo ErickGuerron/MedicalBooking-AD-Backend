@@ -12,10 +12,12 @@ import json
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import Connection, Engine, bindparam, text
 
 from medicalbooking.modules.clinical.application.ports import (
+    UNSET,
     AnalyteView,
     FindingView,
     NewReference,
@@ -26,6 +28,7 @@ from medicalbooking.modules.clinical.application.ports import (
     RuleView,
     ShadowEditView,
     ShadowItemRecord,
+    Unset,
 )
 from medicalbooking.modules.clinical.domain import (
     CriterionSpec,
@@ -535,22 +538,28 @@ class SqlClinicalStore:
 
     def own_clinical_profile(
         self, usuario_id: str
-    ) -> tuple[int | None, bool | None, int | None] | None:
+    ) -> tuple[int | None, bool | None, int | None, str | None, date | None] | None:
         guid = _as_guid(usuario_id)
         if guid is None:
             return None
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT altitud_residencia_m, fumador, cigarrillos_dia "
-                    "FROM pacientes WHERE usuario_id = :u"
+                    "SELECT altitud_residencia_m, fumador, cigarrillos_dia, "
+                    "sexo_registrado, fecha_nacimiento FROM pacientes WHERE usuario_id = :u"
                 ),
                 {"u": guid},
             ).first()
         if row is None:
             return None
         fumador = None if row.fumador is None else bool(row.fumador)
-        return row.altitud_residencia_m, fumador, row.cigarrillos_dia
+        return (
+            row.altitud_residencia_m,
+            fumador,
+            row.cigarrillos_dia,
+            row.sexo_registrado,
+            row.fecha_nacimiento,
+        )
 
     def save_patient_clinical_profile(
         self,
@@ -558,6 +567,8 @@ class SqlClinicalStore:
         altitud_residencia_m: int | None,
         fumador: bool | None,
         cigarrillos_dia: int | None,
+        sexo: str | None | Unset = UNSET,
+        fecha_nacimiento: date | None | Unset = UNSET,
     ) -> str | None:
         guid = _as_guid(usuario_id)
         with self._engine.begin() as conn:
@@ -566,18 +577,21 @@ class SqlClinicalStore:
             ).first()
             if row is None:
                 return None
-            conn.execute(
-                text(
-                    "UPDATE pacientes SET altitud_residencia_m = :alt, fumador = :fum, "
-                    "cigarrillos_dia = :cig WHERE id = :p"
-                ),
-                {
-                    "alt": altitud_residencia_m,
-                    "fum": None if fumador is None else int(fumador),
-                    "cig": cigarrillos_dia,
-                    "p": row.id,
-                },
-            )
+            columns = "altitud_residencia_m = :alt, fumador = :fum, cigarrillos_dia = :cig"
+            params: dict[str, Any] = {
+                "alt": altitud_residencia_m,
+                "fum": None if fumador is None else int(fumador),
+                "cig": cigarrillos_dia,
+                "p": row.id,
+            }
+            # Column names are fixed literals; only values travel as parameters.
+            if not isinstance(sexo, Unset):
+                columns += ", sexo_registrado = :sexo"
+                params["sexo"] = sexo
+            if not isinstance(fecha_nacimiento, Unset):
+                columns += ", fecha_nacimiento = :nacimiento"
+                params["nacimiento"] = fecha_nacimiento
+            conn.execute(text(f"UPDATE pacientes SET {columns} WHERE id = :p"), params)  # noqa: S608
         return _canonical(row.id)
 
     def record_shadow_snapshot(

@@ -286,10 +286,16 @@ class SqlUserDirectory:
                         paciente_id = str(uuid.uuid4())
                         conn.execute(
                             text(
-                                "INSERT INTO pacientes (id, usuario_id, creado_en) "
-                                "VALUES (:id, :u, SYSUTCDATETIME())"
+                                "INSERT INTO pacientes "
+                                "(id, usuario_id, sexo_registrado, fecha_nacimiento, creado_en) "
+                                "VALUES (:id, :u, :sexo, :nacimiento, SYSUTCDATETIME())"
                             ),
-                            {"id": paciente_id, "u": new_user.user_id},
+                            {
+                                "id": paciente_id,
+                                "u": new_user.user_id,
+                                "sexo": new_user.sex,
+                                "nacimiento": new_user.birth_date,
+                            },
                         )
                 if new_user.professional_registration is not None:
                     _insert_medico(conn, new_user)

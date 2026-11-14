@@ -14,6 +14,8 @@ class AvailableSlot:
     medico_id: str
     inicio_utc: datetime
     fin_utc: datetime
+    # Public name of the doctor; None when the adapter does not know it.
+    medico_nombre: str | None = None
 
 
 @dataclass(frozen=True)
@@ -30,12 +32,14 @@ class Appointment:
 
 @dataclass(frozen=True)
 class AppointmentSummary:
-    """Listing row. Deliberately carries no patient data."""
+    """Listing row. The patient is set only on the doctor's agenda listing, never on a patient's."""
 
     id: str
     estado: str
     inicio_utc: datetime
     fin_utc: datetime
+    paciente_id: str | None = None
+    paciente_nombre: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +92,36 @@ class CancelOutcome:
     blockers: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class OpenConsultationCommand:
+    actor_user_id: str
+    appointment_id: str
+    now: datetime
+    allowed_states: frozenset[str]
+
+
+class ConsultationStatus(Enum):
+    CREATED = "created"
+    EXISTING = "existing"
+    NOT_FOUND_OR_FORBIDDEN = "not_found_or_forbidden"
+    STATE_NOT_ALLOWED = "state_not_allowed"
+
+
+@dataclass(frozen=True)
+class Consultation:
+    id: str
+    cita_id: str
+    estado: str
+    inicio_atencion: datetime | None
+    motivo_consulta: str | None
+
+
+@dataclass(frozen=True)
+class ConsultationOutcome:
+    status: ConsultationStatus
+    consultation: Consultation | None
+
+
 class ApprovalStatus(Enum):
     APPROVED = "approved"
     NOT_FOUND = "not_found"
@@ -97,7 +131,12 @@ class ApprovalStatus(Enum):
 
 class SchedulingStore(Protocol):
     def list_available(
-        self, start: datetime, end: datetime, medico_id: str | None, limit: int
+        self,
+        start: datetime,
+        end: datetime,
+        medico_id: str | None,
+        limit: int,
+        especialidad_id: int | None = None,
     ) -> list[AvailableSlot]: ...
 
     def find_slot(self, horario_id: str) -> datetime | None:
@@ -123,6 +162,10 @@ class SchedulingStore(Protocol):
         ...
 
     def reserve(self, command: ReserveCommand) -> ReserveOutcome: ...
+
+    def open_consultation(self, command: OpenConsultationCommand) -> ConsultationOutcome:
+        """Open (once) the consultation of an appointment of the actor's own agenda."""
+        ...
 
     def cancel(self, command: CancelCommand) -> CancelOutcome: ...
 

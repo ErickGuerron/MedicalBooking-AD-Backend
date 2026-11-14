@@ -93,22 +93,39 @@ def _int_query(name: str, default: int) -> int:
     return int(raw)
 
 
+def _positive_int_query(name: str) -> int | None:
+    """Optional positive INT query parameter (an SQL Server int identity)."""
+    if name not in request.args:
+        return None
+    value = _int_query(name, 0)
+    if not 1 <= value <= 2_147_483_647:
+        raise ValidationFailed(f"'{name}' must be a positive integer")
+    return value
+
+
 def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
-    return {
+    item: dict[str, Any] = {
         "id": appointment.id,
         "estado": appointment.estado,
         "inicio": appointment.inicio_utc.isoformat(),
         "fin": appointment.fin_utc.isoformat(),
     }
+    # Only the doctor's agenda listing carries the patient; a patient's own listing never does.
+    if appointment.paciente_id is not None:
+        item["paciente"] = {"id": appointment.paciente_id, "nombre": appointment.paciente_nombre}
+    return item
 
 
 def _slot_json(slot: AvailableSlot) -> dict[str, Any]:
-    return {
+    item: dict[str, Any] = {
         "horario_id": slot.horario_id,
         "medico_id": slot.medico_id,
         "inicio_utc": slot.inicio_utc.isoformat(),
         "fin_utc": slot.fin_utc.isoformat(),
     }
+    if slot.medico_nombre is not None:
+        item["medico"] = {"id": slot.medico_id, "nombre": slot.medico_nombre}
+    return item
 
 
 def _appointment_json(appointment: Appointment) -> dict[str, Any]:
@@ -132,6 +149,7 @@ def availability() -> tuple[Response, int]:
         _instant("desde"),
         _instant("hasta"),
         medico_id=str(uuid.UUID(medico)) if medico else None,
+        especialidad_id=_positive_int_query("especialidad_id"),
     )
     return jsonify(items=[_slot_json(slot) for slot in slots]), 200
 
@@ -167,6 +185,22 @@ def cancel(appointment_id: uuid.UUID) -> tuple[Response, int]:
     if hook is not None:
         hook(g.actor, str(appointment_id))
     return jsonify(_appointment_json(appointment)), 200
+
+
+@scheduling_bp.post("/appointments/<uuid:appointment_id>/consultation")
+@authenticated
+def open_consultation(appointment_id: uuid.UUID) -> tuple[Response, int]:
+    """The doctor of the agenda opens the consultation: 201 when created, 200 when it existed."""
+    consultation, created = _service().open_consultation(g.actor, str(appointment_id))
+    started = consultation.inicio_atencion
+    body = {
+        "id": consultation.id,
+        "cita_id": consultation.cita_id,
+        "estado": consultation.estado,
+        "inicio_atencion": started.isoformat() if started else None,
+        "motivo_consulta": consultation.motivo_consulta,
+    }
+    return jsonify(body), 201 if created else 200
 
 
 @scheduling_bp.post("/appointments/<uuid:appointment_id>/cancellation-approval")

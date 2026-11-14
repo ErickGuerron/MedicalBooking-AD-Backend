@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Protocol
 
 from medicalbooking.modules.clinical.domain.evaluation import (
@@ -15,6 +16,15 @@ from medicalbooking.modules.clinical.domain.evaluation import (
 )
 from medicalbooking.modules.clinical.domain.references import Reference
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
+
+
+class Unset(Enum):
+    """Marks a field the caller did not send, so it stays as stored (null clears it)."""
+
+    UNSET = 0
+
+
+UNSET = Unset.UNSET
 
 
 @dataclass(frozen=True)
@@ -224,14 +234,19 @@ class ClinicalStore(Protocol):
         altitud_residencia_m: int | None,
         fumador: bool | None,
         cigarrillos_dia: int | None,
+        sexo: str | None | Unset = UNSET,
+        fecha_nacimiento: date | None | Unset = UNSET,
     ) -> str | None:
-        """Store the patient's own profile; return the patient id, or None without a patient."""
+        """Store the patient's own profile; return the patient id, or None without a patient.
+
+        Sex and birth date are written only when given (UNSET leaves the stored value alone).
+        """
         ...
 
     def own_clinical_profile(
         self, usuario_id: str
-    ) -> tuple[int | None, bool | None, int | None] | None:
-        """The user's own (altitude, smoker, cigarettes per day); None without a patient."""
+    ) -> tuple[int | None, bool | None, int | None, str | None, date | None] | None:
+        """Own (altitude, smoker, cigarettes/day, sex, birth date); None without a patient."""
         ...
 
     def record_shadow_snapshot(

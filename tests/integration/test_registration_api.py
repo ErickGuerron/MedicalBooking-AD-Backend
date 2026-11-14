@@ -135,6 +135,92 @@ def test_opening_the_link_activates_the_patient(client, mailer, engine_of) -> No
     assert patients == 1
 
 
+def _demographics(engine: Engine, email: str):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT p.sexo_registrado, p.fecha_nacimiento FROM pacientes p "
+                "JOIN usuarios u ON u.id = p.usuario_id WHERE u.email = :e"
+            ),
+            {"e": email},
+        ).one()
+    return row.sexo_registrado, None if row.fecha_nacimiento is None else str(row.fecha_nacimiento)
+
+
+def _post(client, email: str, **extra):
+    return client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": email,
+            "password": PASSWORD,
+            "first_name": "Ana",
+            "last_name": "Sintetica",
+            **extra,
+        },
+    )
+
+
+def test_registration_stores_sex_and_birth_date_and_keeps_them_after_verification(
+    client, mailer, engine_of
+) -> None:
+    email = _email("demographics")
+
+    response = _post(client, email, sexo="F", fecha_nacimiento="1990-05-17")
+
+    assert response.status_code == 202
+    assert response.get_json() == {"message": REGISTRATION_ACCEPTED}
+    assert _demographics(engine_of, email) == ("F", "1990-05-17")
+    assert client.get(_activation_path(mailer, email)).status_code == 200
+    assert _demographics(engine_of, email) == ("F", "1990-05-17")
+
+
+def test_registration_without_demographics_leaves_them_null(client, mailer, engine_of) -> None:
+    email = _email("nodemographics")
+
+    assert _register(client, email).status_code == 202
+    assert _demographics(engine_of, email) == (None, None)
+
+
+def test_a_repeated_registration_never_overwrites_the_first_demographics(
+    client, mailer, engine_of
+) -> None:
+    email = _email("repeat")
+    _post(client, email, sexo="F")
+
+    second = _post(client, email, sexo="M")
+
+    assert second.status_code == 202
+    assert _demographics(engine_of, email)[0] == "F"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"sexo": "X"},
+        {"fecha_nacimiento": "2999-01-01"},
+        {"fecha_nacimiento": "1800-01-01"},
+        {"fecha_nacimiento": "1990-13-01"},
+        {"fecha_nacimiento": "1990-5-1"},
+        {"fecha_nacimiento": 5},
+        {"genero": "F"},
+    ],
+)
+def test_invalid_demographics_are_a_422_and_create_nothing(
+    client, mailer, engine_of, extra
+) -> None:
+    email = _email("invalid")
+
+    response = _post(client, email, **extra)
+
+    assert response.status_code == 422
+    assert email not in mailer.links
+    with engine_of.connect() as conn:
+        count = conn.execute(
+            text("SELECT COUNT(*) FROM usuarios WHERE email = :e"), {"e": email}
+        ).scalar()
+    assert count == 0
+
+
 def test_a_link_works_only_once(client, mailer) -> None:
     email = _email("reuse")
     _register(client, email)

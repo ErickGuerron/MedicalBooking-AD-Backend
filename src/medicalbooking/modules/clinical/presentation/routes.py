@@ -6,7 +6,7 @@ import uuid
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -17,6 +17,7 @@ from medicalbooking.modules.clinical.application.clinical_profile import (
 )
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
 from medicalbooking.modules.clinical.application.ports import (
+    UNSET,
     FindingView,
     ProposalView,
     ReferenceView,
@@ -102,6 +103,9 @@ class ClinicalProfileRequest(BaseModel):
     altitud_residencia_m: int = Field(ge=0, le=8848)
     fumador: bool
     cigarrillos_dia: int | None = Field(default=None, ge=0, le=200)
+    # Omitted leaves the stored value alone; an explicit null clears it.
+    sexo: Literal["M", "F"] | None = None
+    fecha_nacimiento: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class ProposalReviewRequest(BaseModel):
@@ -110,6 +114,13 @@ class ProposalReviewRequest(BaseModel):
     decision: str = Field(max_length=20)
     motivo: str | None = Field(default=None, max_length=2000)
     conclusion_corregida: str | None = Field(default=None, max_length=4000)
+
+
+def _profile_json(profile: ClinicalProfile) -> dict[str, Any]:
+    data = asdict(profile)
+    born = profile.fecha_nacimiento
+    data["fecha_nacimiento"] = None if born is None else born.isoformat()
+    return data
 
 
 def _knowledge() -> KnowledgeService:
@@ -406,7 +417,7 @@ def get_shadow(order_id: uuid.UUID) -> tuple[Response, int]:
 @authenticated
 def read_clinical_profile() -> tuple[Response, int]:
     """The patient's own declared profile, so a client knows whether it is already complete."""
-    return jsonify(asdict(_patient_profile().read(g.actor))), 200
+    return jsonify(_profile_json(_patient_profile().read(g.actor))), 200
 
 
 @clinical_bp.put("/me/perfil-clinico")
@@ -419,15 +430,14 @@ def save_clinical_profile() -> tuple[Response, int]:
         fumador=body.fumador,
         cigarrillos_dia=body.cigarrillos_dia,
     )
-    _patient_profile().save(g.actor, profile)
-    return (
-        jsonify(
-            altitud_residencia_m=body.altitud_residencia_m,
-            fumador=body.fumador,
-            cigarrillos_dia=body.cigarrillos_dia,
-        ),
-        200,
+    sent = body.model_fields_set
+    saved = _patient_profile().save(
+        g.actor,
+        profile,
+        sexo=body.sexo if "sexo" in sent else UNSET,
+        fecha_nacimiento=body.fecha_nacimiento if "fecha_nacimiento" in sent else UNSET,
     )
+    return jsonify(_profile_json(saved)), 200
 
 
 @clinical_bp.post("/lab/orders/<uuid:order_id>/sombra/snapshots")

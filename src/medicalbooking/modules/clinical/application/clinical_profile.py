@@ -1,18 +1,19 @@
 """Patient clinical profile for the WHO 2024 adjustments (feature doc S12).
 
-The patient declares their own altitude of residence and smoking status. Only that patient can
-write it; a denial is audited before it is refused. The values are self-reported and may be unknown.
+The patient declares their own altitude of residence, smoking status, sex and birth date. Only that
+patient can write it; a denial is audited before it is refused. The values are self-reported.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
-from medicalbooking.modules.clinical.application.ports import ClinicalStore
+from medicalbooking.modules.clinical.application.ports import UNSET, ClinicalStore, Unset
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
+from medicalbooking.shared.domain.demographics import parse_birth_date, validate_sex
 from medicalbooking.shared.domain.errors import Forbidden, NotFound, ValidationFailed
 
 PERM_EDIT = "pacientes.editar_propio"
@@ -27,6 +28,8 @@ class ClinicalProfile:
     altitud_residencia_m: int | None
     fumador: bool | None
     cigarrillos_dia: int | None
+    sexo: str | None = None
+    fecha_nacimiento: date | None = None
 
 
 class PatientProfileService:
@@ -34,20 +37,40 @@ class PatientProfileService:
         self._store = store
         self._clock = clock
 
-    def save(self, actor: AccessProfile, profile: ClinicalProfile) -> None:
+    def save(
+        self,
+        actor: AccessProfile,
+        profile: ClinicalProfile,
+        sexo: str | None | Unset = UNSET,
+        fecha_nacimiento: str | None | Unset = UNSET,
+    ) -> ClinicalProfile:
+        """Store the profile and return what is now stored.
+
+        Sex and birth date (ISO text) are optional: UNSET leaves the stored value, None clears it.
+        """
         if PERM_EDIT not in actor.permissions:
             self._audit(actor, None, "DENEGADO")
             raise Forbidden(_FORBIDDEN)
         _validate(profile)
+        if isinstance(sexo, str):
+            validate_sex(sexo)
+        born: date | None | Unset = UNSET
+        if isinstance(fecha_nacimiento, str):
+            born = parse_birth_date(fecha_nacimiento, self._clock().date())
+        elif fecha_nacimiento is None:
+            born = None
         paciente_id = self._store.save_patient_clinical_profile(
             actor.user_id,
             profile.altitud_residencia_m,
             profile.fumador,
             profile.cigarrillos_dia,
+            sexo,
+            born,
         )
         if paciente_id is None:
             raise NotFound("No patient profile for this user")
         self._audit(actor, paciente_id, "OK")
+        return self.read(actor)
 
     def read(self, actor: AccessProfile) -> ClinicalProfile:
         """The patient's own declared profile; fields stay None until they declare them."""

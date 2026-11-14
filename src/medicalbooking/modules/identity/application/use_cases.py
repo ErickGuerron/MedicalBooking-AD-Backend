@@ -26,6 +26,7 @@ from medicalbooking.modules.identity.domain.policies import (
     is_locked,
     validate_page,
 )
+from medicalbooking.shared.domain.demographics import parse_birth_date, validate_sex
 from medicalbooking.shared.domain.errors import (
     Conflict,
     Forbidden,
@@ -82,6 +83,8 @@ class IdentityService:
         password: str,
         first_name: str,
         last_name: str,
+        sex: str | None = None,
+        birth_date: str | None = None,
     ) -> str:
         """Create an inactive patient and send an activation link.
 
@@ -92,6 +95,11 @@ class IdentityService:
         normalized = _normalize_email(email)
         if len(password) < MIN_PASSWORD_LENGTH:
             raise ValidationFailed(f"Password must have at least {MIN_PASSWORD_LENGTH} characters")
+        # Invalid demographics are a 422 about the request itself, never about the email.
+        parsed_sex = None if sex is None else validate_sex(sex)
+        parsed_birth = (
+            None if birth_date is None else parse_birth_date(birth_date, self._clock().date())
+        )
         password_hash = self._hasher.hash(password)
         token = secrets.token_urlsafe(32)
         new_user = NewUser(
@@ -102,6 +110,8 @@ class IdentityService:
             password_hash=password_hash,
             roles=(PATIENT_ROLE,),
             status=INACTIVE,
+            sex=parsed_sex,
+            birth_date=parsed_birth,
         )
         try:
             self._directory.create_pending_patient(

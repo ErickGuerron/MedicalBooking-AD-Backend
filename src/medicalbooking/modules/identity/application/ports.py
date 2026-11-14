@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 
@@ -51,6 +51,9 @@ class NewUser:
     status: str = "ACTIVO"
     # Set only for a MEDICO: the repository then writes the clinician's profile (medicos) too.
     professional_registration: str | None = None
+    # Optional demographics of a PACIENTE, stored on the patient row created with the account.
+    sex: str | None = None
+    birth_date: date | None = None
 
 
 class MailDeliveryError(Exception):
