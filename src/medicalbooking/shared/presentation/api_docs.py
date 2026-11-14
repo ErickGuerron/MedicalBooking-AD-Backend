@@ -28,6 +28,11 @@ _PROBLEM_SCHEMA: dict[str, Any] = {
         "status": {"type": "integer"},
         "detail": {"type": "string"},
         "correlation_id": {"type": "string", "format": "uuid"},
+        "code": {
+            "type": "string",
+            "description": "Stable reason code, present only when the refusal defines one.",
+            "example": "PATIENT_NOT_AVAILABLE",
+        },
     },
 }
 
