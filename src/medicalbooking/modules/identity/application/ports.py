@@ -54,6 +54,10 @@ class NewUser:
     # Optional demographics of a PACIENTE, stored on the patient row created with the account.
     sex: str | None = None
     birth_date: date | None = None
+    # Patients: the identity document (required at self-registration) and the optional phone.
+    document_type: str | None = None
+    document_number: str | None = None
+    phone: str | None = None
 
 
 class MailDeliveryError(Exception):
@@ -67,6 +71,8 @@ class ActivationMailer(Protocol):
 
 
 class UserDirectory(Protocol):
+    def document_taken(self, document_type: str, document_number: str) -> bool: ...
+
     def create_pending_patient(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
         """Create an INACTIVO patient and its verification token in one transaction.
 

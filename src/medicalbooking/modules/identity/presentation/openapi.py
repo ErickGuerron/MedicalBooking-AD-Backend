@@ -146,7 +146,8 @@ def identity_fragment() -> dict[str, Any]:
                     "requestBody": _json_body("RegisterRequest"),
                     "responses": {
                         "202": _json_response("Request accepted", "RegistrationAccepted"),
-                        "422": _problem("Invalid request body or weak password"),
+                        "409": _problem("The identity document is already registered"),
+                        "422": _problem("Invalid request body, weak password or document"),
                     },
                 }
             },

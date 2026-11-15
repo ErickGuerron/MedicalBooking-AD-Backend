@@ -228,6 +228,17 @@ class SqlUserDirectory:
             for row in rows
         ]
 
+    def document_taken(self, document_type: str, document_number: str) -> bool:
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text(
+                    "SELECT 1 FROM pacientes "
+                    "WHERE tipo_documento = :tipo AND numero_documento = :numero"
+                ),
+                {"tipo": document_type, "numero": document_number},
+            ).first()
+        return found is not None
+
     def create_pending_patient(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
         self._create(new_user, verification=(token_hash, valid_hours))
 
@@ -271,8 +282,9 @@ class SqlUserDirectory:
                 conn.execute(
                     text(
                         "INSERT INTO usuarios "
-                        "(id, email, nombre, apellido, estado, creado_en, actualizado_en) "
-                        "VALUES (:id, :email, :nombre, :apellido, :estado, "
+                        "(id, email, nombre, apellido, estado, telefono, "
+                        "creado_en, actualizado_en) "
+                        "VALUES (:id, :email, :nombre, :apellido, :estado, :telefono, "
                         "SYSUTCDATETIME(), SYSUTCDATETIME())"
                     ),
                     {
@@ -281,6 +293,7 @@ class SqlUserDirectory:
                         "nombre": new_user.first_name,
                         "apellido": new_user.last_name,
                         "estado": new_user.status,
+                        "telefono": new_user.phone,
                     },
                 )
                 conn.execute(
@@ -309,14 +322,18 @@ class SqlUserDirectory:
                         conn.execute(
                             text(
                                 "INSERT INTO pacientes "
-                                "(id, usuario_id, sexo_registrado, fecha_nacimiento, creado_en) "
-                                "VALUES (:id, :u, :sexo, :nacimiento, SYSUTCDATETIME())"
+                                "(id, usuario_id, sexo_registrado, fecha_nacimiento, "
+                                "tipo_documento, numero_documento, creado_en) "
+                                "VALUES (:id, :u, :sexo, :nacimiento, :tipo, :numero, "
+                                "SYSUTCDATETIME())"
                             ),
                             {
                                 "id": paciente_id,
                                 "u": new_user.user_id,
                                 "sexo": new_user.sex,
                                 "nacimiento": new_user.birth_date,
+                                "tipo": new_user.document_type,
+                                "numero": new_user.document_number,
                             },
                         )
                 if new_user.professional_registration is not None:
