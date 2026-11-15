@@ -27,6 +27,7 @@ class SqlInvoiceStore:
                 text(
                     "SELECT f.numero_factura, f.emitida_en, f.creada_en, g.pagado_en, "
                     "u.nombre, u.apellido, pa.tipo_documento, pa.numero_documento, "
+                    "u.telefono, u.email, "
                     "f.moneda, f.subtotal, f.impuestos, f.total "
                     "FROM pagos g JOIN facturas f ON f.id = g.factura_id "
                     "JOIN pacientes pa ON pa.id = f.paciente_id "
@@ -68,6 +69,8 @@ class SqlInvoiceStore:
             subtotal=Decimal(header.subtotal),
             impuestos=Decimal(header.impuestos),
             total=Decimal(header.total),
+            paciente_telefono=header.telefono or None,
+            paciente_email=header.email or None,
         )
 
 
