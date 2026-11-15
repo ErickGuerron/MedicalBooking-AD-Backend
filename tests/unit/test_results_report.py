@@ -157,6 +157,13 @@ def test_long_observations_are_wrapped_and_never_cut() -> None:
     assert _in_pdf(pdf, "palabra0 ")
 
 
+def test_the_document_shows_only_the_last_four_digits_of_the_cedula() -> None:
+    pdf = build_results_report(_order(1), [], parties=_parties(), generated_at=NOW)
+
+    assert _in_pdf(pdf, "CEDULA ******5678")
+    assert not _in_pdf(pdf, "1712345678")
+
+
 def test_report_time_is_ecuador_local_time_not_utc() -> None:
     pdf = build_results_report(_order(1), [], parties=_parties(), generated_at=NOW)
 
