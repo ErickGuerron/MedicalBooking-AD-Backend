@@ -16,6 +16,15 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
+import psycopg
+
+from medicalbooking.modules.replica.application.projection_consumer import apply_event
+from medicalbooking.modules.synchronization.application.ports import (
+    PermanentDeliveryError,
+    TransientDeliveryError,
+)
+from medicalbooking.modules.synchronization.domain.events import OutboxEvent
+
 _MARK = """
 INSERT INTO replica.eventos_procesados (evento_id, consumidor, tipo_agregado)
 VALUES (%s, %s, %s)
@@ -338,3 +347,39 @@ class SupabaseProjectionSink:
                     yield _Transaction(cursor)
         finally:
             connection.close()
+
+
+SUPABASE_CONSUMER = "replica-supabase"
+
+
+class SupabaseOutboxHandler:
+    """Outbox destination SUPABASE: projects each event straight from the dispatcher.
+
+    Same projection as the replica consumer, without a broker. Delivery order per aggregate
+    comes from the outbox claim rule, which is what Kafka's partition order gave before.
+    """
+
+    destination_code = "SUPABASE"
+
+    def __init__(self, connect: Callable[[], Any]) -> None:
+        self._sink = SupabaseProjectionSink(connect)
+
+    def handle(self, event: OutboxEvent) -> None:
+        envelope = {
+            "event_id": str(event.id),
+            "aggregate_type": event.aggregate_type,
+            "aggregate_id": str(event.aggregate_id),
+            "event_type": event.event_type,
+            "aggregate_version": event.aggregate_version,
+            "created_at": event.created_at.isoformat(),
+            "payload": event.payload,
+        }
+        try:
+            apply_event(envelope, self._sink, SUPABASE_CONSUMER)
+        except psycopg.Error as error:
+            # Error type only: driver messages may carry connection data.
+            raise TransientDeliveryError("supabase did not apply the event") from error
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise PermanentDeliveryError(
+                "event payload does not fit the Supabase projection"
+            ) from error

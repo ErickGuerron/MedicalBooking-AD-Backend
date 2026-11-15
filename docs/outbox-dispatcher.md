@@ -43,8 +43,10 @@ handler call, successful or not. `ultimo_error` stores the exception class name 
 
 ## Destinations without a handler
 
-`NOTIFICACIONES` is wired to the notification handler. `SUPABASE` and `MONGODB` have rows materialized,
-but no handler is registered until E8. Their rows stay PENDIENTE with `intentos = 0`.
+`NOTIFICACIONES` is wired to the notification handler. `MONGODB` and `SUPABASE` are wired directly
+from the dispatcher when their connection is configured (`MONGODB_PROJECTION_URI`,
+`SUPABASE_WRITER_DATABASE_URL`). Without a connection, their rows stay PENDIENTE with `intentos = 0`.
+`KAFKA` is wired only when `KAFKA_BOOTSTRAP_SERVERS` is set; it is not on the default path.
 `build_handlers` in `workers/outbox_dispatcher.py` is the only place to register a handler.
 
 ## Guarantees and limits
