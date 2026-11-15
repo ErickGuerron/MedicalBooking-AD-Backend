@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 TRACKED_AGGREGATE_TYPES: frozenset[str] = frozenset({"usuario", "cita"})
 DELETED_EVENT_TYPES: frozenset[str] = frozenset({"usuario.eliminado", "cita.eliminada"})
+# The delete event that announces a hard delete of each tracked aggregate type.
+TOMBSTONE_EVENT_TYPES: dict[str, str] = {"usuario": "usuario.eliminado", "cita": "cita.eliminada"}
 
 REASON_MISSING = "missing"
 REASON_PRESENT_AFTER_DELETE = "present_after_delete"
