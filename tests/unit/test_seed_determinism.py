@@ -90,8 +90,12 @@ def test_profile_is_the_same_for_the_same_seed(seed) -> None:
         taken: set[str] = set()
         return [seed.patient_profile(fake, sex, taken) for sex in ("M", "F", "M")]
 
-    assert run(20261113) == run(20261113)
-    assert run(20261113) != run(1)
+    first_run = run(20261113)
+    second_run = run(20261113)
+    other_seed_run = run(1)
+
+    assert first_run == second_run
+    assert first_run != other_seed_run
 
 
 def test_profile_values_follow_the_clinical_rules(seed) -> None:
