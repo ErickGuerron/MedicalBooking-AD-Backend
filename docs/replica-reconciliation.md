@@ -16,7 +16,7 @@ Module: `medicalbooking.workers.reconcile_replicas`.
   delete (`usuario.eliminado`, `cita.eliminada`), in which case it must be absent.
 - **Destinations**:
   - MongoDB check: destination `MONGODB`, compared by `_id`.
-  - Supabase check: destination `KAFKA`, because Supabase is fed through the Kafka topic. Compared by
+  - Supabase check: destination `SUPABASE`, the dispatcher's direct handler for Supabase. Compared by
     `id` as lower-case text.
 - **Mismatch**: a present-expected aggregate that is missing, or an absent-expected aggregate that
   still exists.

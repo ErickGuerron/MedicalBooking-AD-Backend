@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
+import psycopg
 from pymongo import MongoClient
 from pymongo.database import Database
 from sqlalchemy import Engine
@@ -26,6 +29,7 @@ from medicalbooking.config import Settings
 from medicalbooking.modules.notifications.application.handler import NotificationOutboxHandler
 from medicalbooking.modules.notifications.infrastructure.repositories import SqlNotificationStore
 from medicalbooking.modules.replica.infrastructure.mongo_projection import MongoOutboxHandler
+from medicalbooking.modules.replica.infrastructure.supabase_projection import SupabaseOutboxHandler
 from medicalbooking.modules.synchronization.application.dispatch_service import (
     OutboxDispatchService,
 )
@@ -45,11 +49,12 @@ def build_handlers(
     kafka_bootstrap: str | None = None,
     kafka_topic: str = "medicalbooking.events",
     mongo_database: Database | None = None,
+    supabase_connect: Callable[[], Any] | None = None,
 ) -> list[OutboxHandler]:
     """Destination handlers wired into the dispatcher, one per ready destination.
 
-    The KAFKA destination is wired only when a broker is configured, and MONGODB only when a
-    projection database is given. Without one, its delivery rows stay PENDIENTE.
+    The KAFKA destination is wired only when a broker is configured. MONGODB and SUPABASE are
+    wired only when their connection is given. Without one, its delivery rows stay PENDIENTE.
     """
     handlers: list[OutboxHandler] = [
         NotificationOutboxHandler(
@@ -63,6 +68,8 @@ def build_handlers(
         )
     if mongo_database is not None:
         handlers.append(MongoOutboxHandler(mongo_database))
+    if supabase_connect is not None:
+        handlers.append(SupabaseOutboxHandler(supabase_connect))
     return handlers
 
 
@@ -73,6 +80,13 @@ def _mongo_projection_database(settings: Settings) -> Database | None:
         settings.mongodb_projection_uri.get_secret_value(), serverSelectionTimeoutMS=5000
     )
     return client[settings.mongodb_database]
+
+
+def _supabase_connect(settings: Settings) -> Callable[[], Any] | None:
+    if settings.supabase_writer_database_url is None:
+        return None
+    url = settings.supabase_writer_database_url.get_secret_value()
+    return lambda: psycopg.connect(url, connect_timeout=15)
 
 
 def run(service: OutboxDispatchService) -> int:
@@ -109,6 +123,7 @@ def main() -> int:
                 kafka_bootstrap=settings.kafka_bootstrap_servers,
                 kafka_topic=settings.kafka_topic,
                 mongo_database=_mongo_projection_database(settings),
+                supabase_connect=_supabase_connect(settings),
             ),
             clock=lambda: datetime.now(UTC),
         )

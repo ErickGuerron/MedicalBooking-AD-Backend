@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-DESTINATION_CODE = "KAFKA"
+DESTINATION_CODE = "SUPABASE"
 BATCH_SIZE = 500
 
 _PRESENT_QUERY: dict[str, str] = {
