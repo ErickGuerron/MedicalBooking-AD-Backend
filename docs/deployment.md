@@ -90,6 +90,24 @@ Then point the Azure Load Balancer backend pool at both VMs, port 80, with an HT
 probe on `/health/live`. HTTPS with a DuckDNS name and Let's Encrypt is a later step
 (E7); it is not configured yet.
 
+### Automatic release rollout
+
+`deploy/release-deploy.sh` follows only the newest `X.Y.Z` release on Docker Hub. Development
+tags (`develop`, `develop-<sha>`) are never deployed. Each run pulls the release, applies
+migrations once when `--migrate` is given (VM1 only, both VMs share the database), recreates
+`replica-a` then `replica-b` one at a time, waits for each to be healthy, and rolls every updated
+replica back to the running image if one fails. Migrations move forward only.
+
+```bash
+# VM1 (applies migrations):
+*/15 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm1/compose.yaml --migrate >> $HOME/logs/release-deploy.log 2>&1
+# VM2 (replicas only):
+*/15 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm2/compose.yaml >> $HOME/logs/release-deploy.log 2>&1
+```
+
+State lives in `~/.local/state/medilo` (`current` names the image the VM serves). The tests in
+`tests/deploy/` run the script against stub `docker` and `curl`, so they never touch a VM.
+
 ## Local verification
 
 ```powershell
