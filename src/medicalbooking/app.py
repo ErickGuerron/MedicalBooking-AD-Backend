@@ -74,6 +74,11 @@ from medicalbooking.modules.treatments.presentation.openapi import treatments_fr
 from medicalbooking.modules.treatments.presentation.routes import treatments_bp
 from medicalbooking.shared.domain.errors import AppError
 from medicalbooking.shared.infrastructure.database import create_database_engine
+from medicalbooking.shared.infrastructure.read_only import (
+    READ_ONLY_CODE,
+    is_database_unavailable,
+    read_only_detail,
+)
 from medicalbooking.shared.presentation.api_docs import register_api_docs
 from medicalbooking.shared.presentation.health import health_bp
 
@@ -310,6 +315,15 @@ def _register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(Exception)
     def _unexpected_error(error: Exception) -> tuple[Response, int]:
+        if is_database_unavailable(error):
+            # Log the exception type only: the driver message carries server and login details.
+            app.logger.error("database unavailable: %s", type(error).__name__)
+            return _problem(
+                503,
+                "Read-only mode",
+                read_only_detail(request.method),
+                READ_ONLY_CODE,
+            )
         app.logger.exception("unhandled error", extra={"correlation_id": g.get("correlation_id")})
         return _problem(500, "Internal Server Error", "Unexpected error. Use correlation_id.")
 

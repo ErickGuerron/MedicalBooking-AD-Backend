@@ -73,9 +73,36 @@ def test_a_database_driver_error_is_transient_and_hides_its_message(monkeypatch)
     assert "hunter2" not in str(raised.value)
 
 
-@pytest.mark.parametrize("error", [KeyError("estado"), TypeError("x"), ValueError("x")])
+@pytest.mark.parametrize("error", [TypeError("x"), ValueError("x"), AttributeError("x")])
 def test_a_payload_that_does_not_fit_the_projection_is_permanent(monkeypatch, error) -> None:
     _record_apply(monkeypatch, error=error)
 
     with pytest.raises(PermanentDeliveryError):
         SupabaseOutboxHandler(connect=lambda: None).handle(EVENT)
+
+
+def test_a_missing_field_is_skipped_with_a_warning_and_no_error(monkeypatch, caplog) -> None:
+    _record_apply(monkeypatch, error=KeyError("estado"))
+
+    with caplog.at_level("WARNING"):
+        SupabaseOutboxHandler(connect=lambda: None).handle(EVENT)
+
+    assert "orden_laboratorio.creada" in caplog.text
+    assert "estado" in caplog.text
+
+
+def test_an_empty_required_field_is_skipped_with_a_warning_and_no_error(
+    monkeypatch, caplog
+) -> None:
+    _record_apply(
+        monkeypatch,
+        error=psycopg.errors.NotNullViolation(
+            'null value in column "estado" of relation "citas" violates not-null constraint'
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        SupabaseOutboxHandler(connect=lambda: None).handle(EVENT)
+
+    assert "orden_laboratorio.creada" in caplog.text
+    assert "relation" not in caplog.text

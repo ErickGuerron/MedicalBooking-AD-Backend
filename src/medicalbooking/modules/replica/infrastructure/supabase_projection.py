@@ -12,6 +12,7 @@ delete. The replica's deletes are plain DELETE statements, and a missing row is 
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -24,6 +25,8 @@ from medicalbooking.modules.synchronization.application.ports import (
     TransientDeliveryError,
 )
 from medicalbooking.modules.synchronization.domain.events import OutboxEvent
+
+logger = logging.getLogger(__name__)
 
 _MARK = """
 INSERT INTO replica.eventos_procesados (evento_id, consumidor, tipo_agregado)
@@ -271,10 +274,12 @@ class _Transaction:
 
     def upsert_cita(self, cita: dict[str, Any]) -> None:
         self._cur.execute(
-            "INSERT INTO replica.citas (id, paciente_id, servicio_id, estado, reservada_en, "
-            "confirmada_en, cancelada_en, motivo_cancelacion_codigo, motivo_cancelacion_texto, "
-            "inicio, fin) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "INSERT INTO replica.citas (id, paciente_id, servicio_id, medico_id, estado, "
+            "reservada_en, confirmada_en, cancelada_en, motivo_cancelacion_codigo, "
+            "motivo_cancelacion_texto, inicio, fin) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (id) DO UPDATE SET estado = excluded.estado, "
+            "medico_id = COALESCE(excluded.medico_id, replica.citas.medico_id), "
             "confirmada_en = excluded.confirmada_en, cancelada_en = excluded.cancelada_en, "
             "motivo_cancelacion_codigo = excluded.motivo_cancelacion_codigo, "
             "motivo_cancelacion_texto = excluded.motivo_cancelacion_texto, "
@@ -283,6 +288,9 @@ class _Transaction:
                 cita["id"],
                 cita["paciente_id"],
                 cita["servicio_id"],
+                # Events written before the doctor was projected carry no medico_id: keep the
+                # value the replica already has instead of erasing it.
+                cita.get("medico_id"),
                 cita["estado"],
                 cita["reservada_en"],
                 cita.get("confirmada_en"),
@@ -379,10 +387,22 @@ class SupabaseOutboxHandler:
         }
         try:
             apply_event(envelope, self._sink, SUPABASE_CONSUMER)
+        except psycopg.errors.NotNullViolation:
+            # A required field arrived empty. The event is skipped, not retried: a retry would
+            # fail the same way. The driver message is not logged (it names the column).
+            _log_skipped(event, "a required field is empty")
         except psycopg.Error as error:
             # Error type only: driver messages may carry connection data.
             raise TransientDeliveryError("supabase did not apply the event") from error
-        except (KeyError, TypeError, ValueError, AttributeError) as error:
+        except KeyError as error:
+            # A field the projection reads is missing from the payload. Skip the event so one
+            # incomplete message never stops the replica; the key name is safe to log.
+            _log_skipped(event, f"field {error.args[0]!r} is missing")
+        except (TypeError, ValueError, AttributeError) as error:
             raise PermanentDeliveryError(
                 "event payload does not fit the Supabase projection"
             ) from error
+
+
+def _log_skipped(event: OutboxEvent, reason: str) -> None:
+    logger.warning("supabase skipped an incomplete %s event: %s", event.event_type, reason)

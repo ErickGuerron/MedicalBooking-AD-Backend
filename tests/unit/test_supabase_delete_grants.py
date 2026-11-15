@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SUPABASE = ROOT / "migrations_supabase"
 SQL_DIR = SUPABASE / "sql"
 SINK = ROOT / "src" / "medicalbooking" / "modules" / "replica" / "infrastructure"
-HEAD = "s0011_patient_orders_replica"
+HEAD = "s0012_read_only_screens"
 GRANT = re.compile(r"GRANT\s+(.*?)\s+ON\s+(.*?)\s+TO\s+(\w+)\s*;", re.DOTALL | re.IGNORECASE)
 
 
@@ -34,7 +34,7 @@ def _grants(sql: str) -> list[tuple[set[str], set[str], str]]:
     return grants
 
 
-def test_the_supabase_revision_chain_has_one_head_and_it_is_0011():
+def test_the_supabase_revision_chain_has_one_head_and_it_is_0012():
     heads = ScriptDirectory(str(SUPABASE)).get_heads()
 
     assert heads == [HEAD]
