@@ -85,8 +85,9 @@ def emit_cita_snapshot(conn: Connection, cita_id: str, moment: datetime) -> None
         text(
             "SELECT c.id, c.paciente_id, c.servicio_id, c.estado, c.reservada_en, "
             "c.confirmada_en, c.cancelada_en, c.motivo_cancelacion_codigo, "
-            "c.motivo_cancelacion_texto, h.inicio_utc, h.fin_utc "
+            "c.motivo_cancelacion_texto, h.inicio_utc, h.fin_utc, a.medico_id "
             "FROM citas AS c JOIN horarios_disponibles AS h ON h.id = c.horario_id "
+            "JOIN agendas AS a ON a.id = h.agenda_id "
             "WHERE c.id = :c"
         ),
         {"c": cita_id},
@@ -102,6 +103,7 @@ def emit_cita_snapshot(conn: Connection, cita_id: str, moment: datetime) -> None
                 "id": appointment_id,
                 "paciente_id": _canonical(row.paciente_id),
                 "servicio_id": _canonical(row.servicio_id),
+                "medico_id": _canonical(row.medico_id),
                 "estado": row.estado,
                 "reservada_en": row.reservada_en.isoformat(),
                 "confirmada_en": row.confirmada_en.isoformat() if row.confirmada_en else None,

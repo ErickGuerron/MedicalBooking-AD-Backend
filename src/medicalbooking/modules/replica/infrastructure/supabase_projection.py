@@ -274,10 +274,12 @@ class _Transaction:
 
     def upsert_cita(self, cita: dict[str, Any]) -> None:
         self._cur.execute(
-            "INSERT INTO replica.citas (id, paciente_id, servicio_id, estado, reservada_en, "
-            "confirmada_en, cancelada_en, motivo_cancelacion_codigo, motivo_cancelacion_texto, "
-            "inicio, fin) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "INSERT INTO replica.citas (id, paciente_id, servicio_id, medico_id, estado, "
+            "reservada_en, confirmada_en, cancelada_en, motivo_cancelacion_codigo, "
+            "motivo_cancelacion_texto, inicio, fin) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (id) DO UPDATE SET estado = excluded.estado, "
+            "medico_id = COALESCE(excluded.medico_id, replica.citas.medico_id), "
             "confirmada_en = excluded.confirmada_en, cancelada_en = excluded.cancelada_en, "
             "motivo_cancelacion_codigo = excluded.motivo_cancelacion_codigo, "
             "motivo_cancelacion_texto = excluded.motivo_cancelacion_texto, "
@@ -286,6 +288,9 @@ class _Transaction:
                 cita["id"],
                 cita["paciente_id"],
                 cita["servicio_id"],
+                # Events written before the doctor was projected carry no medico_id: keep the
+                # value the replica already has instead of erasing it.
+                cita.get("medico_id"),
                 cita["estado"],
                 cita["reservada_en"],
                 cita.get("confirmada_en"),
