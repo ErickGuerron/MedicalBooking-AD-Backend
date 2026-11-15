@@ -109,6 +109,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.payments_webhook"] = _build_payments_webhook(settings, engine)
     app.extensions["medicalbooking.billing"] = build_billing(settings, engine)
     app.extensions["medicalbooking.payment_methods"] = _build_payment_methods(settings, engine)
+    # Signs the invoice download links in payment emails; the same key the worker uses.
+    app.extensions["medicalbooking.invoice_link_key"] = (
+        settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None
+    )
 
     app.register_blueprint(health_bp)
     app.register_blueprint(payments_bp)

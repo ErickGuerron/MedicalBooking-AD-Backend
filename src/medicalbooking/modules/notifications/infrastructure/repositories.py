@@ -32,6 +32,11 @@ _CONTACT_SQL = {
         "SELECT u.id, u.email FROM ordenes_laboratorio o JOIN pacientes p ON p.id = o.paciente_id "
         "JOIN usuarios u ON u.id = p.usuario_id WHERE o.id = :id"
     ),
+    "pago": (
+        "SELECT u.id, u.email FROM pagos g JOIN facturas f ON f.id = g.factura_id "
+        "JOIN pacientes p ON p.id = f.paciente_id JOIN usuarios u ON u.id = p.usuario_id "
+        "WHERE g.id = :id"
+    ),
 }
 
 
@@ -65,6 +70,20 @@ class SqlNotificationStore:
         if row is None:
             return None
         return f"{row.nombre} {row.apellido}".strip(), row.inicio_utc
+
+    def paid_invoice(self, pago_id: str) -> tuple[str, str] | None:
+        """The invoice number and its total with currency, for the payment confirmation."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT f.numero_factura, f.total, f.moneda FROM pagos g "
+                    "JOIN facturas f ON f.id = g.factura_id WHERE g.id = :p"
+                ),
+                {"p": pago_id},
+            ).first()
+        if row is None or not row.numero_factura:
+            return None
+        return row.numero_factura, f"{row.total:.2f} {row.moneda.strip()}"
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine

@@ -44,6 +44,10 @@ Clients (Flutter, Angular)
   all capabilities dropped, `no-new-privileges`, non-root user.
 - **Replica identity.** `REPLICA_ID` is echoed in `X-Replica-Id` on every response.
   This shows the distribution in tests and in the evidence required by the spec.
+- **Machine and API instance.** `GET /health/live` returns
+  `{"status": "ok", "machine": ..., "api": ...}`. `machine` is `MACHINE_NAME` (one value per VM
+  `.env`, for example `MediloVM1`), or the local machine name when unset. `api` is `REPLICA_ID`
+  (`api-1`..`api-4` in the Compose files). Together they show which VM and which replica answered.
 - **Secrets.** Each VM has its own `.env` (git-ignored). Only `MEDICALBOOKING_IMAGE`
   is required in the Compose files.
 

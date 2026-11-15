@@ -30,10 +30,16 @@ from medicalbooking.modules.notifications.application.ports import (
     EmailAttachment,
     NotificationError,
 )
-from medicalbooking.modules.notifications.domain.templates import RESULTADO_LABORATORIO
+from medicalbooking.modules.notifications.domain.templates import (
+    PAGO_COMPLETADO,
+    RESULTADO_LABORATORIO,
+)
 from medicalbooking.modules.notifications.infrastructure.brevo import BrevoNotificationSender
 from medicalbooking.modules.notifications.infrastructure.email_render import content_for
 from medicalbooking.modules.notifications.infrastructure.repositories import SqlNotificationStore
+from medicalbooking.modules.payments.application.invoice_report import build_invoice_pdf
+from medicalbooking.modules.payments.domain.invoice_links import invoice_download_url
+from medicalbooking.modules.payments.infrastructure.invoice_store import SqlInvoiceStore
 from medicalbooking.shared.infrastructure.database import create_database_engine
 
 logger = logging.getLogger(__name__)
@@ -81,7 +87,28 @@ def main() -> int:
         lab_store = SqlLabStore(engine)
         documents = LocalDocumentStorage(Path(settings.lab_documents_dir))
 
+        invoices = SqlInvoiceStore(engine)
+        signing_key = (
+            settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None
+        )
+
+        def invoice_link(pago_id: str) -> str:
+            # Without the key no signed link can be made, so the payment email is not sent.
+            if signing_key is None:
+                raise NotificationError("INVOICE_LINK_NOT_CONFIGURED")
+            return invoice_download_url(
+                settings.app_public_url, signing_key, pago_id, datetime.now(UTC)
+            )
+
         def attachments_for(due: DueNotification) -> tuple[EmailAttachment, ...]:
+            if due.tipo == PAGO_COMPLETADO and due.aggregate_id is not None:
+                # The invoice is built now from the paid payment and never stored.
+                invoice = invoices.paid_invoice_for_payment(due.aggregate_id)
+                if invoice is None:
+                    raise NotificationError("INVOICE_NOT_FOUND")
+                name = f"factura-{invoice.numero_factura}.pdf"
+                pdf = build_invoice_pdf(invoice)
+                return (EmailAttachment(name=name, content_type="application/pdf", data=pdf),)
             # The results go out as the order's PDF, built now from the completed order.
             if due.tipo != RESULTADO_LABORATORIO or due.aggregate_id is None:
                 return ()
@@ -114,7 +141,12 @@ def main() -> int:
             ),
             clock=lambda: datetime.now(UTC),
             attachments_for=attachments_for,
-            content_for=lambda due: content_for(due, notifications, settings.email_assets_base_url),
+            content_for=lambda due: content_for(
+                due,
+                notifications,
+                settings.email_assets_base_url,
+                invoice_download_url=lambda pago_id: invoice_link(pago_id),
+            ),
         )
         return run(dispatcher)
     finally:

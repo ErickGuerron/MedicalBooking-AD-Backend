@@ -158,3 +158,32 @@ def test_clinical_payload_never_reaches_the_notification_row() -> None:
     row = next(iter(repository.rows.values()))
     assert "Hemoglobina" not in repr(row)
     assert "7.2" not in repr(row)
+
+
+PAYMENT_ID = UUID("55555555-5555-5555-5555-555555555555")
+
+
+def test_confirmed_payment_creates_a_payment_notification() -> None:
+    repository = _Repository()
+
+    _handler(repository).handle(
+        _event(
+            "pago.actualizado",
+            "pago",
+            PAYMENT_ID,
+            payload={"pago": {"estado": "CONFIRMADO"}},
+        )
+    )
+
+    assert [row.tipo for row in repository.rows.values()] == ["PAGO_COMPLETADO"]
+
+
+@pytest.mark.parametrize("estado", ["PENDIENTE", "RECHAZADO", "CANCELADO"])
+def test_payment_states_other_than_confirmed_create_nothing(estado: str) -> None:
+    repository = _Repository()
+
+    _handler(repository).handle(
+        _event("pago.actualizado", "pago", PAYMENT_ID, payload={"pago": {"estado": estado}})
+    )
+
+    assert repository.rows == {}

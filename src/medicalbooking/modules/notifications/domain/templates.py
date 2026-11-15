@@ -1,8 +1,8 @@
 # ruff: noqa: E501  (the email markup and copy are long on purpose; they are static strings)
 """Patient-facing templates.
 
-Appointment mails stay neutral: they say something changed and where to look. The laboratory
-results mail attaches the completed results as a PDF, built at send time and never stored.
+Appointment and payment mails are designed and personalised (name, visit, invoice). The
+laboratory results mail and the invoice attach their PDF, built at send time and never stored.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ CITA_RESERVADA = "CITA_RESERVADA"
 CITA_CANCELADA = "CITA_CANCELADA"
 RESULTADO_LABORATORIO = "RESULTADO_LABORATORIO"
 CITA_RECORDATORIO = "CITA_RECORDATORIO"
+PAGO_COMPLETADO = "PAGO_COMPLETADO"
 
 
 @dataclass(frozen=True)
@@ -65,17 +66,17 @@ RESULTADO_HTML = """<!doctype html>
 
 TEMPLATES: dict[str, Template] = {
     CITA_RESERVADA: Template(
-        subject="Tienes una actualización en tu cita",
+        subject="Tu cita en Medilo está reservada",
         text=(
             "Hola.\n\n"
             "Tienes una actualización en tu cita. Inicia sesión en Medilo para revisarla.\n"
         ),
     ),
     CITA_CANCELADA: Template(
-        subject="Tienes una actualización en tu cita",
+        subject="Tu cita en Medilo fue cancelada",
         text=(
             "Hola.\n\n"
-            "Tienes una actualización en tu cita. Inicia sesión en Medilo para revisarla.\n"
+            "Te avisamos que una de tus citas fue cancelada. Entra a Medilo para ver los detalles.\n"
         ),
     ),
     RESULTADO_LABORATORIO: Template(
@@ -92,6 +93,14 @@ TEMPLATES: dict[str, Template] = {
         subject="Hoy tienes una cita en Medilo",
         text="Hola.\n\nHoy tienes una cita médica. Inicia sesión en Medilo para revisarla.\n",
     ),
+    PAGO_COMPLETADO: Template(
+        subject="Recibimos tu pago en Medilo",
+        text=(
+            "Hola.\n\n"
+            "Recibimos tu pago. Te enviamos tu factura adjunta en PDF.\n\n"
+            "Puedes revisarla también en Medilo, en la sección de pagos de tu portal.\n"
+        ),
+    ),
 }
 
 # Only these (aggregate type, event type) pairs reach the patient. Everything else is ignored.
@@ -100,6 +109,7 @@ _TEMPLATE_BY_EVENT: dict[tuple[str, str], str] = {
     ("cita", "cita.cancelada"): CITA_CANCELADA,
     ("orden_laboratorio", "orden_laboratorio.confirmada"): RESULTADO_LABORATORIO,
     ("cita", "cita.recordatorio"): CITA_RECORDATORIO,
+    ("pago", "pago.actualizado"): PAGO_COMPLETADO,
 }
 
 

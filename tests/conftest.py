@@ -30,7 +30,9 @@ if not re.fullmatch(r"[A-Za-z0-9_]{1,100}", TEST_DATABASE):
 
 @pytest.fixture(scope="session")
 def test_settings() -> Settings:
-    return Settings(sqlserver_database=TEST_DATABASE)
+    # Never read the application .env here: it may point at a shared or cloud server. The suite
+    # drops and recreates TEST_DATABASE, so it always runs against the local SQL Server defaults.
+    return Settings(_env_file=None, sqlserver_database=TEST_DATABASE)
 
 
 def _master_engine(settings: Settings) -> Engine:
@@ -39,15 +41,19 @@ def _master_engine(settings: Settings) -> Engine:
 
 
 def _recreate_database(settings: Settings) -> None:
+    # One statement per execute: a multi-statement batch can return before its DROP has run
+    # (pyodbc stops at the first result), and the CREATE then fails with error 1801.
+    # Existence is read from sys.databases: DB_ID() misses databases on Azure SQL.
     engine = _master_engine(settings)
     with engine.connect() as conn:
-        conn.execute(
-            text(
-                f"IF DB_ID(N'{TEST_DATABASE}') IS NOT NULL BEGIN "
-                f"ALTER DATABASE [{TEST_DATABASE}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
-                f"DROP DATABASE [{TEST_DATABASE}]; END"
+        exists = conn.execute(
+            text("SELECT name FROM sys.databases WHERE name = :name"), {"name": TEST_DATABASE}
+        ).scalar()
+        if exists is not None:
+            conn.execute(
+                text(f"ALTER DATABASE [{TEST_DATABASE}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
             )
-        )
+            conn.execute(text(f"DROP DATABASE [{TEST_DATABASE}]"))
         conn.execute(text(f"CREATE DATABASE [{TEST_DATABASE}]"))
     engine.dispose()
 

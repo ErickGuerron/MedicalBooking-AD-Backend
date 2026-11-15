@@ -20,6 +20,9 @@ const templates = [
   { source: path.join(here, "activation", "activation.mjml"), output: path.join(outputDir, "activation.html") },
   { source: path.join(here, "results", "resultados.mjml"), output: path.join(notificationsDir, "resultados.html") },
   { source: path.join(here, "reminder", "recordatorio-cita.mjml"), output: path.join(notificationsDir, "recordatorio_cita.html") },
+  { source: path.join(here, "cancelada", "cita-cancelada.mjml"), output: path.join(notificationsDir, "cita_cancelada.html") },
+  { source: path.join(here, "reservada", "cita-reservada.mjml"), output: path.join(notificationsDir, "cita_reservada.html") },
+  { source: path.join(here, "pago", "pago-completado.mjml"), output: path.join(notificationsDir, "pago_completado.html") },
 ];
 
 const check = process.argv.includes("--check");
