@@ -1,8 +1,8 @@
 # ruff: noqa: E501  (the email markup and copy are long on purpose; they are static strings)
 """Patient-facing templates.
 
-Appointment mails stay neutral: they say something changed and where to look. The laboratory
-results mail attaches the completed results as a PDF, built at send time and never stored.
+Appointment and payment mails are designed and personalised (name, visit, invoice). The
+laboratory results mail and the invoice attach their PDF, built at send time and never stored.
 """
 
 from __future__ import annotations
@@ -73,10 +73,10 @@ TEMPLATES: dict[str, Template] = {
         ),
     ),
     CITA_CANCELADA: Template(
-        subject="Tienes una actualización en tu cita",
+        subject="Tu cita en Medilo fue cancelada",
         text=(
             "Hola.\n\n"
-            "Tienes una actualización en tu cita. Inicia sesión en Medilo para revisarla.\n"
+            "Te avisamos que una de tus citas fue cancelada. Entra a Medilo para ver los detalles.\n"
         ),
     ),
     RESULTADO_LABORATORIO: Template(

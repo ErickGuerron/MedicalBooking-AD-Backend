@@ -19,6 +19,7 @@ from medicalbooking.modules.notifications.application.ports import (
     NotificationError,
 )
 from medicalbooking.modules.notifications.domain.templates import (
+    CITA_CANCELADA,
     CITA_RECORDATORIO,
     PAGO_COMPLETADO,
     RESULTADO_LABORATORIO,
@@ -78,6 +79,61 @@ def reminder_content(first_name: str, medico: str, hora: str, asset_base_url: st
     )
 
 
+def cancellation_content(
+    first_name: str, medico: str, fecha: str, hora: str, asset_base_url: str
+) -> EmailContent:
+    """Appointment cancelled: names the visit so the patient knows exactly which one."""
+    name = html.escape(first_name)
+    doctor = html.escape(medico)
+    day = html.escape(fecha)
+    time_of_day = html.escape(hora)
+    base = html.escape(asset_base_url.rstrip("/"), quote=True)
+    html_body = (
+        '<!doctype html><html lang="es"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+        '<body style="margin:0;padding:0;background:#fff4ea;font-family:Arial,Helvetica,'
+        'sans-serif;color:#1f2937;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="background:#fff4ea;padding:24px 12px;"><tr><td align="center">'
+        '<table role="presentation" width="560" cellpadding="0" cellspacing="0" '
+        'style="max-width:560px;width:100%;background:#ffffff;border-radius:16px;'
+        'overflow:hidden;">'
+        '<tr><td style="background:#c2410c;padding:24px 28px;color:#ffffff;">'
+        '<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;'
+        'opacity:.9;">Medilo · Citas</div>'
+        '<div style="font-size:24px;font-weight:700;margin-top:6px;">Tu cita fue cancelada'
+        "</div></td></tr>"
+        '<tr><td style="padding:28px;">'
+        '<p style="margin:0 0 16px;font-size:16px;line-height:1.5;">Hola '
+        f"{name}.</p>"
+        '<p style="margin:0 0 20px;font-size:16px;line-height:1.5;">Te avisamos que '
+        "esta cita fue cancelada:</p>"
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="background:#fff4ea;border-radius:12px;"><tr><td style="padding:16px 18px;'
+        'font-size:15px;line-height:1.7;">'
+        f'<strong style="color:#9a3412;">Médico:</strong> {doctor}<br>'
+        f'<strong style="color:#9a3412;">Fecha:</strong> {day}<br>'
+        f'<strong style="color:#9a3412;">Hora:</strong> {time_of_day}'
+        "</td></tr></table>"
+        '<p style="margin:20px 0 0;font-size:14px;line-height:1.5;color:#475569;">Si quieres '
+        "agendar otra cita, entra a Medilo en cualquier momento.</p>"
+        f'<p style="margin:20px 0 0;"><a href="{base}" style="color:#c2410c;">Ir a Medilo</a></p>'
+        "</td></tr>"
+        '<tr><td style="padding:18px 28px;background:#f8fafc;font-size:12px;line-height:1.5;'
+        'color:#475569;">Medilo · Este mensaje es automatico, no lo respondas.</td></tr>'
+        "</table></td></tr></table></body></html>"
+    )
+    text_body = (
+        f"Hola {first_name}.\n\n"
+        "Te avisamos que esta cita fue cancelada:\n"
+        f"Médico: {medico}\n"
+        f"Fecha: {fecha}\n"
+        f"Hora: {hora}\n\n"
+        "Si quieres agendar otra cita, entra a Medilo en cualquier momento.\n"
+    )
+    return EmailContent(subject=TEMPLATES[CITA_CANCELADA].subject, text=text_body, html=html_body)
+
+
 def payment_content(
     first_name: str, invoice_number: str, total: str, asset_base_url: str
 ) -> EmailContent:
@@ -119,6 +175,19 @@ def content_for(
     first_name = store.patient_first_name(notification.destinatario) or _FALLBACK_NAME
     if notification.tipo == RESULTADO_LABORATORIO:
         return results_content(first_name, asset_base_url)
+    if notification.tipo == CITA_CANCELADA:
+        details = store.cita_reminder(notification.aggregate_id or "")
+        if details is None:
+            raise NotificationError("APPOINTMENT_NOT_FOUND")
+        medico, inicio_utc = details
+        local = inicio_utc + ECUADOR_OFFSET
+        return cancellation_content(
+            first_name,
+            medico,
+            local.strftime("%d/%m/%Y"),
+            local.strftime("%H:%M"),
+            asset_base_url,
+        )
     if notification.tipo == PAGO_COMPLETADO:
         receipt = store.paid_invoice(notification.aggregate_id or "")
         if receipt is None:
