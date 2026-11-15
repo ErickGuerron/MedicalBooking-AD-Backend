@@ -149,6 +149,32 @@ def laboratory_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/lab/orders/{order_id}/report.pdf": {
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "getLabResultsReport",
+                    "summary": "Download the results of an order as a PDF",
+                    "description": (
+                        "Readable by whoever may read the order's results: the patient, the "
+                        "ordering doctor and the laboratory. Served as an attachment."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path_param("order_id")],
+                    "responses": {
+                        "200": {
+                            "description": "Results report",
+                            "content": {
+                                "application/pdf": {
+                                    "schema": {"type": "string", "format": "binary"}
+                                }
+                            },
+                        },
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("The caller may not read this order"),
+                        "404": _problem("Order not found"),
+                    },
+                },
+            },
             "/api/v1/lab/orders/{order_id}/results": {
                 "post": {
                     "tags": ["Laboratory"],

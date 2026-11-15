@@ -1,0 +1,115 @@
+"""The results PDF: a valid file with the portal's content, whatever the number of results."""
+
+from __future__ import annotations
+
+import re
+from datetime import UTC, datetime
+
+from medicalbooking.modules.laboratory.application.ports import LabDetail, LabOrder, LabResult
+from medicalbooking.modules.laboratory.application.results_report import build_results_report
+
+ORDER_ID = "11111111-2222-3333-4444-555555555555"
+NOW = datetime(2026, 11, 14, 12, 0, tzinfo=UTC)
+
+
+def _order(details: int) -> LabOrder:
+    return LabOrder(
+        id=ORDER_ID,
+        paciente_id="p",
+        paciente_user_id="u",
+        medico_id="m",
+        medico_user_id="mu",
+        prioridad="NORMAL",
+        estado="COMPLETADA",
+        observaciones="ayuno",
+        details=tuple(
+            LabDetail(id=f"d{i}", tipo_prueba_id="t", estado="COMPLETADO") for i in range(details)
+        ),
+    )
+
+
+def _result(detail: str, name: str, **fields) -> LabResult:
+    base = dict(
+        id=f"r-{name}",
+        detalle_id=detail,
+        nombre_analito=name,
+        valor_texto=None,
+        valor_numerico=10.4,
+        unidad="g/dL",
+        referencia_min=12.0,
+        referencia_max=16.0,
+        interpretacion="BAJO",
+    )
+    base.update(fields)
+    return LabResult(**base)
+
+
+def _text(pdf: bytes) -> str:
+    return pdf.decode("latin-1")
+
+
+def _in_pdf(pdf: bytes, expected: str) -> bool:
+    """The content is WinAnsi bytes, so the expected text is looked up in the same encoding."""
+    return expected.encode("cp1252", errors="replace").decode("latin-1") in _text(pdf)
+
+
+def test_report_is_a_valid_pdf_with_its_xref_offsets(  # the file must open in any reader
+) -> None:
+    pdf = build_results_report(_order(1), [_result("d0", "Hemoglobina")], generated_at=NOW)
+
+    text = _text(pdf)
+    assert pdf.startswith(b"%PDF-1.4")
+    assert pdf.rstrip().endswith(b"%%EOF")
+    xref_at = int(re.search(r"startxref\n(\d+)\n", text).group(1))
+    assert text[xref_at : xref_at + 4] == "xref"
+    entries = re.findall(r"(\d{10}) 00000 n", text)
+    for number, offset in enumerate(entries, start=1):
+        assert text[int(offset) :].startswith(f"{number} 0 obj")
+
+
+def test_report_shows_the_order_results_references_and_classification() -> None:
+    pdf = build_results_report(
+        _order(1),
+        [
+            _result("d0", "Hemoglobina"),
+            _result(
+                "d0",
+                "Ferritina",
+                valor_numerico=None,
+                valor_texto="normal",
+                referencia_min=None,
+                referencia_max=None,
+                interpretacion="NO_EVALUABLE",
+            ),
+        ],
+        generated_at=NOW,
+    )
+
+    for expected in (
+        "Resultados de laboratorio",
+        "Prueba 1",
+        "Hemoglobina",
+        "10,4 g/dL",
+        "12 – 16 g/dL",
+        "Bajo",
+        "Ferritina",
+        "normal",
+        "No evaluable",
+    ):
+        assert _in_pdf(pdf, expected), expected
+
+
+def test_results_are_grouped_by_test_and_pages_are_counted() -> None:
+    results = [_result(f"d{i}", f"Analito {i}-{n}") for i in range(3) for n in range(12)]
+
+    text = _text(build_results_report(_order(3), results, generated_at=NOW))
+
+    assert "Prueba 1" in text and "Prueba 3" in text
+    assert "/Count 2" in text  # 36 rows do not fit one page
+    assert "Página 1 de 2" in text
+
+
+def test_order_without_results_still_gives_a_readable_report() -> None:
+    assert _in_pdf(
+        build_results_report(_order(1), [], generated_at=NOW), "Todavía no hay resultados validados"
+    )
