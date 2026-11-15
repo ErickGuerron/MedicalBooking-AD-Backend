@@ -148,6 +148,9 @@ def _result_json(result: LabResult) -> dict[str, Any]:
         "valor_texto": result.valor_texto,
         "valor_numerico": result.valor_numerico,
         "unidad": result.unidad,
+        "referencia_min": result.referencia_min,
+        "referencia_max": result.referencia_max,
+        "interpretacion": result.interpretacion,
     }
 
 

@@ -546,7 +546,8 @@ class SqlLabStore:
             rows = conn.execute(
                 text(
                     "SELECT r.id, r.detalle_orden_id, r.nombre_analito, r.valor_texto, "
-                    "r.valor_numerico, r.unidad FROM resultados_laboratorio r "
+                    "r.valor_numerico, r.unidad, r.referencia_min, r.referencia_max, "
+                    "r.interpretacion FROM resultados_laboratorio r "
                     "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
                     "WHERE d.orden_id = :o ORDER BY d.id, r.nombre_analito"
                 ),
@@ -560,6 +561,9 @@ class SqlLabStore:
                 valor_texto=row.valor_texto,
                 valor_numerico=None if row.valor_numerico is None else float(row.valor_numerico),
                 unidad=row.unidad,
+                referencia_min=None if row.referencia_min is None else float(row.referencia_min),
+                referencia_max=None if row.referencia_max is None else float(row.referencia_max),
+                interpretacion=row.interpretacion,
             )
             for row in rows
         ]

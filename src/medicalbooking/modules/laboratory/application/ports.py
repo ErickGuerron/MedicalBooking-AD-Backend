@@ -68,6 +68,10 @@ class LabResult:
     valor_texto: str | None
     valor_numerico: float | None
     unidad: str | None
+    # Validated reference applied to the value and its classification; absent when not evaluated.
+    referencia_min: float | None = None
+    referencia_max: float | None = None
+    interpretacion: str | None = None
 
 
 @dataclass(frozen=True)
