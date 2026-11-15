@@ -177,6 +177,28 @@ class SqlUserDirectory:
     def create_user(self, new_user: NewUser) -> None:
         self._create(new_user, verification=None)
 
+    def find_user(self, user_id: str) -> UserSummary | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT u.id, u.email, u.nombre, u.apellido, u.estado, "
+                    "(SELECT STRING_AGG(r.nombre, ',') FROM usuarios_roles ur "
+                    "JOIN roles r ON r.id = ur.rol_id WHERE ur.usuario_id = u.id) AS roles "
+                    "FROM usuarios u WHERE u.id = :id"
+                ),
+                {"id": user_id},
+            ).first()
+        if row is None:
+            return None
+        return UserSummary(
+            user_id=_canonical(row.id),
+            email=row.email,
+            first_name=row.nombre,
+            last_name=row.apellido,
+            status=row.estado,
+            roles=tuple(sorted(name for name in (row.roles or "").split(",") if name)),
+        )
+
     def list_users(self, limit: int, offset: int) -> list[UserSummary]:
         """One page ordered by email. Credentials are never selected.
 

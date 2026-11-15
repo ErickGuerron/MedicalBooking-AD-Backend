@@ -88,6 +88,10 @@ class UserDirectory(Protocol):
 
     def create_user(self, new_user: NewUser) -> None: ...
 
+    def find_user(self, user_id: str) -> UserSummary | None:
+        """One account's name, email, status and roles. Never reads credentials."""
+        ...
+
     def list_users(self, limit: int, offset: int) -> list[UserSummary]:
         """One page of accounts ordered by email, with their roles. Never reads credentials."""
         ...

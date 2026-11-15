@@ -225,6 +225,13 @@ class IdentityService:
         )
         return user_id
 
+    def own_profile(self, actor: AccessProfile) -> UserSummary:
+        """The authenticated account's name and email, for the greeting and the account screen."""
+        profile = self._directory.find_user(actor.user_id)
+        if profile is None:
+            raise Unauthenticated("Authentication required")
+        return profile
+
     def list_users(self, actor: AccessProfile, *, limit: int, offset: int) -> list[UserSummary]:
         if PERM_USERS_ADMIN not in actor.permissions:
             raise Forbidden("Access to this resource is not allowed")
