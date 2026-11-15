@@ -1,22 +1,41 @@
-"""Demo seed: accounts, doctor agendas, bookable slots and one booking per demo patient.
+"""Demo seed: accounts, profiles, doctor agendas, bookable slots and one booking per demo patient.
 
 Accounts and bookings go through the application services (IdentityService.create_user and
 SchedulingService.book), so each account and each booking writes its outbox event in the same
-transaction as the data. Sedes, consultorios, agendas, slots and services are plain SQL: no
-event exists for them, and the replicated appointment snapshot already carries the slot window.
+transaction as the data. Sedes, consultorios, agendas, slots and services are plain SQL: no event
+exists for them, and the replicated appointment snapshot already carries the slot window.
 
     $env:AZURE_DATABASE_URL = "mssql+pyodbc://..."
     $env:SQLSERVER_DATABASE = "<the same database name>"
     uv run python scripts/seed_demo.py --confirm <exact database name> \
-        --credentials-out C:\\secure\\demo-credentials.json
+        --credentials-out C:\\secure\\demo-credentials.json [--reset]
 
 Guards: AZURE_DATABASE_URL is required and must name the database given in --confirm; the
 settings database (SQLSERVER_DATABASE) must name the same database; APP_ENV=production needs
---allow-production; the credentials file must be outside this repository. Passwords are written
-only to that file. Running it twice adds nothing: accounts already seeded are detected and skipped.
+--allow-production; the credentials file must be outside this repository. Passwords are random on
+every run and are written only to that file.
 
-Accepted limitation: the account service stores only name, email, password and roles, so the
-demo patients get no phone, birth date, emergency contact or smoking profile.
+Rerun: without --reset, an existing demo set is detected and nothing is added. With --reset, the
+demo data is deleted first and seeded again with new passwords. The reset (reset_steps) removes
+only the @demo.test accounts, the patient and clinician rows they own, and the appointments of
+demo patients with their status history and invoices; it frees a slot that a demo booking held.
+It writes no outbox event: the sync's hard-delete reconciliation emits the tombstones. It runs in
+one transaction, so a row of another account that still references demo data aborts it and
+nothing is deleted.
+
+Determinism: on an empty database, the same --seed on the same calendar day gives the same names,
+sexes, cedulas, phones, birth dates, emergency contacts, sede, consultorios, services, agendas,
+slots and slot times. The ids of the sede, consultorios, services, agendas and slots are derived
+(uuid5 of a fixed namespace and a stable key). Not deterministic: the account, patient, doctor,
+booking and outbox ids (IdentityService, the repositories and SchedulingService generate them),
+and the passwords, which are random by design. Slots start from today, so their times move with
+the calendar day.
+
+Profile fields (tipo_documento CEDULA, numero_documento, fecha_nacimiento, sexo_registrado,
+contacto_emergencia, telefono_emergencia and usuarios.telefono) are written by plain SQL after the
+account is created through the service, because the account service stores only name, email,
+password and roles. This is acceptable for demo data. These writes carry no outbox event, so a
+replica receives the profile fields only when another path syncs those rows.
 """
 
 from __future__ import annotations
@@ -34,18 +53,38 @@ from pathlib import Path
 from typing import Any
 
 from faker import Faker
-from sqlalchemy import Connection, Engine, MetaData, Table, func, insert, select
+from sqlalchemy import (
+    Connection,
+    Engine,
+    MetaData,
+    Table,
+    column,
+    delete,
+    func,
+    insert,
+    or_,
+    select,
+    text,
+    update,
+)
+from sqlalchemy import table as sql_table
+from sqlalchemy.dialects import mssql
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql.expression import TableClause
+from sqlalchemy.types import String
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.identity.domain.policies import PERM_USERS_ADMIN
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
+from medicalbooking.shared.domain.demographics import SEXES, validate_sex
 from medicalbooking.shared.domain.errors import AppError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEMO_DOMAIN = "demo.test"
+DEMO_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "medicalbooking-demo-seed")
 BRANCH_TZ = timezone(timedelta(hours=-5))  # fixed offset, same convention as seed_availability
 OPENS = time(8, 0)
 CLOSES = time(17, 0)
@@ -59,6 +98,8 @@ ACCOUNT_PLAN: tuple[tuple[str, str], ...] = (
     *((f"medico{n}", "MEDICO") for n in range(1, DOCTOR_COUNT + 1)),
     *((f"paciente{n}", "PACIENTE") for n in range(1, PATIENT_COUNT + 1)),
 )
+CEDULA_COEFFICIENTS = (2, 1, 2, 1, 2, 1, 2, 1, 2)
+PHONE_PREFIX = "09"  # Ecuadorian mobile numbers: 09 followed by 8 digits
 # The seed runs in-process, not as an HTTP caller. This actor is never stored: create_user reads
 # only its permissions.
 SEED_ACTOR = AccessProfile(
@@ -68,6 +109,9 @@ SEED_ACTOR = AccessProfile(
     permissions=frozenset({PERM_USERS_ADMIN}),
 )
 
+DELETE = "delete"
+UPDATE = "update"
+
 
 @dataclass(frozen=True)
 class Account:
@@ -76,6 +120,8 @@ class Account:
     user_id: str
     email: str
     password: str
+    sex: str | None = None
+    telefono: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +129,31 @@ class Slot:
     id: str
     doctor_local: str
     start: datetime  # naive UTC
+
+
+@dataclass(frozen=True)
+class PatientProfile:
+    tipo_documento: str
+    numero_documento: str
+    fecha_nacimiento: date
+    sexo_registrado: str
+    contacto_emergencia: str
+    telefono_emergencia: str
+
+
+@dataclass(frozen=True)
+class ResetStep:
+    table: str
+    kind: str  # DELETE or UPDATE
+    statement: Any
+
+    @property
+    def sql(self) -> str:
+        """The T-SQL text of the statement, with its literals, for review and tests."""
+        compiled = self.statement.compile(
+            dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+        return str(compiled)
 
 
 def database_name(url: str) -> str:
@@ -98,7 +169,181 @@ def database_name(url: str) -> str:
     return ""
 
 
-def main(argv: list[str] | None = None) -> int:
+def demo_id(key: str) -> str:
+    """A stable id for a demo row: the same key gives the same uuid on every run."""
+    return str(uuid.uuid5(DEMO_NAMESPACE, key))
+
+
+def new_password() -> str:
+    """Random on every call, from the operating system; never derived from the seed."""
+    return secrets.token_urlsafe(12)
+
+
+def cedula_check_digit(first_nine: str) -> str:
+    """The verifier digit of an Ecuadorian cedula, from its first nine digits."""
+    total = 0
+    for digit, coefficient in zip(first_nine, CEDULA_COEFFICIENTS, strict=True):
+        product = int(digit) * coefficient
+        total += product - 9 if product > 9 else product
+    return str((10 - total % 10) % 10)
+
+
+def cedula_is_valid(value: str) -> bool:
+    """Ten digits, province 01 to 24, third digit below 6 and a correct verifier digit."""
+    return (
+        len(value) == 10
+        and value.isdigit()
+        and 1 <= int(value[:2]) <= 24
+        and int(value[2]) < 6
+        and cedula_check_digit(value[:9]) == value[9]
+    )
+
+
+def new_cedula(rng: Any, taken: set[str]) -> str:
+    """A valid cedula that is not in taken; the returned value is added to taken."""
+    while True:
+        province = rng.randint(1, 24)
+        body = f"{province:02d}{rng.randint(0, 5)}{rng.randrange(10**6):06d}"
+        value = body + cedula_check_digit(body)
+        if value not in taken:
+            taken.add(value)
+            return value
+
+
+def demo_phone(rng: Any) -> str:
+    return PHONE_PREFIX + f"{rng.randrange(10**8):08d}"
+
+
+def patient_profile(faker: Faker, sex: str, taken: set[str]) -> PatientProfile:
+    """Profile values drawn from the seeded Faker instance, so a seed gives the same profiles."""
+    rng = faker.random
+    return PatientProfile(
+        tipo_documento="CEDULA",
+        numero_documento=new_cedula(rng, taken),
+        fecha_nacimiento=faker.date_of_birth(minimum_age=18, maximum_age=75),
+        sexo_registrado=validate_sex(sex),
+        contacto_emergencia=f"{faker.first_name()} {faker.last_name()}",
+        telefono_emergencia=demo_phone(rng),
+    )
+
+
+def _t(name: str, *columns: str) -> TableClause:
+    """A bare table description for the reset statements: no reflection and no connection.
+
+    Columns are typed as String only so that literal values render as T-SQL literals.
+    """
+    return sql_table(name, *(column(c, String) for c in columns))
+
+
+_USUARIOS = _t("usuarios", "id", "email")
+_PACIENTES = _t("pacientes", "id", "usuario_id")
+_MEDICOS = _t("medicos", "id", "usuario_id")
+_AGENDAS = _t("agendas", "id", "medico_id")
+_HORARIOS = _t("horarios_disponibles", "id", "agenda_id", "estado")
+_CITAS = _t("citas", "id", "paciente_id", "horario_id")
+_FACTURAS = _t("facturas", "id", "cita_id", "paciente_id")
+_PAGOS = _t("pagos", "id", "factura_id")
+_NOTIFICACIONES = _t("notificaciones", "id", "usuario_id")
+
+# The demo scope. Every reset statement reaches these through the @demo.test account emails.
+_DEMO_USERS = select(_USUARIOS.c.id).where(_USUARIOS.c.email.like("%@demo.test"))
+_DEMO_PATIENTS = select(_PACIENTES.c.id).where(_PACIENTES.c.usuario_id.in_(_DEMO_USERS))
+_DEMO_DOCTORS = select(_MEDICOS.c.id).where(_MEDICOS.c.usuario_id.in_(_DEMO_USERS))
+_DEMO_AGENDAS = select(_AGENDAS.c.id).where(_AGENDAS.c.medico_id.in_(_DEMO_DOCTORS))
+_DEMO_CITAS = select(_CITAS.c.id).where(_CITAS.c.paciente_id.in_(_DEMO_PATIENTS))
+_DEMO_INVOICES = select(_FACTURAS.c.id).where(
+    or_(_FACTURAS.c.cita_id.in_(_DEMO_CITAS), _FACTURAS.c.paciente_id.in_(_DEMO_PATIENTS))
+)
+_DEMO_PAYMENTS = select(_PAGOS.c.id).where(_PAGOS.c.factura_id.in_(_DEMO_INVOICES))
+_DEMO_NOTIFICATIONS = select(_NOTIFICACIONES.c.id).where(
+    _NOTIFICACIONES.c.usuario_id.in_(_DEMO_USERS)
+)
+
+
+def _delete(table_clause: TableClause, condition: Any) -> ResetStep:
+    return ResetStep(table_clause.name, DELETE, delete(table_clause).where(condition))
+
+
+def reset_steps() -> tuple[ResetStep, ...]:
+    """The demo reset, children before parents. Every statement is scoped to @demo.test accounts.
+
+    Only rows that a demo account, demo patient or demo doctor owns are deleted, plus the state of
+    a slot that a demo booking held (set back to DISPONIBLE). A row of another account that still
+    references one of these makes the database refuse the delete, and the reset rolls back.
+    """
+    eventos_seguridad = _t("eventos_seguridad", "usuario_id")
+    auditoria = _t("auditoria_accesos", "usuario_id", "paciente_id")
+    accesos = _t("accesos_paciente", "paciente_id", "medico_id")
+    notif_eventos = _t("notificacion_eventos", "notificacion_id")
+    notif_intentos = _t("notificacion_intentos", "notificacion_id")
+    verificaciones = _t("verificaciones_correo", "usuario_id")
+    stripe = _t("stripe_clientes", "usuario_id")
+    reembolsos = _t("reembolsos", "pago_id")
+    facturas_detalle = _t("facturas_detalle", "factura_id")
+    aprobaciones = _t("aprobaciones_cancelacion_medico", "cita_id")
+    consultas = _t("consultas_medicas", "cita_id")
+    historial = _t("historial_estados_cita", "cita_id")
+    medicos_especialidades = _t("medicos_especialidades", "medico_id")
+    usuarios_roles = _t("usuarios_roles", "usuario_id")
+    credenciales = _t("credenciales_usuario", "usuario_id")
+    freed_slots = select(_CITAS.c.horario_id).where(_CITAS.c.id.in_(_DEMO_CITAS))
+
+    return (
+        _delete(eventos_seguridad, eventos_seguridad.c.usuario_id.in_(_DEMO_USERS)),
+        _delete(
+            auditoria,
+            or_(
+                auditoria.c.usuario_id.in_(_DEMO_USERS),
+                auditoria.c.paciente_id.in_(_DEMO_PATIENTS),
+            ),
+        ),
+        _delete(
+            accesos,
+            or_(accesos.c.paciente_id.in_(_DEMO_PATIENTS), accesos.c.medico_id.in_(_DEMO_DOCTORS)),
+        ),
+        _delete(notif_eventos, notif_eventos.c.notificacion_id.in_(_DEMO_NOTIFICATIONS)),
+        _delete(notif_intentos, notif_intentos.c.notificacion_id.in_(_DEMO_NOTIFICATIONS)),
+        _delete(_NOTIFICACIONES, _NOTIFICACIONES.c.usuario_id.in_(_DEMO_USERS)),
+        _delete(verificaciones, verificaciones.c.usuario_id.in_(_DEMO_USERS)),
+        _delete(stripe, stripe.c.usuario_id.in_(_DEMO_USERS)),
+        _delete(reembolsos, reembolsos.c.pago_id.in_(_DEMO_PAYMENTS)),
+        _delete(_PAGOS, _PAGOS.c.factura_id.in_(_DEMO_INVOICES)),
+        _delete(facturas_detalle, facturas_detalle.c.factura_id.in_(_DEMO_INVOICES)),
+        _delete(_FACTURAS, _FACTURAS.c.id.in_(_DEMO_INVOICES)),
+        _delete(aprobaciones, aprobaciones.c.cita_id.in_(_DEMO_CITAS)),
+        _delete(consultas, consultas.c.cita_id.in_(_DEMO_CITAS)),
+        _delete(historial, historial.c.cita_id.in_(_DEMO_CITAS)),
+        ResetStep(
+            _HORARIOS.name,
+            UPDATE,
+            update(_HORARIOS)
+            .where(_HORARIOS.c.id.in_(freed_slots), _HORARIOS.c.estado == "RESERVADO")
+            .values(estado="DISPONIBLE"),
+        ),
+        _delete(_CITAS, _CITAS.c.id.in_(_DEMO_CITAS)),
+        _delete(_HORARIOS, _HORARIOS.c.agenda_id.in_(_DEMO_AGENDAS)),
+        _delete(_AGENDAS, _AGENDAS.c.id.in_(_DEMO_AGENDAS)),
+        _delete(medicos_especialidades, medicos_especialidades.c.medico_id.in_(_DEMO_DOCTORS)),
+        _delete(_MEDICOS, _MEDICOS.c.id.in_(_DEMO_DOCTORS)),
+        _delete(_PACIENTES, _PACIENTES.c.id.in_(_DEMO_PATIENTS)),
+        _delete(usuarios_roles, usuarios_roles.c.usuario_id.in_(_DEMO_USERS)),
+        _delete(credenciales, credenciales.c.usuario_id.in_(_DEMO_USERS)),
+        _delete(_USUARIOS, _USUARIOS.c.id.in_(_DEMO_USERS)),
+    )
+
+
+def reset_demo_rows(engine: Engine) -> dict[str, int]:
+    """Run reset_steps in one transaction; returns the rows deleted per table and slots freed."""
+    counts: dict[str, int] = {}
+    with engine.begin() as conn:
+        for step in reset_steps():
+            affected = conn.execute(step.statement).rowcount
+            key = step.table if step.kind == DELETE else "horarios_liberados"
+            counts[key] = counts.get(key, 0) + affected
+    return counts
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Seed a demonstration database.")
     parser.add_argument("--confirm", required=True, help="exact database name to seed")
     parser.add_argument("--credentials-out", required=True, help="file outside this repository")
@@ -109,7 +354,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="required when APP_ENV=production: the seed then writes demo accounts there",
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="delete the existing demo data first, then seed again with new passwords",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     url = os.environ.get("AZURE_DATABASE_URL")
     if not url:
@@ -143,9 +397,23 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     already = _demo_account_count(engine, metadata)
-    if already:
-        print(f"Already seeded: {already} demo accounts present; nothing added.")
+    if already and not args.reset:
+        print(
+            f"Already seeded: {already} demo accounts present; nothing added. "
+            "Pass --reset to delete them and seed again."
+        )
         return 0
+    if args.reset and already:
+        try:
+            removed = reset_demo_rows(engine)
+        except IntegrityError:
+            print(
+                "Reset aborted: a demo row is still referenced by data outside the demo set. "
+                "Nothing was deleted.",
+                file=sys.stderr,
+            )
+            return 1
+        print("Reset removed: " + ", ".join(f"{t} {n}" for t, n in removed.items()) + ".")
 
     outbox_before = _outbox_counts(engine, metadata)
     faker = Faker("es_MX")
@@ -230,6 +498,7 @@ def _seed(
     app: Any, engine: Engine, metadata: MetaData, faker: Faker, days: int
 ) -> tuple[dict[str, int], list[dict[str, str]]]:
     accounts = _create_accounts(app.extensions["medicalbooking.identity"], faker)
+    _write_profiles(engine, accounts, faker)
     doctors = [account for account in accounts if account.role == "MEDICO"]
     patients = [account for account in accounts if account.role == "PACIENTE"]
     service_id, slots = _seed_schedule(engine, metadata, doctors, days)
@@ -253,32 +522,88 @@ def _create_accounts(identity: Any, faker: Faker) -> list[Account]:
     accounts: list[Account] = []
     for local, role in ACCOUNT_PLAN:
         email = f"{local}@{DEMO_DOMAIN}"
-        password = secrets.token_urlsafe(12)
+        password = new_password()
+        sex = faker.random.choice(SEXES)
+        first_name = faker.first_name_male() if sex == "M" else faker.first_name_female()
         user_id = identity.create_user(
             SEED_ACTOR,
             email=email,
             password=password,
-            first_name=faker.first_name(),
+            first_name=first_name,
             last_name=faker.last_name(),
             roles=[role],
             professional_registration=f"DEMO-{local.upper()}" if role == "MEDICO" else None,
         )
         accounts.append(
-            Account(role=role, local=local, user_id=user_id, email=email, password=password)
+            Account(
+                role=role,
+                local=local,
+                user_id=user_id,
+                email=email,
+                password=password,
+                sex=sex,
+                telefono=demo_phone(faker.random),
+            )
         )
     return accounts
+
+
+def _write_profiles(engine: Engine, accounts: list[Account], faker: Faker) -> None:
+    """Plain SQL, no outbox event: the account service stores no profile fields (module docstring).
+
+    Cedulas already held by patients outside this set are skipped, so the unique index on
+    (tipo_documento, numero_documento) cannot fail on a value this run chose.
+    """
+    with engine.begin() as conn:
+        taken = set(
+            conn.execute(
+                text(
+                    "SELECT numero_documento FROM pacientes "
+                    "WHERE tipo_documento = 'CEDULA' AND numero_documento IS NOT NULL"
+                )
+            ).scalars()
+        )
+        for account in accounts:
+            conn.execute(
+                text("UPDATE usuarios SET telefono = :telefono WHERE id = :usuario"),
+                {"telefono": account.telefono, "usuario": account.user_id},
+            )
+            if account.role != "PACIENTE":
+                continue
+            profile = patient_profile(faker, account.sex or "", taken)
+            conn.execute(
+                text(
+                    "UPDATE pacientes SET tipo_documento = :tipo, numero_documento = :numero, "
+                    "fecha_nacimiento = :nacimiento, sexo_registrado = :sexo, "
+                    "contacto_emergencia = :contacto, telefono_emergencia = :telefono "
+                    "WHERE usuario_id = :usuario"
+                ),
+                {
+                    "tipo": profile.tipo_documento,
+                    "numero": profile.numero_documento,
+                    "nacimiento": profile.fecha_nacimiento,
+                    "sexo": profile.sexo_registrado,
+                    "contacto": profile.contacto_emergencia,
+                    "telefono": profile.telefono_emergencia,
+                    "usuario": account.user_id,
+                },
+            )
 
 
 def _seed_schedule(
     engine: Engine, metadata: MetaData, doctors: list[Account], days: int
 ) -> tuple[str, list[Slot]]:
-    """Plain SQL: sede, consultorios, agendas, slots and services have no outbox event."""
+    """Plain SQL: sede, consultorios, agendas, slots and services have no outbox event.
+
+    Ids are derived from stable keys. The shared rows (sede, consultorios, services) are inserted
+    only when missing, so a reseed after a reset reuses them.
+    """
     today = datetime.now(BRANCH_TZ).date()
     now = datetime.now(UTC).replace(tzinfo=None)
     slots: list[Slot] = []
     with engine.begin() as conn:
-        sede_id = str(uuid.uuid4())
-        _insert(
+        sede_id = demo_id("sede:principal")
+        _insert_if_missing(
             conn,
             metadata,
             "sedes",
@@ -291,8 +616,8 @@ def _seed_schedule(
             },
         )
         for number, doctor in enumerate(doctors, start=1):
-            office_id = str(uuid.uuid4())
-            _insert(
+            office_id = demo_id(f"consultorio:{number}")
+            _insert_if_missing(
                 conn,
                 metadata,
                 "consultorios",
@@ -303,7 +628,7 @@ def _seed_schedule(
                     "activo": True,
                 },
             )
-            agenda_id = str(uuid.uuid4())
+            agenda_id = demo_id(f"agenda:{doctor.local}")
             _insert(
                 conn,
                 metadata,
@@ -318,7 +643,7 @@ def _seed_schedule(
                 },
             )
             for start, end in _slots(today, days, now):
-                slot_id = str(uuid.uuid4())
+                slot_id = demo_id(f"horario:{doctor.local}:{start:%Y%m%d%H%M}")
                 _insert(
                     conn,
                     metadata,
@@ -346,8 +671,8 @@ def _insert_services(conn: Connection, metadata: MetaData) -> str:
     """Creates the demo services and returns the first one, which every demo booking uses."""
     service_ids: list[str] = []
     for name in SERVICE_NAMES:
-        service_id = str(uuid.uuid4())
-        _insert(
+        service_id = demo_id(f"servicio:{name}")
+        _insert_if_missing(
             conn,
             metadata,
             "servicios_medicos",
@@ -438,6 +763,15 @@ def _insert(conn: Connection, metadata: MetaData, table_name: str, values: dict[
     if missing:
         raise ValueError(f"{table_name} needs values for {missing}")
     conn.execute(insert(table).values(**values))
+
+
+def _insert_if_missing(
+    conn: Connection, metadata: MetaData, table_name: str, values: dict[str, Any]
+) -> None:
+    """Insert unless a row with this id already exists (shared demo rows, derived ids)."""
+    table: Table = metadata.tables[table_name]
+    if conn.execute(select(table.c.id).where(table.c.id == values["id"])).first() is None:
+        _insert(conn, metadata, table_name, values)
 
 
 if __name__ == "__main__":
