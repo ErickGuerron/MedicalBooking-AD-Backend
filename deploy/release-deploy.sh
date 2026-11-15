@@ -10,7 +10,9 @@
 #   4. recreates replica-a, then replica-b, and waits for each to be healthy. If a replica is not
 #      healthy, every replica already updated goes back to the previous image and the run fails.
 #
-# Migrations move forward only: a rollback restores the previous image, not the schema.
+# Afterwards it removes every local image of this repository that no container uses, so old
+# releases do not fill the disk. Migrations move forward only: a rollback restores the previous
+# image, not the schema.
 #
 # Usage: release-deploy.sh <compose-file> [--migrate]
 # Cron, every 15 minutes (VM1 migrates, VM2 does not):
@@ -75,6 +77,25 @@ if releases:
   rm -f "$tags_file"
 }
 
+# Removes every local image of this repository that no container uses (any tag, any release).
+# Images of other repositories are never touched. `docker image rm` without -f refuses an image a
+# container still uses, so a race with a starting container cannot remove a running image.
+prune_repository_images() {
+  local used id repository
+  used="$("$docker_bin" ps -aq --no-trunc | while read -r container; do
+    "$docker_bin" inspect --format '{{.Image}}' "$container"
+  done | sort -u || true)"
+  while read -r id repository; do
+    [ "$repository" = "$repo" ] || continue
+    if grep -qx "$id" <<<"$used"; then
+      continue
+    fi
+    if "$docker_bin" image rm "$id" >/dev/null 2>&1; then
+      log "removed unused image ${id:0:19}"
+    fi
+  done < <("$docker_bin" images --no-trunc --format '{{.ID}} {{.Repository}}')
+}
+
 mkdir -p "$state_dir"
 exec 9>"$state_dir/lock"
 if ! flock -n 9; then
@@ -99,6 +120,7 @@ current_file="$state_dir/current"
 current="$(cat "$current_file" 2>/dev/null || true)"
 if [ "$current" = "$digest_ref" ]; then
   log "up to date: $target"
+  prune_repository_images
   exit 0
 fi
 log "new release $target ($digest_ref)"
@@ -144,4 +166,5 @@ done
 
 printf '%s\n' "$digest_ref" > "$current_file"
 "$docker_bin" image prune -f >/dev/null
+prune_repository_images
 log "deployed $target"
