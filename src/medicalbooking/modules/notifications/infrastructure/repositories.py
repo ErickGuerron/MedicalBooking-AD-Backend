@@ -96,10 +96,11 @@ class SqlNotificationStore:
         with self._engine.begin() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT TOP (:limite) id, tipo, destinatario, numero_intentos "
-                    "FROM notificaciones WITH (UPDLOCK, READPAST, ROWLOCK) "
-                    "WHERE estado = 'PENDIENTE' AND siguiente_intento_en <= :ahora "
-                    "ORDER BY siguiente_intento_en"
+                    "SELECT TOP (:limite) n.id, n.tipo, n.destinatario, n.numero_intentos, "
+                    "e.agregado_id FROM notificaciones n WITH (UPDLOCK, READPAST, ROWLOCK) "
+                    "LEFT JOIN eventos_outbox e ON e.id = n.evento_origen_id "
+                    "WHERE n.estado = 'PENDIENTE' AND n.siguiente_intento_en <= :ahora "
+                    "ORDER BY n.siguiente_intento_en"
                 ),
                 {"limite": limit, "ahora": moment},
             ).all()
@@ -114,6 +115,9 @@ class SqlNotificationStore:
                 tipo=row.tipo,
                 destinatario=row.destinatario,
                 numero_intentos=row.numero_intentos,
+                aggregate_id=None
+                if row.agregado_id is None
+                else str(uuid.UUID(str(row.agregado_id))),
             )
             for row in rows
         ]

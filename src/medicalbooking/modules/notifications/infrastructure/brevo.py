@@ -8,6 +8,8 @@ never included, so none of them can reach the logs or the database.
 
 from __future__ import annotations
 
+import base64
+
 import httpx
 
 from medicalbooking.modules.notifications.application.ports import EmailMessage, NotificationError
@@ -29,12 +31,17 @@ class BrevoNotificationSender:
         self._client = client or httpx.Client(timeout=10.0)
 
     def send(self, message: EmailMessage) -> str | None:
-        payload = {
+        payload: dict[str, object] = {
             "sender": self._sender,
             "to": [{"email": message.to}],
             "subject": message.subject,
             "textContent": message.text,
         }
+        if message.attachments:
+            payload["attachment"] = [
+                {"name": item.name, "content": base64.b64encode(item.data).decode("ascii")}
+                for item in message.attachments
+            ]
         try:
             response = self._client.post(
                 BREVO_SEND_URL,
