@@ -239,6 +239,28 @@ class IdentityService:
         )
         return user_id
 
+    def change_password(self, actor: AccessProfile, current: str, new: str) -> None:
+        """The signed-in account replaces its password after proving the current one.
+
+        A wrong current password is a 403, never a 401: the portal signs out on 401. It counts as
+        a failed login, so guessing it locks the account like a failed sign-in does.
+        """
+        profile = self._directory.find_user(actor.user_id)
+        if profile is None:
+            raise Unauthenticated("Invalid credentials")
+        record = self._directory.find_credentials_by_email(profile.email)
+        if record is None or record.password_hash is None:
+            raise Unauthenticated("Invalid credentials")
+        now = self._clock()
+        if is_locked(record.locked_until, now):
+            raise Forbidden("La contraseña actual no es correcta")
+        if not self._hasher.verify(record.password_hash, current):
+            self._directory.register_failed_login(actor.user_id, now)
+            raise Forbidden("La contraseña actual no es correcta")
+        if new == current:
+            raise ValidationFailed("La nueva contraseña debe ser distinta de la actual")
+        self._directory.update_password_hash(actor.user_id, self._hasher.hash(new))
+
     def own_profile(self, actor: AccessProfile) -> UserSummary:
         """The authenticated account's name and email, for the greeting and the account screen."""
         profile = self._directory.find_user(actor.user_id)
