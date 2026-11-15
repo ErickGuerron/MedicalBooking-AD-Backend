@@ -34,6 +34,30 @@ For a mismatch, the latest event's delivery to the destination is requeued:
 A repeat run does not requeue a delivery that is already `PENDIENTE`. The `repairs_*` counts are
 requeues that changed a row, so a second run with nothing new reports zero.
 
+## Hard deletes
+
+A row deleted directly in SQL Server writes no outbox event, so the repair above cannot see it. The
+worker detects these deletes by key reconciliation, once per cycle, before the repair pass:
+
+- **Scope**: every `usuario` and `cita` id, not only those within the lookback window.
+- **Read order**: the ids held by each configured replica are read first (MongoDB `_id`, Supabase
+  `replica.usuarios` and `replica.citas`), then the source ids (`usuarios`, `citas`). A row created
+  during the cycle reaches a replica only after it exists in the source, so it is never taken for a
+  delete.
+- **Orphan**: an id that any configured replica holds and the source does not.
+- **Tombstone**: one `usuario.eliminado` or `cita.eliminada` event per orphan, written to
+  `eventos_outbox` at the aggregate's latest version plus one, through the shared outbox helper. The
+  dispatcher delivers it like any other event. An aggregate that already has a delete event gets no
+  second one.
+- **Skipped targets**: a replica whose settings are unset is not read, the same as in the repair
+  pass.
+- **Failures**: a failed replica or source read aborts the cycle before the first tombstone, so a
+  partial view never creates a delete. Exit code `1`, error type only.
+
+A tombstone written in a cycle can count as a repair in the same cycle. The repair pass then sees
+the new delete event, and the replica still holds the row until the dispatcher applies the event.
+The requeue is harmless, but the `repairs_*` count then includes that delete.
+
 ## Cadence and deployment
 
 Run every 15 minutes, on one VM only. Two schedulers would not corrupt data, because the requeue is
@@ -88,12 +112,15 @@ aggregates=<n> repairs_mongodb=<n> repairs_supabase=<n> skipped_supabase=<True|F
 ```
 
 Exit code `0` means the cycle finished. Exit code `1` means it could not start or failed. The worker
-prints only counts and error types. Connection strings, payloads and event ids are never printed.
+prints only counts and error types. The hard-delete counts (`orphans=<n> tombstones=<n>`) are logged at INFO
+level, not printed on this line. The worker does not configure logging, so they show only when the
+caller sets up logging. Connection strings, payloads and event ids are never printed.
 
 ## What it does not cover
 
-- Aggregates with no outbox event. The reconciler starts from events, so an aggregate that was
-  written without an event is invisible to it.
+- Aggregates with no outbox event in the replica. A replica row that has no source row is a hard
+  delete and is tombstoned (see Hard deletes), but a source row that never reached the outbox is
+  not replicated and is not detected.
 - Aggregate types other than `usuario` and `cita`. Other types are phase 2.
 - Events older than the lookback window. Their latest event is not checked.
 - Repairs for projections the handler cannot apply. If an event type has no projection handler,
@@ -110,6 +137,7 @@ prints only counts and error types. Connection strings, payloads and event ids a
 | Exit 1 after some repairs | SQL Server error during the requeue loop | Each requeue is its own transaction, so repairs already made stay made. The next run finishes the rest. |
 | `repairs_*` non-zero every cycle | The dispatcher cannot apply the event, or the dispatcher is not running | Check the dispatcher schedule and the delivery error states. |
 | `repairs_supabase=0` but the replica is stale | Supabase check skipped, or RLS hides rows from the role | Check `skipped_supabase` and the role privileges. |
+| Exit 1 before any repair, hard-delete step | A replica or source read failed; no tombstone was written | Fix the connection or grants named in the error type; the next run retries the whole cycle. |
 | Deliveries stay `PENDIENTE` for a long time | The dispatcher is behind, or an earlier event for the same aggregate is pending | The dispatcher claims events per aggregate in version order. |
 
 ## Ordering with the dispatcher
