@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import Any, Literal
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -108,6 +108,15 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=12, max_length=256)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
+    tipo_documento: Literal["CEDULA", "PASAPORTE"]
+    numero_documento: str = Field(min_length=1, max_length=20)
+    telefono: str | None = Field(default=None, max_length=20, description="Optional")
+    sexo: Literal["M", "F"] | None = Field(default=None, description="Optional: M or F")
+    fecha_nacimiento: str | None = Field(
+        default=None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Optional YYYY-MM-DD, not in the future, age at most 120 years",
+    )
 
 
 @identity_bp.post("/auth/register")
@@ -119,6 +128,11 @@ def register() -> tuple[Response, int]:
         password=body.password,
         first_name=body.first_name,
         last_name=body.last_name,
+        document_type=body.tipo_documento,
+        document_number=body.numero_documento,
+        phone=body.telefono,
+        sex=body.sexo,
+        birth_date=body.fecha_nacimiento,
     )
     return jsonify(message=message), 202
 
@@ -130,15 +144,34 @@ def verify_email() -> tuple[Response, int]:
     return jsonify(verified=True), 200
 
 
+class PasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
+@identity_bp.post("/me/password")
+@authenticated
+def change_password() -> tuple[str, int]:
+    body = _parse(PasswordChangeRequest)
+    _service().change_password(g.actor, body.current_password, body.new_password)
+    return "", 204
+
+
 @identity_bp.get("/me")
 @authenticated
 def me() -> tuple[Response, int]:
     actor = g.actor
+    profile = _service().own_profile(actor)
     return (
         jsonify(
             id=actor.user_id,
             roles=sorted(actor.roles),
             permissions=sorted(actor.permissions),
+            nombre=profile.first_name,
+            apellido=profile.last_name,
+            correo=profile.email,
         ),
         200,
     )

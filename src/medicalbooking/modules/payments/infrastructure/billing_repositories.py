@@ -7,6 +7,7 @@ any open transaction (spec 7.3).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -23,9 +24,14 @@ from medicalbooking.modules.payments.application.billing_service import (
     PaymentRecord,
     PaymentReservation,
 )
+from medicalbooking.modules.scheduling.infrastructure.repositories import (
+    confirm_appointment_of_invoice,
+)
 from medicalbooking.shared.domain.errors import Conflict
 from medicalbooking.shared.infrastructure.outbox import append_outbox
 from medicalbooking.shared.infrastructure.sql_errors import is_unique_violation
+
+logger = logging.getLogger(__name__)
 
 
 class SqlBillingStore:
@@ -319,13 +325,7 @@ class SqlBillingStore:
                 ),
                 {"pago": pago_id, "ahora": _utc_naive(now)},
             )
-            conn.execute(
-                text(
-                    "UPDATE facturas SET estado = 'PAGADA' "
-                    "WHERE id = :factura AND estado = 'PENDIENTE'"
-                ),
-                {"factura": factura_id},
-            )
+            mark_invoice_paid(conn, factura_id, _utc_naive(now))
             emit_pago_snapshot(conn, pago_id, _utc_naive(now))
 
     def cancel_pending_payment(self, pago_id: str) -> None:
@@ -354,6 +354,18 @@ def _payment(row: Row[Any]) -> PaymentRecord:
         proximo_reintento_en=next_retry.replace(tzinfo=UTC) if next_retry is not None else None,
         ultimo_error_codigo=row.ultimo_error_codigo,
     )
+
+
+def mark_invoice_paid(conn: Connection, factura_id: str, moment: datetime) -> None:
+    """The one step both payment-confirmation paths (verified webhook, checkout reconciliation)
+    take after the payment is CONFIRMADO: the invoice becomes PAGADA and its appointment
+    CONFIRMADA, in the caller's transaction. Guarded, so a repeat changes nothing."""
+    conn.execute(
+        text("UPDATE facturas SET estado = 'PAGADA' WHERE id = :factura AND estado = 'PENDIENTE'"),
+        {"factura": factura_id},
+    )
+    if not confirm_appointment_of_invoice(conn, factura_id, moment):
+        logger.warning("appointment of invoice %s was not moved to CONFIRMADA", factura_id)
 
 
 def set_payment_intent(conn: Connection, pago_id: str, payment_intent_id: str) -> None:

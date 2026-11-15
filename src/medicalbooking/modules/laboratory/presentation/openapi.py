@@ -149,6 +149,32 @@ def laboratory_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/lab/orders/{order_id}/report.pdf": {
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "getLabResultsReport",
+                    "summary": "Download the results of an order as a PDF",
+                    "description": (
+                        "Readable by whoever may read the order's results: the patient, the "
+                        "ordering doctor and the laboratory. Served as an attachment."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path_param("order_id")],
+                    "responses": {
+                        "200": {
+                            "description": "Results report",
+                            "content": {
+                                "application/pdf": {
+                                    "schema": {"type": "string", "format": "binary"}
+                                }
+                            },
+                        },
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("The caller may not read this order"),
+                        "404": _problem("Order not found"),
+                    },
+                },
+            },
             "/api/v1/lab/orders/{order_id}/results": {
                 "post": {
                     "tags": ["Laboratory"],
@@ -201,6 +227,27 @@ def laboratory_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/lab/orders/{order_id}/confirm": {
+                "post": {
+                    "tags": ["Laboratory"],
+                    "operationId": "confirmLabOrder",
+                    "summary": "Close a completed order, with or without its report",
+                    "description": (
+                        "Requires resultados.registrar. Every test must have its results. The "
+                        "order is closed: results and reports can no longer change, and the "
+                        "results email (with the report, if any) goes out now."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path_param("order_id")],
+                    "responses": {
+                        "200": {"description": "Order confirmed"},
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks resultados.registrar"),
+                        "404": _problem("Order not found"),
+                        "409": _problem("Not completed, or already confirmed"),
+                    },
+                }
+            },
             "/api/v1/lab/orders/{order_id}/documents": {
                 "post": {
                     "tags": ["Laboratory"],
@@ -237,7 +284,24 @@ def laboratory_fragment() -> dict[str, Any]:
                         "404": _problem("Order not found"),
                         "422": _problem("Not a PDF, empty, or larger than 10 MB"),
                     },
-                }
+                },
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "listLabOrderDocuments",
+                    "summary": "List the uploaded reports of an order",
+                    "description": (
+                        "Requires resultados.registrar, or the same read access as the order "
+                        "(patient, ordering doctor). Metadata only: download each one with "
+                        "GET /documents/{id}/download. Other callers get the uniform 403."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path_param("order_id")],
+                    "responses": {
+                        "200": _json("Reports of the order", "LabDocumentList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Access to this resource is not allowed"),
+                    },
+                },
             },
             "/api/v1/patients": {
                 "get": {
@@ -289,6 +353,90 @@ def laboratory_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/lab/patient-orders": {
+                "post": {
+                    "tags": ["Laboratory"],
+                    "operationId": "createPatientLabOrder",
+                    "summary": "Request a lab exam as the patient, with no doctor",
+                    "description": (
+                        "Requires ordenes.solicitar_propias and a patient profile. Creates an "
+                        "order with origen PACIENTE, medico_id null and prioridad NORMAL. It "
+                        "skips the doctor, so it has no review and no proposal. Results follow "
+                        "the same flow."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": _body("PatientOrderRequest"),
+                    "responses": {
+                        "201": _json("Order created", "LabWorkItem"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller has no patient profile or no permission"),
+                        "422": _problem("Invalid body or unknown or inactive test type"),
+                    },
+                }
+            },
+            "/api/v1/lab/worklist": {
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "listLabWorklist",
+                    "summary": "List the pending orders the laboratory works on, both origins",
+                    "description": (
+                        "Requires resultados.registrar. Orders in SOLICITADA or EN_PROCESO: "
+                        "urgent first, then oldest, then id. Each test line carries its nombre and "
+                        "codigo to record results (detalle_id). "
+                        "Audited without values."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                                "default": 50,
+                            },
+                        },
+                        {
+                            "name": "offset",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "default": 0,
+                            },
+                        },
+                    ],
+                    "responses": {
+                        "200": _json("Pending orders", "LabWorklist"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks resultados.registrar"),
+                        "422": _problem("Invalid limit or offset"),
+                    },
+                }
+            },
+            "/api/v1/lab/test-types/{test_id}/analytes": {
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "listLabTestAnalytes",
+                    "summary": "List the analytes a test asks for, in presentation order",
+                    "description": (
+                        "Requires resultados.registrar. Active analytes only. obligatorio marks "
+                        "the ones a test needs to be complete; orden is the presentation order "
+                        "(null when unordered)."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path_param("test_id")],
+                    "responses": {
+                        "200": _json("Analytes", "LabTestAnalyteList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks resultados.registrar"),
+                    },
+                }
+            },
             "/api/v1/lab/test-types": {
                 "get": {
                     "tags": ["Laboratory"],
@@ -334,6 +482,71 @@ def laboratory_fragment() -> dict[str, Any]:
                 "CreateOrderRequest": CreateOrderRequest.model_json_schema(),
                 "RecordResultsRequest": RecordResultsRequest.model_json_schema(),
                 "ReviewRequest": ReviewRequest.model_json_schema(),
+                "PatientOrderRequest": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["tipo_prueba_ids"],
+                    "properties": {
+                        "tipo_prueba_ids": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "items": _UUID_PARAM,
+                        },
+                        "observaciones": {"type": ["string", "null"], "maxLength": 1000},
+                    },
+                },
+                "LabTestAnalyte": {
+                    "type": "object",
+                    "required": ["id", "nombre", "unidad", "tipo_valor", "obligatorio", "orden"],
+                    "properties": {
+                        "id": _UUID_PARAM,
+                        "nombre": {"type": "string"},
+                        "unidad": {"type": ["string", "null"]},
+                        "tipo_valor": {
+                            "type": "string",
+                            "enum": ["NUMERICO", "TEXTO", "CODIFICADO"],
+                        },
+                        "obligatorio": {"type": "boolean"},
+                        "orden": {"type": ["integer", "null"]},
+                    },
+                },
+                "LabTestAnalyteList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/LabTestAnalyte"},
+                        }
+                    },
+                },
+                "LabWorkItem": {
+                    "allOf": [
+                        {"$ref": "#/components/schemas/LabOrder"},
+                        {
+                            "type": "object",
+                            "required": ["origen", "fecha", "paciente_nombre"],
+                            "properties": {
+                                "origen": {"type": "string", "enum": ["MEDICO", "PACIENTE"]},
+                                "fecha": {"type": "string", "format": "date-time"},
+                                "paciente_nombre": {"type": ["string", "null"]},
+                            },
+                        },
+                    ]
+                },
+                "LabWorklist": {
+                    "type": "object",
+                    "required": ["items", "limit", "offset"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/LabWorkItem"},
+                        },
+                        "limit": {"type": "integer"},
+                        "offset": {"type": "integer"},
+                    },
+                },
                 "LabOrder": {
                     "type": "object",
                     "required": ["id", "paciente_id", "prioridad", "estado", "pruebas"],
@@ -346,6 +559,7 @@ def laboratory_fragment() -> dict[str, Any]:
                             "enum": ["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"],
                         },
                         "observaciones": {"type": ["string", "null"]},
+                        "medico_id": {"type": ["string", "null"], "format": "uuid"},
                         "pruebas": {
                             "type": "array",
                             "items": {
@@ -369,10 +583,11 @@ def laboratory_fragment() -> dict[str, Any]:
                 },
                 "LabOrderSummary": {
                     "type": "object",
-                    "required": ["id", "paciente_id", "estado", "fecha"],
+                    "required": ["id", "paciente_id", "medico_id", "estado", "fecha"],
                     "properties": {
                         "id": _UUID_PARAM,
                         "paciente_id": _UUID_PARAM,
+                        "medico_id": {"type": ["string", "null"], "format": "uuid"},
                         "estado": {
                             "type": "string",
                             "enum": ["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"],
@@ -399,6 +614,12 @@ def laboratory_fragment() -> dict[str, Any]:
                         "valor_texto": {"type": ["string", "null"]},
                         "valor_numerico": {"type": ["number", "null"]},
                         "unidad": {"type": ["string", "null"]},
+                        "referencia_min": {"type": ["number", "null"]},
+                        "referencia_max": {"type": ["number", "null"]},
+                        "interpretacion": {
+                            "type": ["string", "null"],
+                            "enum": ["BAJO", "DENTRO_REFERENCIA", "ALTO", "NO_EVALUABLE", None],
+                        },
                     },
                 },
                 "LabResultList": {
@@ -458,6 +679,16 @@ def laboratory_fragment() -> dict[str, Any]:
                     "properties": {
                         "estado": {"type": "string", "enum": ["COMPLETADA"]},
                         "orden_id": _UUID_PARAM,
+                    },
+                },
+                "LabDocumentList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/LabDocument"},
+                        }
                     },
                 },
                 "LabDocument": {

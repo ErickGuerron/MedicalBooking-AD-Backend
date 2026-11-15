@@ -22,15 +22,20 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabOrderSummary,
     LabResult,
     LabStore,
+    LabTestAnalyte,
     LabTestType,
     NewDocument,
     NewOrder,
     PatientSummary,
+    ReportParties,
     ResultEntry,
     StoredDocument,
 )
 from medicalbooking.modules.laboratory.domain.policies import (
+    ORIGIN_DOCTOR,
+    ORIGIN_PATIENT,
     PERM_ORDER_CREATE,
+    PERM_PATIENT_ORDER,
     PERM_RESULT_READ_CONTEXT,
     PERM_RESULT_READ_OWN,
     PERM_RESULT_REGISTER,
@@ -118,10 +123,57 @@ class LabService:
                 prioridad=prioridad,
                 observaciones=observaciones,
                 tipo_prueba_ids=test_ids,
+                origen=ORIGIN_DOCTOR,
             )
         )
         self._audit(actor, order.paciente_id, "orden_laboratorio", order.id, "crear")
         return order
+
+    def create_patient_order(
+        self,
+        actor: AccessProfile,
+        *,
+        tipo_prueba_ids: list[str],
+        observaciones: str | None,
+    ) -> LabOrder:
+        """An exam the patient asks for without a doctor: no doctor, no review, same results flow.
+
+        Priority is always NORMAL here; urgency is set by a doctor. The actor must be a patient
+        profile, otherwise the uniform 403 is returned.
+        """
+        _require(actor, PERM_PATIENT_ORDER)
+        paciente_id = self._store.resolve_patient_id(actor.user_id)
+        if paciente_id is None:
+            raise Forbidden(_FORBIDDEN)
+        validate_observations(observaciones)
+        test_ids = validate_test_ids(list(tipo_prueba_ids))
+        if set(test_ids) - self._store.active_test_ids(test_ids):
+            raise ValidationFailed("Unknown or inactive test type")
+
+        order = self._store.create_order(
+            NewOrder(
+                order_id=str(uuid.uuid4()),
+                paciente_id=paciente_id,
+                medico_id=None,
+                prioridad="NORMAL",
+                observaciones=observaciones,
+                tipo_prueba_ids=test_ids,
+                origen=ORIGIN_PATIENT,
+            )
+        )
+        self._audit(actor, order.paciente_id, "orden_laboratorio", order.id, "solicitar")
+        return order
+
+    def list_worklist(self, actor: AccessProfile, *, limit: int, offset: int) -> list[LabOrder]:
+        """Pending orders of both origins, oldest first, for the laboratory to work on.
+
+        Only the laboratory permission to record results gives access. The rows carry what the
+        laboratory needs to enter results (test line ids), not the doctor's identity.
+        """
+        _require(actor, PERM_RESULT_REGISTER)
+        rows = self._store.list_pending_orders(limit=limit, offset=offset)
+        self._audit(actor, None, "orden_laboratorio", None, "listar_pendientes")
+        return rows
 
     def get_order(self, actor: AccessProfile, order_id: str) -> LabOrder:
         order = self._readable_order(actor, order_id)
@@ -185,6 +237,23 @@ class LabService:
         self._audit(actor, None, "paciente", None, "listar")
         return rows
 
+    def confirm_order(self, actor: AccessProfile, order_id: str) -> None:
+        """The laboratory closes a completed order, with or without report. Then it is final."""
+        _require(actor, PERM_RESULT_REGISTER)
+        status = self._store.confirm_order(order_id, self._clock(), actor.user_id)
+        if status == "NOT_FOUND":
+            raise NotFound("Order not found")
+        if status == "NOT_COMPLETED":
+            raise Conflict("Every test needs its results before the order can be confirmed")
+        if status == "ALREADY_CONFIRMED":
+            raise Conflict("This order is already confirmed")
+        self._audit(actor, None, "orden_laboratorio", order_id, "confirmar")
+
+    def list_test_analytes(self, actor: AccessProfile, test_id: str) -> list[LabTestAnalyte]:
+        """The analytes a test asks for, for the laboratory entering its results."""
+        _require(actor, PERM_RESULT_REGISTER)
+        return self._store.list_test_analytes(test_id)
+
     def list_test_types(self) -> list[LabTestType]:
         """Static synthetic catalog: any authenticated actor, no personal data, no audit row."""
         return self._store.list_test_types()
@@ -229,6 +298,8 @@ class LabService:
             self._clock(),
             actor.user_id,
         )
+        if status == "ORDER_CONFIRMED":
+            raise Conflict("This order is confirmed and can no longer change")
         if status == "DETAIL_NOT_FOUND":
             raise NotFound("Order detail not found")
         if status == "DETAIL_ALREADY_COMPLETED":
@@ -283,6 +354,23 @@ class LabService:
             )
         return classified
 
+    def report_parties(self, actor: AccessProfile, order_id: str) -> ReportParties:
+        """Who the report is about, for the readers allowed to see the order."""
+        order = self._readable_order(actor, order_id)
+        parties = self._store.report_parties(order.id)
+        if parties is None:
+            return ReportParties(
+                patient_name="—",
+                patient_document=None,
+                patient_birth_date=None,
+                patient_sex=None,
+                patient_email=None,
+                patient_phone=None,
+                doctor_name=None,
+                doctor_registration=None,
+            )
+        return parties
+
     def list_results(self, actor: AccessProfile, order_id: str) -> list[LabResult]:
         order = self._readable_order(actor, order_id)
         results = self._store.list_results(order.id)
@@ -328,6 +416,9 @@ class LabService:
     ) -> StoredDocument:
         _require(actor, PERM_RESULT_REGISTER)
         order = self._store.get_order(order_id)
+        if order is not None and order.confirmada:
+            raise Conflict("This order is confirmed and can no longer change")
+        order = self._store.get_order(order_id)
         if order is None:
             raise NotFound("Order not found")
         validate_pdf(content, mime)
@@ -355,6 +446,13 @@ class LabService:
             raise
         self._audit(actor, order.paciente_id, "documento_clinico", document.id, "subir")
         return document
+
+    def list_order_documents(self, actor: AccessProfile, order_id: str) -> list[StoredDocument]:
+        """The uploaded reports of an order: for who records results, and who may read the order."""
+        if PERM_RESULT_REGISTER not in actor.permissions:
+            # Readers of the order only; anyone else gets the same 403 as a missing order.
+            self._readable_order(actor, order_id)
+        return self._store.list_order_documents(order_id)
 
     def download_document(
         self, actor: AccessProfile, document_id: str

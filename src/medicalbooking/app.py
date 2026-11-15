@@ -15,6 +15,10 @@ from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from medicalbooking.config import Settings
+from medicalbooking.modules.catalog.application.use_cases import CatalogService
+from medicalbooking.modules.catalog.infrastructure.repositories import SqlCatalogStore
+from medicalbooking.modules.catalog.presentation.openapi import catalog_fragment
+from medicalbooking.modules.catalog.presentation.routes import catalog_bp
 from medicalbooking.modules.clinical.application.clinical_profile import PatientProfileService
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
 from medicalbooking.modules.clinical.application.proposals import ProposalService
@@ -86,6 +90,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.engine"] = engine
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
+    app.extensions["medicalbooking.catalog"] = CatalogService(SqlCatalogStore(engine))
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
     app.extensions["medicalbooking.treatments"] = _build_treatments(engine)
     app.extensions["medicalbooking.laboratory_status"] = LaboratoryStatusService(
@@ -104,11 +109,16 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.payments_webhook"] = _build_payments_webhook(settings, engine)
     app.extensions["medicalbooking.billing"] = build_billing(settings, engine)
     app.extensions["medicalbooking.payment_methods"] = _build_payment_methods(settings, engine)
+    # Signs the invoice download links in payment emails; the same key the worker uses.
+    app.extensions["medicalbooking.invoice_link_key"] = (
+        settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None
+    )
 
     app.register_blueprint(health_bp)
     app.register_blueprint(payments_bp)
     app.register_blueprint(identity_bp)
     app.register_blueprint(scheduling_bp)
+    app.register_blueprint(catalog_bp)
     app.register_blueprint(lab_bp)
     app.register_blueprint(treatments_bp)
     app.register_blueprint(soap_bp)
@@ -121,6 +131,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             [
                 identity_fragment(),
                 scheduling_fragment(),
+                catalog_fragment(),
                 laboratory_fragment(),
                 treatments_fragment(),
                 clinical_fragment(),

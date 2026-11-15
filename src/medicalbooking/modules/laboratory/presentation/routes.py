@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
@@ -19,6 +19,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     ResultEntry,
     StoredDocument,
 )
+from medicalbooking.modules.laboratory.application.results_report import build_results_report
 from medicalbooking.modules.laboratory.application.use_cases import LabService
 from medicalbooking.modules.laboratory.domain.policies import MAX_PDF_BYTES, MAX_TESTS_PER_ORDER
 from medicalbooking.shared.domain.errors import ValidationFailed
@@ -33,6 +34,22 @@ class CreateOrderRequest(BaseModel):
     prioridad: str = Field(default="NORMAL", max_length=20)
     observaciones: str | None = Field(default=None, max_length=1000)
     tipo_prueba_ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_TESTS_PER_ORDER)
+
+
+class PatientOrderRequest(BaseModel):
+    """An exam the patient asks for himself or herself. No doctor, no priority, no patient id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tipo_prueba_ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_TESTS_PER_ORDER)
+    observaciones: str | None = Field(default=None, max_length=1000)
+
+
+class WorklistQuery(BaseModel):
+    """Query string of GET /lab/worklist: pending orders, oldest first (default 50, max 200)."""
+
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0, le=2_147_483_647)
 
 
 class ResultItem(BaseModel):
@@ -107,10 +124,34 @@ def _order_json(order: LabOrder) -> dict[str, Any]:
         "prioridad": order.prioridad,
         "estado": order.estado,
         "observaciones": order.observaciones,
+        "medico_id": order.medico_id,
         "pruebas": [
             {"detalle_id": d.id, "tipo_prueba_id": d.tipo_prueba_id, "estado": d.estado}
             for d in order.details
         ],
+    }
+
+
+def _work_item_json(order: LabOrder) -> dict[str, Any]:
+    """An order as the laboratory and the patient request see it: plus where it came from."""
+    lines = [
+        {
+            "detalle_id": d.id,
+            "tipo_prueba_id": d.tipo_prueba_id,
+            "estado": d.estado,
+            "nombre": d.nombre,
+            "codigo": d.codigo,
+        }
+        for d in order.details
+    ]
+    moment = order.fecha or datetime.now(UTC)
+    moment = moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    return {
+        **_order_json(order),
+        "paciente_nombre": order.paciente_nombre,
+        "pruebas": lines,
+        "origen": order.origen,
+        "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
 
 
@@ -119,6 +160,7 @@ def _summary_json(order: LabOrderSummary) -> dict[str, Any]:
     return {
         "id": order.id,
         "paciente_id": order.paciente_id,
+        "medico_id": order.medico_id,
         "estado": order.estado,
         "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
@@ -146,6 +188,9 @@ def _result_json(result: LabResult) -> dict[str, Any]:
         "valor_texto": result.valor_texto,
         "valor_numerico": result.valor_numerico,
         "unidad": result.unidad,
+        "referencia_min": result.referencia_min,
+        "referencia_max": result.referencia_max,
+        "interpretacion": result.interpretacion,
     }
 
 
@@ -172,6 +217,27 @@ def create_order() -> tuple[Response, int]:
         tipo_prueba_ids=[str(item) for item in body.tipo_prueba_ids],
     )
     return jsonify(_order_json(order)), 201
+
+
+@lab_bp.post("/lab/patient-orders")
+@authenticated
+def create_patient_order() -> tuple[Response, int]:
+    body = _parse(PatientOrderRequest)
+    order = _service().create_patient_order(
+        g.actor,
+        tipo_prueba_ids=[str(item) for item in body.tipo_prueba_ids],
+        observaciones=body.observaciones,
+    )
+    return jsonify(_work_item_json(order)), 201
+
+
+@lab_bp.get("/lab/worklist")
+@authenticated
+def worklist() -> tuple[Response, int]:
+    query = _validate(WorklistQuery, request.args.to_dict())
+    rows = _service().list_worklist(g.actor, limit=query.limit, offset=query.offset)
+    items = [_work_item_json(row) for row in rows]
+    return jsonify(items=items, limit=query.limit, offset=query.offset), 200
 
 
 @lab_bp.get("/lab/orders")
@@ -206,6 +272,24 @@ def list_test_types() -> tuple[Response, int]:
     return jsonify(items=[_test_type_json(row) for row in rows]), 200
 
 
+@lab_bp.get("/lab/test-types/<uuid:test_id>/analytes")
+@authenticated
+def list_test_analytes(test_id: uuid.UUID) -> tuple[Response, int]:
+    rows = _service().list_test_analytes(g.actor, str(test_id))
+    items = [
+        {
+            "id": row.id,
+            "nombre": row.nombre,
+            "unidad": row.unidad,
+            "tipo_valor": row.tipo_valor,
+            "obligatorio": row.obligatorio,
+            "orden": row.orden,
+        }
+        for row in rows
+    ]
+    return jsonify(items=items), 200
+
+
 @lab_bp.get("/lab/orders/<uuid:order_id>")
 @authenticated
 def get_order(order_id: uuid.UUID) -> tuple[Response, int]:
@@ -232,6 +316,21 @@ def record_results(order_id: uuid.UUID) -> tuple[Response, int]:
     ]
     order = _service().record_results(g.actor, str(order_id), str(body.detalle_id), entries)
     return jsonify(_order_json(order)), 200
+
+
+@lab_bp.get("/lab/orders/<uuid:order_id>/report.pdf")
+@authenticated
+def results_report(order_id: uuid.UUID) -> Response:
+    """The order's results as a PDF, for whoever may read them (patient, doctor, laboratory)."""
+    order = _service().get_order(g.actor, str(order_id))
+    results = _service().list_results(g.actor, str(order_id))
+    parties = _service().report_parties(g.actor, str(order_id))
+    content = build_results_report(order, results, parties=parties, generated_at=datetime.now(UTC))
+    response = Response(content, mimetype="application/pdf")
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="resultados-{str(order_id)[:8]}.pdf"'
+    )
+    return response
 
 
 @lab_bp.get("/lab/orders/<uuid:order_id>/results")
@@ -272,6 +371,20 @@ def upload_document(order_id: uuid.UUID) -> tuple[Response, int]:
         tipo_documento=tipo,
     )
     return jsonify(_document_json(document)), 201
+
+
+@lab_bp.post("/lab/orders/<uuid:order_id>/confirm")
+@authenticated
+def confirm_order(order_id: uuid.UUID) -> tuple[Response, int]:
+    _service().confirm_order(g.actor, str(order_id))
+    return jsonify(estado="COMPLETADA", confirmada=True, orden_id=str(order_id)), 200
+
+
+@lab_bp.get("/lab/orders/<uuid:order_id>/documents")
+@authenticated
+def list_order_documents(order_id: uuid.UUID) -> tuple[Response, int]:
+    rows = _service().list_order_documents(g.actor, str(order_id))
+    return jsonify(items=[_document_json(row) for row in rows]), 200
 
 
 @lab_bp.get("/documents/<uuid:document_id>/download")

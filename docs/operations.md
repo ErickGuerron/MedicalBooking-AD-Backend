@@ -72,6 +72,30 @@ uv run python -m medicalbooking.workers.expire_holds   # prints expired_holds=N,
 
 Schedule it every few minutes (cron, Windows Task Scheduler, or an Azure job).
 
+### Daily patient notifications (reminders and result mails)
+
+These three run once a day, in this order, on the server that runs the API (the VMs in `deploy/`).
+Each is a short job that exits when done; nothing here runs as a service.
+
+1. `uv run python -m medicalbooking.workers.appointment_reminders` queues the reminder of every
+   confirmed appointment of the day (Ecuador time). One reminder per appointment, however often it runs.
+2. `uv run python -m medicalbooking.workers.outbox_dispatcher` turns the outbox events into
+   notifications. Note: it also delivers to any other destination that is configured (Kafka,
+   MongoDB, Supabase); those deliveries stay pending when they are not configured.
+3. `uv run python -m medicalbooking.workers.send_notifications` sends the due mails through Brevo.
+   Needs `BREVO_API_KEY` and `MAIL_FROM`.
+
+Schedule them **every day at 06:00 (America/Guayaquil)**, in that order, stopping the run if a step
+fails. Use cron on the VM, or an Azure scheduled job. Example for a Linux VM (cron runs in UTC, so
+11:00 UTC is 06:00 in Ecuador, which has no daylight saving time):
+
+```bash
+0 11 * * * cd /opt/medicalbooking && uv run python -m medicalbooking.workers.appointment_reminders && uv run python -m medicalbooking.workers.outbox_dispatcher && uv run python -m medicalbooking.workers.send_notifications
+```
+
+Check it after the first run: each step prints only counts (`reminders_queued=N`,
+`notifications attempted=N sent=N failed=N`) and exits with 0 on success.
+
 ### Knowledge importers (E5)
 
 Imports terminology and evidence as drafts. The procedure is described in `knowledge-import.md`.

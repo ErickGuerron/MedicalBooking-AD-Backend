@@ -52,7 +52,7 @@ class FakeStore:
     taken: set[str] = field(default_factory=set)
     slot_id: str = ""
 
-    def list_available(self, start, end, medico_id, limit):
+    def list_available(self, start, end, medico_id, limit, especialidad_id=None):
         return [
             AvailableSlot(horario_id=sid, medico_id="medico", inicio_utc=ini, fin_utc=ini)
             for sid, ini in sorted(self.slots.items(), key=lambda item: item[1])

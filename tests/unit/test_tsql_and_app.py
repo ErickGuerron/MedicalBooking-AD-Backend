@@ -50,7 +50,9 @@ def test_liveness_does_not_depend_on_database(unreachable_app) -> None:
     response = client.get("/health/live")
 
     assert response.status_code == 200
-    assert response.get_json() == {"status": "ok"}
+    body = response.get_json()
+    assert body["status"] == "ok"
+    assert body["machine"]
 
 
 def test_readiness_reports_unavailable_without_leaking_details(unreachable_app) -> None:

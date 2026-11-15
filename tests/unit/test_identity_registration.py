@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from datetime import date
 
 import pytest
 
@@ -35,6 +36,11 @@ class FakeTokens:
 
 
 class FakeDirectory:
+    taken: set[tuple[str, str]] = set()
+
+    def document_taken(self, document_type: str, document_number: str) -> bool:
+        return (document_type, document_number) in self.taken
+
     def __init__(self) -> None:
         self.users: dict[str, NewUser] = {}
         self.verifications: dict[str, tuple[str, int]] = {}  # token_hash -> (user_id, hours)
@@ -82,7 +88,12 @@ def _service(mailer: FakeMailer | None = None) -> tuple[IdentityService, FakeDir
 
 def _register(service: IdentityService, email: str = "Paciente@Synthetic.test") -> str:
     return service.register_patient(
-        email=email, password=PASSWORD, first_name="Ana", last_name="Sintetica"
+        document_type="CEDULA",
+        document_number="1712345678",
+        email=email,
+        password=PASSWORD,
+        first_name="Ana",
+        last_name="Sintetica",
     )
 
 
@@ -123,12 +134,64 @@ def test_existing_email_gets_the_same_answer_and_no_second_email() -> None:
     assert len(mailer.sent) == 1
 
 
+def test_registration_carries_the_optional_demographics_to_the_patient() -> None:
+    service, directory, _ = _service()
+
+    service.register_patient(
+        document_type="CEDULA",
+        document_number="1712345678",
+        email="a@synthetic.test",
+        password=PASSWORD,
+        first_name="A",
+        last_name="B",
+        sex="F",
+        birth_date="1990-05-17",
+    )
+
+    (user,) = directory.users.values()
+    assert (user.sex, user.birth_date) == ("F", date(1990, 5, 17))
+
+
+def test_registration_without_demographics_stores_none() -> None:
+    service, directory, _ = _service()
+    _register(service)
+
+    (user,) = directory.users.values()
+    assert (user.sex, user.birth_date) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("sex", "birth_date"), [("X", None), (None, "2999-01-01"), (None, "1800-01-01"), (None, "x")]
+)
+def test_invalid_demographics_are_rejected_before_anything_is_stored(sex, birth_date) -> None:
+    service, directory, mailer = _service()
+
+    with pytest.raises(ValidationFailed):
+        service.register_patient(
+            document_type="CEDULA",
+            document_number="1712345678",
+            email="a@synthetic.test",
+            password=PASSWORD,
+            first_name="A",
+            last_name="B",
+            sex=sex,
+            birth_date=birth_date,
+        )
+    assert directory.users == {}
+    assert mailer.sent == []
+
+
 def test_short_password_is_rejected_before_anything_is_stored() -> None:
     service, directory, mailer = _service()
 
     with pytest.raises(ValidationFailed):
         service.register_patient(
-            email="a@synthetic.test", password="short", first_name="A", last_name="B"
+            document_type="CEDULA",
+            document_number="1712345678",
+            email="a@synthetic.test",
+            password="short",
+            first_name="A",
+            last_name="B",
         )
     assert directory.users == {}
     assert mailer.sent == []
@@ -173,3 +236,81 @@ def test_registration_without_mailer_is_still_accepted_and_inactive() -> None:
     assert _register(service) == REGISTRATION_ACCEPTED
     (user,) = directory.users.values()
     assert user.status == "INACTIVO"
+
+
+def test_registration_stores_the_document_and_the_optional_phone() -> None:
+    service, directory, _ = _service()
+
+    service.register_patient(
+        email="a@synthetic.test",
+        password=PASSWORD,
+        first_name="A",
+        last_name="B",
+        document_type="PASAPORTE",
+        document_number=" ab123456 ",
+        phone="+593 99 123 4567",
+    )
+
+    user = next(iter(directory.users.values()))
+    assert (user.document_type, user.document_number) == ("PASAPORTE", "AB123456")
+    assert user.phone == "+593991234567"
+
+
+def test_registration_without_phone_stores_none() -> None:
+    service, directory, _ = _service()
+
+    service.register_patient(
+        email="a@synthetic.test",
+        password=PASSWORD,
+        first_name="A",
+        last_name="B",
+        document_type="CEDULA",
+        document_number="1712345678",
+        phone="  ",
+    )
+
+    assert next(iter(directory.users.values())).phone is None
+
+
+@pytest.mark.parametrize(
+    ("document_type", "number", "phone"),
+    [
+        ("CEDULA", "171234567", None),  # too short for a cédula
+        ("CEDULA", "17123456AB", None),  # letters in a cédula
+        ("PASAPORTE", "AB12", None),  # too short for a passport
+        ("DNI", "1712345678", None),  # not a document type we accept
+        ("CEDULA", "1712345678", "12"),  # phone too short
+    ],
+)
+def test_invalid_document_or_phone_is_rejected_before_anything_is_stored(
+    document_type: str, number: str, phone: str | None
+) -> None:
+    service, directory, _ = _service()
+
+    with pytest.raises(ValidationFailed):
+        service.register_patient(
+            email="a@synthetic.test",
+            password=PASSWORD,
+            first_name="A",
+            last_name="B",
+            document_type=document_type,
+            document_number=number,
+            phone=phone,
+        )
+    assert directory.users == {}
+
+
+def test_a_document_already_registered_is_a_conflict() -> None:
+    service, directory, _ = _service()
+    directory.taken = {("CEDULA", "1712345678")}
+
+    with pytest.raises(Conflict):
+        service.register_patient(
+            email="b@synthetic.test",
+            password=PASSWORD,
+            first_name="B",
+            last_name="C",
+            document_type="CEDULA",
+            document_number="1712345678",
+        )
+    assert directory.users == {}

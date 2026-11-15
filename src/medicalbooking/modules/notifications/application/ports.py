@@ -34,6 +34,22 @@ class DueNotification:
     tipo: str
     destinatario: str
     numero_intentos: int
+    # The aggregate of the outbox event that caused it (the laboratory order, for results).
+    aggregate_id: str | None = None
+
+
+@dataclass(frozen=True)
+class EmailAttachment:
+    name: str
+    content_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
+class EmailContent:
+    subject: str
+    text: str
+    html: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +57,8 @@ class EmailMessage:
     to: str
     subject: str
     text: str
+    attachments: tuple[EmailAttachment, ...] = ()
+    html: str | None = None
 
 
 class NotificationError(Exception):

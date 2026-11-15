@@ -14,6 +14,9 @@ class LabDetail:
     id: str
     tipo_prueba_id: str
     estado: str
+    # Set on the worklist only: the test's name and code, so the queue reads by name.
+    nombre: str | None = None
+    codigo: str | None = None
 
 
 @dataclass(frozen=True)
@@ -21,12 +24,18 @@ class LabOrder:
     id: str
     paciente_id: str
     paciente_user_id: str
-    medico_id: str
-    medico_user_id: str
+    medico_id: str | None
+    medico_user_id: str | None
     prioridad: str
     estado: str
     observaciones: str | None
     details: tuple[LabDetail, ...]
+    origen: str = "MEDICO"
+    # Null while open; once set the order and its results and reports are closed.
+    confirmada: bool = False
+    # Set on the worklist rows only: when the order was placed and who it is for (names only).
+    fecha: datetime | None = None
+    paciente_nombre: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +46,7 @@ class LabOrderSummary:
     paciente_id: str
     estado: str
     fecha: datetime
+    medico_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +56,18 @@ class PatientSummary:
     id: str
     nombre: str
     apellido: str
+
+
+@dataclass(frozen=True)
+class LabTestAnalyte:
+    """An analyte the test asks for, in its presentation order."""
+
+    id: str
+    nombre: str
+    unidad: str | None
+    tipo_valor: str
+    obligatorio: bool
+    orden: int | None
 
 
 @dataclass(frozen=True)
@@ -67,6 +89,10 @@ class LabResult:
     valor_texto: str | None
     valor_numerico: float | None
     unidad: str | None
+    # Validated reference applied to the value and its classification; absent when not evaluated.
+    referencia_min: float | None = None
+    referencia_max: float | None = None
+    interpretacion: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,10 +120,11 @@ class ResultEntry:
 class NewOrder:
     order_id: str
     paciente_id: str
-    medico_id: str
+    medico_id: str | None
     prioridad: str
     observaciones: str | None
     tipo_prueba_ids: list[str]
+    origen: str = "MEDICO"
 
 
 @dataclass(frozen=True)
@@ -141,6 +168,20 @@ class AuditEvent:
     correlation_id: str | None = None
 
 
+@dataclass(frozen=True)
+class ReportParties:
+    """Who the results report is about and who requested the tests. Missing data is None."""
+
+    patient_name: str
+    patient_document: str | None
+    patient_birth_date: date | None
+    patient_sex: str | None
+    patient_email: str | None
+    patient_phone: str | None
+    doctor_name: str | None
+    doctor_registration: str | None
+
+
 class LabStore(Protocol):
     def analyte_exists(self, analito_id: str) -> bool:
         """True when the analyte is in the active knowledge catalog."""
@@ -176,6 +217,10 @@ class LabStore(Protocol):
 
     def get_order(self, order_id: str) -> LabOrder | None: ...
 
+    def list_pending_orders(self, *, limit: int, offset: int) -> list[LabOrder]: ...
+
+    def confirm_order(self, order_id: str, now: datetime, actor_user_id: str) -> str: ...
+
     def list_patients(self, *, medico_id: str, limit: int, offset: int) -> list[PatientSummary]:
         """Patients the doctor treats (cita or lab order, any status) with an ACTIVO account.
 
@@ -186,6 +231,8 @@ class LabStore(Protocol):
     def list_test_types(self) -> list[LabTestType]:
         """Active test types only, ordered by nombre then id."""
         ...
+
+    def list_test_analytes(self, test_id: str) -> list[LabTestAnalyte]: ...
 
     def list_orders(
         self,
@@ -215,6 +262,8 @@ class LabStore(Protocol):
 
     def list_results(self, order_id: str) -> list[LabResult]: ...
 
+    def report_parties(self, order_id: str) -> ReportParties | None: ...
+
     def record_review(
         self,
         order_id: str,
@@ -227,6 +276,8 @@ class LabStore(Protocol):
         ...
 
     def create_document(self, command: NewDocument) -> StoredDocument: ...
+
+    def list_order_documents(self, order_id: str) -> list[StoredDocument]: ...
 
     def get_document(self, document_id: str) -> StoredDocument | None: ...
 

@@ -62,6 +62,45 @@ def identity_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/me/password": {
+                "post": {
+                    "tags": ["Identity"],
+                    "operationId": "changeOwnPassword",
+                    "summary": "Change the signed-in account's password",
+                    "description": (
+                        "Proves the current password first. A wrong current password is 403, "
+                        "never 401, so the session is kept. The new password must differ and have "
+                        "at least 12 characters. A wrong current password is a failed sign-in."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["current_password", "new_password"],
+                                    "properties": {
+                                        "current_password": {"type": "string", "minLength": 1},
+                                        "new_password": {
+                                            "type": "string",
+                                            "minLength": 12,
+                                            "maxLength": 256,
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "204": {"description": "Password changed"},
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("The current password is not correct"),
+                        "422": _problem("New password too short, or equal to the current one"),
+                    },
+                }
+            },
             "/api/v1/me": {
                 "get": {
                     "tags": ["Identity"],
@@ -139,12 +178,15 @@ def identity_fragment() -> dict[str, Any]:
                     "description": (
                         "Always answers 202 with the same message, whether or not the email "
                         "already has an account. The account stays inactive until the link "
-                        "sent by email is opened."
+                        "sent by email is opened. sexo (M or F) and fecha_nacimiento "
+                        "(YYYY-MM-DD) are "
+                        "optional and stored on the patient record."
                     ),
                     "requestBody": _json_body("RegisterRequest"),
                     "responses": {
                         "202": _json_response("Request accepted", "RegistrationAccepted"),
-                        "422": _problem("Invalid request body or weak password"),
+                        "409": _problem("The identity document is already registered"),
+                        "422": _problem("Invalid request body, weak password or document"),
                     },
                 }
             },
@@ -195,11 +237,14 @@ def identity_fragment() -> dict[str, Any]:
                 },
                 "MeResponse": {
                     "type": "object",
-                    "required": ["id", "roles", "permissions"],
+                    "required": ["id", "roles", "permissions", "nombre", "apellido", "correo"],
                     "properties": {
                         "id": {"type": "string", "format": "uuid"},
                         "roles": {"type": "array", "items": {"type": "string"}},
                         "permissions": {"type": "array", "items": {"type": "string"}},
+                        "nombre": {"type": "string"},
+                        "apellido": {"type": "string"},
+                        "correo": {"type": "string", "format": "email"},
                     },
                 },
                 "UserCreated": {

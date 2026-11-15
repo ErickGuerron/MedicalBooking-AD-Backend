@@ -1,5 +1,18 @@
+from medicalbooking.modules.replica.infrastructure.supabase_projection import SupabaseOutboxHandler
 from medicalbooking.modules.synchronization.infrastructure.kafka_handler import KafkaOutboxHandler
 from medicalbooking.workers.outbox_dispatcher import build_handlers
+
+
+def test_the_supabase_destination_is_wired_only_with_a_writer_connection():
+    without = build_handlers(engine=object(), kafka_bootstrap=None, kafka_topic="t")
+    assert not any(isinstance(h, SupabaseOutboxHandler) for h in without)
+
+    with_supabase = build_handlers(
+        engine=object(), kafka_bootstrap=None, kafka_topic="t", supabase_connect=lambda: None
+    )
+    supabase = [h for h in with_supabase if isinstance(h, SupabaseOutboxHandler)]
+    assert len(supabase) == 1
+    assert supabase[0].destination_code == "SUPABASE"
 
 
 def test_the_kafka_destination_is_wired_only_when_a_broker_is_configured():

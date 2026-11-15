@@ -351,3 +351,14 @@ def test_permission_matrix_is_loaded_from_the_database(client, engine) -> None:
 
     # E5 (migration 0006) grants laboratory staff read access to validated knowledge.
     assert set(permissions) == {"resultados.registrar", "conocimiento.leer"}
+
+
+def test_me_returns_the_name_and_email_of_the_account(client, engine) -> None:
+    _, email = _account(engine, "PACIENTE")
+
+    body = client.get("/api/v1/me", headers=_auth(_token(client, email))).get_json()
+
+    assert body["nombre"] == "Sintetico"
+    assert body["apellido"] == "Paciente"
+    assert body["correo"] == email
+    assert not {"password", "password_hash"} & set(body)

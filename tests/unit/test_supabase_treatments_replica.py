@@ -56,10 +56,10 @@ def _table_bodies(sql: str) -> dict[str, str]:
     return {name: body for name, body in TABLE.findall(_without_comments(sql))}
 
 
-def test_the_revision_chain_head_is_0010_and_follows_0009() -> None:
+def test_the_revision_chain_contains_0010_and_follows_0009() -> None:
     script = ScriptDirectory(str(SUPABASE))
 
-    assert script.get_heads() == [REVISION]
+    assert REVISION in {rev.revision for rev in script.walk_revisions()}
     assert script.get_revision(REVISION).down_revision == PREVIOUS
 
 

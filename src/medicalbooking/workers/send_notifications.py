@@ -14,14 +14,32 @@ the provider or database error may carry the api key or connection data. Only co
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 from medicalbooking.config import Settings
+from medicalbooking.modules.laboratory.application.order_report import render_order_report
+from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
+from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
 from medicalbooking.modules.notifications.application.dispatcher import NotificationDispatcher
+from medicalbooking.modules.notifications.application.ports import (
+    DueNotification,
+    EmailAttachment,
+    NotificationError,
+)
+from medicalbooking.modules.notifications.domain.templates import (
+    PAGO_COMPLETADO,
+    RESULTADO_LABORATORIO,
+)
 from medicalbooking.modules.notifications.infrastructure.brevo import BrevoNotificationSender
+from medicalbooking.modules.notifications.infrastructure.email_render import content_for
 from medicalbooking.modules.notifications.infrastructure.repositories import SqlNotificationStore
+from medicalbooking.modules.payments.application.invoice_report import build_invoice_pdf
+from medicalbooking.modules.payments.domain.invoice_links import invoice_download_url
+from medicalbooking.modules.payments.infrastructure.invoice_store import SqlInvoiceStore
 from medicalbooking.shared.infrastructure.database import create_database_engine
 
 logger = logging.getLogger(__name__)
@@ -66,14 +84,69 @@ def main() -> int:
         if missing:
             logger.error("worker configuration incomplete: missing %s", ", ".join(missing))
             return 1
+        lab_store = SqlLabStore(engine)
+        documents = LocalDocumentStorage(Path(settings.lab_documents_dir))
+
+        invoices = SqlInvoiceStore(engine)
+        signing_key = (
+            settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None
+        )
+
+        def invoice_link(pago_id: str) -> str:
+            # Without the key no signed link can be made, so the payment email is not sent.
+            if signing_key is None:
+                raise NotificationError("INVOICE_LINK_NOT_CONFIGURED")
+            return invoice_download_url(
+                settings.app_public_url, signing_key, pago_id, datetime.now(UTC)
+            )
+
+        def attachments_for(due: DueNotification) -> tuple[EmailAttachment, ...]:
+            if due.tipo == PAGO_COMPLETADO and due.aggregate_id is not None:
+                # The invoice is built now from the paid payment and never stored.
+                invoice = invoices.paid_invoice_for_payment(due.aggregate_id)
+                if invoice is None:
+                    raise NotificationError("INVOICE_NOT_FOUND")
+                name = f"factura-{invoice.numero_factura}.pdf"
+                pdf = build_invoice_pdf(invoice)
+                return (EmailAttachment(name=name, content_type="application/pdf", data=pdf),)
+            # The results go out as the order's PDF, built now from the completed order.
+            if due.tipo != RESULTADO_LABORATORIO or due.aggregate_id is None:
+                return ()
+            pdf = render_order_report(lab_store, due.aggregate_id, datetime.now(UTC))
+            if pdf is None:
+                raise NotificationError("ORDER_NOT_FOUND")
+            name = f"resultados-{due.aggregate_id[:8]}.pdf"
+            attachments = [EmailAttachment(name=name, content_type="application/pdf", data=pdf)]
+            # The laboratory's own report goes with the results, when it was uploaded.
+            for document in lab_store.list_order_documents(due.aggregate_id):
+                content = documents.read(document.ruta_storage)
+                if hashlib.sha256(content).hexdigest() != document.hash_sha256:
+                    raise NotificationError("REPORT_INTEGRITY")
+                attachments.append(
+                    EmailAttachment(
+                        name=document.nombre_archivo,
+                        content_type="application/pdf",
+                        data=content,
+                    )
+                )
+            return tuple(attachments)
+
+        notifications = SqlNotificationStore(engine)
         dispatcher = NotificationDispatcher(
-            queue=SqlNotificationStore(engine),
+            queue=notifications,
             sender=BrevoNotificationSender(
                 api_key=settings.brevo_api_key.get_secret_value(),
                 sender_email=settings.mail_from,
                 sender_name=settings.mail_from_name,
             ),
             clock=lambda: datetime.now(UTC),
+            attachments_for=attachments_for,
+            content_for=lambda due: content_for(
+                due,
+                notifications,
+                settings.email_assets_base_url,
+                invoice_download_url=lambda pago_id: invoice_link(pago_id),
+            ),
         )
         return run(dispatcher)
     finally:

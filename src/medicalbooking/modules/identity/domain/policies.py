@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 
 from medicalbooking.shared.domain.errors import ValidationFailed
 
+PATIENT_DOCUMENT_TYPES = ("CEDULA", "PASAPORTE")
+
 # Brute-force protection (spec section 10). Five consecutive failures lock the account
 # for fifteen minutes; a successful login clears the counter.
 MAX_FAILED_LOGINS = 5
@@ -64,3 +66,26 @@ def failure_outcome(
     if after >= MAX_FAILED_LOGINS:
         return after, now + LOCK_DURATION
     return after, None
+
+
+def validate_document(document_type: str, number: str) -> str:
+    """A patient's identity document: a 10-digit cédula, or a 6 to 20 letter-digit passport."""
+    value = number.strip().upper()
+    if document_type not in PATIENT_DOCUMENT_TYPES:
+        raise ValidationFailed("Unknown document type")
+    if document_type == "CEDULA" and not (len(value) == 10 and value.isdigit()):
+        raise ValidationFailed("A cédula has 10 digits")
+    if document_type == "PASAPORTE" and not (6 <= len(value) <= 20 and value.isalnum()):
+        raise ValidationFailed("A passport number has 6 to 20 letters or digits")
+    return value
+
+
+def validate_phone(raw: str | None) -> str | None:
+    """An optional phone: empty means none; otherwise 7 to 15 digits, with an optional leading +."""
+    if raw is None or not raw.strip():
+        return None
+    value = raw.strip().replace(" ", "").replace("-", "")
+    digits = value[1:] if value.startswith("+") else value
+    if not (7 <= len(digits) <= 15 and digits.isdigit()):
+        raise ValidationFailed("The phone must have 7 to 15 digits")
+    return value

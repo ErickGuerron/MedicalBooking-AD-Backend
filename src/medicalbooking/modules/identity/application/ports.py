@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 
@@ -51,6 +51,13 @@ class NewUser:
     status: str = "ACTIVO"
     # Set only for a MEDICO: the repository then writes the clinician's profile (medicos) too.
     professional_registration: str | None = None
+    # Optional demographics of a PACIENTE, stored on the patient row created with the account.
+    sex: str | None = None
+    birth_date: date | None = None
+    # Patients: the identity document (required at self-registration) and the optional phone.
+    document_type: str | None = None
+    document_number: str | None = None
+    phone: str | None = None
 
 
 class MailDeliveryError(Exception):
@@ -64,6 +71,8 @@ class ActivationMailer(Protocol):
 
 
 class UserDirectory(Protocol):
+    def document_taken(self, document_type: str, document_number: str) -> bool: ...
+
     def create_pending_patient(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
         """Create an INACTIVO patient and its verification token in one transaction.
 
@@ -85,6 +94,10 @@ class UserDirectory(Protocol):
 
     def create_user(self, new_user: NewUser) -> None: ...
 
+    def find_user(self, user_id: str) -> UserSummary | None:
+        """One account's name, email, status and roles. Never reads credentials."""
+        ...
+
     def list_users(self, limit: int, offset: int) -> list[UserSummary]:
         """One page of accounts ordered by email, with their roles. Never reads credentials."""
         ...
@@ -94,6 +107,8 @@ class UserDirectory(Protocol):
         ...
 
     def reset_failed_logins(self, user_id: str) -> None: ...
+
+    def update_password_hash(self, user_id: str, password_hash: str) -> None: ...
 
 
 class PasswordHasher(Protocol):

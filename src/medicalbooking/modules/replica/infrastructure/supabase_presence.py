@@ -10,12 +10,17 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-DESTINATION_CODE = "KAFKA"
+DESTINATION_CODE = "SUPABASE"
 BATCH_SIZE = 500
 
 _PRESENT_QUERY: dict[str, str] = {
     "usuario": "SELECT lower(id::text) FROM replica.usuarios WHERE lower(id::text) = ANY(%s)",
     "cita": "SELECT lower(id::text) FROM replica.citas WHERE lower(id::text) = ANY(%s)",
+}
+
+_LIST_QUERY: dict[str, str] = {
+    "usuario": "SELECT lower(id::text) FROM replica.usuarios",
+    "cita": "SELECT lower(id::text) FROM replica.citas",
 }
 
 
@@ -36,5 +41,15 @@ class SupabasePresenceCheck:
                     cursor.execute(query, (batch,))
                     found.update(str(row[0]) for row in cursor.fetchall())
             return found
+        finally:
+            connection.close()
+
+    def list_ids(self, aggregate_type: str) -> frozenset[str]:
+        """Every id the replica table holds, lower-case, read over one connection."""
+        connection = self._connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(_LIST_QUERY[aggregate_type])
+                return frozenset(str(row[0]) for row in cursor.fetchall())
         finally:
             connection.close()

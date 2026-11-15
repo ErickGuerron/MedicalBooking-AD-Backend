@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 TRACKED_AGGREGATE_TYPES: frozenset[str] = frozenset({"usuario", "cita"})
 DELETED_EVENT_TYPES: frozenset[str] = frozenset({"usuario.eliminado", "cita.eliminada"})
+# The delete event that announces a hard delete of each tracked aggregate type.
+TOMBSTONE_EVENT_TYPES: dict[str, str] = {"usuario": "usuario.eliminado", "cita": "cita.eliminada"}
 
 REASON_MISSING = "missing"
 REASON_PRESENT_AFTER_DELETE = "present_after_delete"
@@ -41,6 +43,15 @@ class Repair:
 
 def expected_present(event_type: str) -> bool:
     return event_type not in DELETED_EVENT_TYPES
+
+
+def plan_orphans(source_ids: frozenset[str], replica_ids: frozenset[str]) -> frozenset[str]:
+    """Replica ids with no row left in the source: hard deletes the outbox never announced.
+
+    Callers read ``replica_ids`` before ``source_ids``: a row created during the cycle then
+    cannot be mistaken for a delete, because a replica only holds rows the outbox delivered.
+    """
+    return replica_ids - source_ids
 
 
 def plan_repairs(

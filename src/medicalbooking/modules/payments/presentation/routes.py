@@ -23,6 +23,7 @@ from medicalbooking.modules.payments.application.billing_service import (
     CheckoutStatus,
     InvoiceRecord,
 )
+from medicalbooking.modules.payments.application.invoice_report import build_invoice_pdf
 from medicalbooking.modules.payments.application.payment_methods import (
     PaymentMethodService,
     SavedCard,
@@ -35,7 +36,9 @@ from medicalbooking.modules.payments.application.webhook_service import (
     StripeWebhookService,
     WebhookNotConfigured,
 )
+from medicalbooking.modules.payments.domain.invoice_links import verify_invoice_link
 from medicalbooking.modules.payments.domain.payment_methods import parse_page_limit
+from medicalbooking.modules.payments.infrastructure.invoice_store import SqlInvoiceStore
 from medicalbooking.modules.payments.infrastructure.refund_repositories import SqlRefundStore
 from medicalbooking.modules.payments.infrastructure.stripe_checkout import StripeCheckoutGateway
 from medicalbooking.shared.domain.errors import NotFound, ValidationFailed
@@ -47,6 +50,7 @@ BILLING_EXTENSION = "medicalbooking.billing"
 PAYMENT_METHODS_EXTENSION = "medicalbooking.payment_methods"
 REFUNDS_EXTENSION = "medicalbooking.refunds"
 IDEMPOTENCY_HEADER = "Idempotency-Key"
+INVOICE_LINK_EXTENSION = "medicalbooking.invoice_link_key"
 
 
 class CreateInvoiceRequest(BaseModel):
@@ -137,6 +141,37 @@ def request_refund(pago_id: str) -> tuple[Response, int]:
         idempotency_key=key,
     )
     return jsonify(_refund_json(outcome.record)), 200 if outcome.replayed else 201
+
+
+@payments_bp.get("/payments/<pago_id>/factura.pdf")
+def paid_invoice_pdf(pago_id: str) -> Response:
+    """The paid invoice as a PDF, for the download link in the payment email.
+
+    No JWT: the signed, expiring link is the access. Every refusal answers the same 404, so a
+    caller cannot tell a forged link from an expired one or from a payment that does not exist.
+    """
+    not_found = NotFound("This invoice does not exist")
+    try:
+        pago = uuid.UUID(pago_id)
+    except ValueError as error:
+        raise not_found from error
+    key: str | None = current_app.extensions.get(INVOICE_LINK_EXTENSION)
+    expires = request.args.get("exp", default="", type=str)
+    signature = request.args.get("sig", default="", type=str)
+    if key is None or not expires.isdigit():
+        raise not_found
+    if not verify_invoice_link(key, str(pago), int(expires), signature, datetime.now(UTC)):
+        raise not_found
+    engine = current_app.extensions["medicalbooking.engine"]
+    invoice = SqlInvoiceStore(engine).paid_invoice_for_payment(str(pago))
+    if invoice is None:
+        raise not_found
+    response = Response(build_invoice_pdf(invoice), mimetype="application/pdf")
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="factura-{invoice.numero_factura}.pdf"'
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @payments_bp.get("/me/payment-methods")

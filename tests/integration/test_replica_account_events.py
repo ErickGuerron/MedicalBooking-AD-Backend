@@ -67,7 +67,14 @@ def engine(app: Flask) -> Engine:
 def _register(client, email: str) -> None:
     response = client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": PASSWORD, "first_name": "Ana", "last_name": "Sintetica"},
+        json={
+            "email": email,
+            "password": PASSWORD,
+            "first_name": "Ana",
+            "last_name": "Sintetica",
+            "tipo_documento": "CEDULA",
+            "numero_documento": str(uuid.uuid4().int)[:10],
+        },
     )
     assert response.status_code == 202, response.get_json()
 

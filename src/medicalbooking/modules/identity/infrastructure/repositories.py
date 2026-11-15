@@ -95,6 +95,20 @@ class SqlUserDirectory:
                 },
             )
 
+    def update_password_hash(self, user_id: str, password_hash: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE credenciales_usuario SET password_hash = :h, intentos_fallidos = 0, "
+                    "actualizado_en = SYSUTCDATETIME() WHERE usuario_id = :u"
+                ),
+                {"h": password_hash, "u": user_id},
+            )
+            conn.execute(
+                text("UPDATE usuarios SET bloqueado_hasta = NULL WHERE id = :u"),
+                {"u": user_id},
+            )
+
     def reset_failed_logins(self, user_id: str) -> None:
         with self._engine.begin() as conn:
             conn.execute(
@@ -177,6 +191,28 @@ class SqlUserDirectory:
     def create_user(self, new_user: NewUser) -> None:
         self._create(new_user, verification=None)
 
+    def find_user(self, user_id: str) -> UserSummary | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT u.id, u.email, u.nombre, u.apellido, u.estado, "
+                    "(SELECT STRING_AGG(r.nombre, ',') FROM usuarios_roles ur "
+                    "JOIN roles r ON r.id = ur.rol_id WHERE ur.usuario_id = u.id) AS roles "
+                    "FROM usuarios u WHERE u.id = :id"
+                ),
+                {"id": user_id},
+            ).first()
+        if row is None:
+            return None
+        return UserSummary(
+            user_id=_canonical(row.id),
+            email=row.email,
+            first_name=row.nombre,
+            last_name=row.apellido,
+            status=row.estado,
+            roles=tuple(sorted(name for name in (row.roles or "").split(",") if name)),
+        )
+
     def list_users(self, limit: int, offset: int) -> list[UserSummary]:
         """One page ordered by email. Credentials are never selected.
 
@@ -205,6 +241,17 @@ class SqlUserDirectory:
             )
             for row in rows
         ]
+
+    def document_taken(self, document_type: str, document_number: str) -> bool:
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text(
+                    "SELECT 1 FROM pacientes "
+                    "WHERE tipo_documento = :tipo AND numero_documento = :numero"
+                ),
+                {"tipo": document_type, "numero": document_number},
+            ).first()
+        return found is not None
 
     def create_pending_patient(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
         self._create(new_user, verification=(token_hash, valid_hours))
@@ -249,8 +296,9 @@ class SqlUserDirectory:
                 conn.execute(
                     text(
                         "INSERT INTO usuarios "
-                        "(id, email, nombre, apellido, estado, creado_en, actualizado_en) "
-                        "VALUES (:id, :email, :nombre, :apellido, :estado, "
+                        "(id, email, nombre, apellido, estado, telefono, "
+                        "creado_en, actualizado_en) "
+                        "VALUES (:id, :email, :nombre, :apellido, :estado, :telefono, "
                         "SYSUTCDATETIME(), SYSUTCDATETIME())"
                     ),
                     {
@@ -259,6 +307,7 @@ class SqlUserDirectory:
                         "nombre": new_user.first_name,
                         "apellido": new_user.last_name,
                         "estado": new_user.status,
+                        "telefono": new_user.phone,
                     },
                 )
                 conn.execute(
@@ -286,10 +335,20 @@ class SqlUserDirectory:
                         paciente_id = str(uuid.uuid4())
                         conn.execute(
                             text(
-                                "INSERT INTO pacientes (id, usuario_id, creado_en) "
-                                "VALUES (:id, :u, SYSUTCDATETIME())"
+                                "INSERT INTO pacientes "
+                                "(id, usuario_id, sexo_registrado, fecha_nacimiento, "
+                                "tipo_documento, numero_documento, creado_en) "
+                                "VALUES (:id, :u, :sexo, :nacimiento, :tipo, :numero, "
+                                "SYSUTCDATETIME())"
                             ),
-                            {"id": paciente_id, "u": new_user.user_id},
+                            {
+                                "id": paciente_id,
+                                "u": new_user.user_id,
+                                "sexo": new_user.sex,
+                                "nacimiento": new_user.birth_date,
+                                "tipo": new_user.document_type,
+                                "numero": new_user.document_number,
+                            },
                         )
                 if new_user.professional_registration is not None:
                     _insert_medico(conn, new_user)

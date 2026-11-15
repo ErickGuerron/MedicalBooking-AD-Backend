@@ -24,8 +24,11 @@ from medicalbooking.modules.identity.domain.policies import (
     PERM_USERS_ADMIN,
     can_read_patient,
     is_locked,
+    validate_document,
     validate_page,
+    validate_phone,
 )
+from medicalbooking.shared.domain.demographics import parse_birth_date, validate_sex
 from medicalbooking.shared.domain.errors import (
     Conflict,
     Forbidden,
@@ -82,8 +85,15 @@ class IdentityService:
         password: str,
         first_name: str,
         last_name: str,
+        document_type: str,
+        document_number: str,
+        phone: str | None = None,
+        sex: str | None = None,
+        birth_date: str | None = None,
     ) -> str:
         """Create an inactive patient and send an activation link.
+
+        The identity document is required and must be new; the phone is optional.
 
         Always returns the same message. An existing email produces the same answer
         and the same work (password hashing), so the response does not reveal which
@@ -92,6 +102,15 @@ class IdentityService:
         normalized = _normalize_email(email)
         if len(password) < MIN_PASSWORD_LENGTH:
             raise ValidationFailed(f"Password must have at least {MIN_PASSWORD_LENGTH} characters")
+        # Invalid demographics are a 422 about the request itself, never about the email.
+        parsed_sex = None if sex is None else validate_sex(sex)
+        parsed_birth = (
+            None if birth_date is None else parse_birth_date(birth_date, self._clock().date())
+        )
+        number = validate_document(document_type, document_number)
+        parsed_phone = validate_phone(phone)
+        if self._directory.document_taken(document_type, number):
+            raise Conflict("Document already registered")
         password_hash = self._hasher.hash(password)
         token = secrets.token_urlsafe(32)
         new_user = NewUser(
@@ -102,6 +121,11 @@ class IdentityService:
             password_hash=password_hash,
             roles=(PATIENT_ROLE,),
             status=INACTIVE,
+            sex=parsed_sex,
+            birth_date=parsed_birth,
+            document_type=document_type,
+            document_number=number,
+            phone=parsed_phone,
         )
         try:
             self._directory.create_pending_patient(
@@ -214,6 +238,35 @@ class IdentityService:
             )
         )
         return user_id
+
+    def change_password(self, actor: AccessProfile, current: str, new: str) -> None:
+        """The signed-in account replaces its password after proving the current one.
+
+        A wrong current password is a 403, never a 401: the portal signs out on 401. It counts as
+        a failed login, so guessing it locks the account like a failed sign-in does.
+        """
+        profile = self._directory.find_user(actor.user_id)
+        if profile is None:
+            raise Unauthenticated("Invalid credentials")
+        record = self._directory.find_credentials_by_email(profile.email)
+        if record is None or record.password_hash is None:
+            raise Unauthenticated("Invalid credentials")
+        now = self._clock()
+        if is_locked(record.locked_until, now):
+            raise Forbidden("La contraseña actual no es correcta")
+        if not self._hasher.verify(record.password_hash, current):
+            self._directory.register_failed_login(actor.user_id, now)
+            raise Forbidden("La contraseña actual no es correcta")
+        if new == current:
+            raise ValidationFailed("La nueva contraseña debe ser distinta de la actual")
+        self._directory.update_password_hash(actor.user_id, self._hasher.hash(new))
+
+    def own_profile(self, actor: AccessProfile) -> UserSummary:
+        """The authenticated account's name and email, for the greeting and the account screen."""
+        profile = self._directory.find_user(actor.user_id)
+        if profile is None:
+            raise Unauthenticated("Authentication required")
+        return profile
 
     def list_users(self, actor: AccessProfile, *, limit: int, offset: int) -> list[UserSummary]:
         if PERM_USERS_ADMIN not in actor.permissions:

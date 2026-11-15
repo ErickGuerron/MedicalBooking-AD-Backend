@@ -77,14 +77,34 @@ def test_cancelled_appointment_creates_its_own_notification() -> None:
     assert [row.tipo for row in repository.rows.values()] == ["CITA_CANCELADA"]
 
 
-def test_lab_result_ready_creates_a_notification_for_the_order_patient() -> None:
+def test_completed_lab_order_creates_a_results_notification_for_the_patient() -> None:
     repository = _Repository()
 
     _handler(repository).handle(
-        _event("resultado_laboratorio.registrado", "orden_laboratorio", ORDER_ID)
+        _event(
+            "orden_laboratorio.confirmada",
+            "orden_laboratorio",
+            ORDER_ID,
+            payload={"estado_orden": "COMPLETADA"},
+        )
     )
 
     assert [row.tipo for row in repository.rows.values()] == ["RESULTADO_LABORATORIO"]
+
+
+def test_partial_lab_results_wait_until_the_order_is_completed() -> None:
+    repository = _Repository()
+
+    _handler(repository).handle(
+        _event(
+            "orden_laboratorio.confirmada",
+            "orden_laboratorio",
+            ORDER_ID,
+            payload={"estado_orden": "EN_PROCESO"},
+        )
+    )
+
+    assert repository.rows == {}
 
 
 def test_same_event_delivered_twice_creates_one_row_and_both_calls_succeed() -> None:
@@ -127,7 +147,7 @@ def test_missing_patient_is_a_permanent_delivery_error() -> None:
 def test_clinical_payload_never_reaches_the_notification_row() -> None:
     repository = _Repository()
     event = _event(
-        "resultado_laboratorio.registrado",
+        "orden_laboratorio.confirmada",
         "orden_laboratorio",
         ORDER_ID,
         payload={"detalle_id": "Hemoglobina 7.2 g/dL", "estado_orden": "COMPLETADA"},
@@ -138,3 +158,32 @@ def test_clinical_payload_never_reaches_the_notification_row() -> None:
     row = next(iter(repository.rows.values()))
     assert "Hemoglobina" not in repr(row)
     assert "7.2" not in repr(row)
+
+
+PAYMENT_ID = UUID("55555555-5555-5555-5555-555555555555")
+
+
+def test_confirmed_payment_creates_a_payment_notification() -> None:
+    repository = _Repository()
+
+    _handler(repository).handle(
+        _event(
+            "pago.actualizado",
+            "pago",
+            PAYMENT_ID,
+            payload={"pago": {"estado": "CONFIRMADO"}},
+        )
+    )
+
+    assert [row.tipo for row in repository.rows.values()] == ["PAGO_COMPLETADO"]
+
+
+@pytest.mark.parametrize("estado", ["PENDIENTE", "RECHAZADO", "CANCELADO"])
+def test_payment_states_other_than_confirmed_create_nothing(estado: str) -> None:
+    repository = _Repository()
+
+    _handler(repository).handle(
+        _event("pago.actualizado", "pago", PAYMENT_ID, payload={"pago": {"estado": estado}})
+    )
+
+    assert repository.rows == {}
