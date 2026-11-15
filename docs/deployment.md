@@ -100,9 +100,9 @@ replica back to the running image if one fails. Migrations move forward only.
 
 ```bash
 # VM1 (applies migrations):
-*/15 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm1/compose.yaml --migrate >> $HOME/logs/release-deploy.log 2>&1
+*/5 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm1/compose.yaml --migrate >> $HOME/logs/release-deploy.log 2>&1
 # VM2 (replicas only):
-*/15 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm2/compose.yaml >> $HOME/logs/release-deploy.log 2>&1
+*/5 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm2/compose.yaml >> $HOME/logs/release-deploy.log 2>&1
 ```
 
 State lives in `~/.local/state/medilo` (`current` names the image the VM serves). The tests in
