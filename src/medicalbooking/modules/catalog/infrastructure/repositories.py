@@ -29,7 +29,8 @@ from medicalbooking.shared.infrastructure.sql_errors import is_unique_violation
 SCHEDULE_HORIZON = timedelta(days=31)
 
 _SERVICE_SELECT = (
-    "SELECT id, nombre, duracion_min, precio_base, moneda, especialidad_id FROM servicios_medicos "
+    "SELECT id, nombre, duracion_min, precio_base, moneda, especialidad_id, "
+    "requiere_orden_medica FROM servicios_medicos "
 )
 
 
@@ -50,6 +51,7 @@ def _service(row) -> Service:
         precio_base=Decimal(row.precio_base),
         moneda=row.moneda,
         especialidad_id=row.especialidad_id,
+        requiere_orden_medica=bool(row.requiere_orden_medica),
     )
 
 

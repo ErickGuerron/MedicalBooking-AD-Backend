@@ -106,6 +106,7 @@ def _catalog_service_json(service: Service) -> dict[str, Any]:
         "precio_base": str(service.precio_base),
         "moneda": service.moneda,
         "especialidad_id": service.especialidad_id,
+        "requiere_orden_medica": service.requiere_orden_medica,
     }
 
 

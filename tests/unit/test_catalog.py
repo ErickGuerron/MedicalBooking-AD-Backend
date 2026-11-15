@@ -233,6 +233,7 @@ def test_service_listing_shape(client) -> None:
         "precio_base": "25.00",
         "moneda": "USD",
         "especialidad_id": 1,
+        "requiere_orden_medica": False,
     }
 
 

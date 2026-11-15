@@ -314,6 +314,7 @@ def catalog_fragment() -> dict[str, Any]:
                         "precio_base",
                         "moneda",
                         "especialidad_id",
+                        "requiere_orden_medica",
                     ],
                     "properties": {
                         "id": uuid_schema,
@@ -322,6 +323,7 @@ def catalog_fragment() -> dict[str, Any]:
                         "precio_base": {"type": "string"},
                         "moneda": {"type": "string"},
                         "especialidad_id": {"type": ["integer", "null"]},
+                        "requiere_orden_medica": {"type": "boolean"},
                     },
                 },
                 "ServiceList": {

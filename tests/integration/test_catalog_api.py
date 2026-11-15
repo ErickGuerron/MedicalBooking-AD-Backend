@@ -210,3 +210,25 @@ def test_availability_adds_the_doctor_and_filters_by_specialty(app, engine) -> N
     assert [item["medico_id"] for item in items] == [doctor_id]
     assert items[0]["medico"]["id"] == doctor_id
     assert items[0]["medico"]["nombre"]
+
+
+def test_service_flags_say_whether_it_needs_a_medical_order(app, engine) -> None:
+    admin = _headers(app, _user(engine, "ADMINISTRADOR"))
+    patient = _headers(app, _user(engine, "PACIENTE"))
+    client = app.test_client()
+    created = client.post(
+        "/api/v1/services",
+        json={"nombre": f"Revision-{uuid.uuid4()}", "duracion_min": 20, "precio_base": "15"},
+        headers=admin,
+    ).get_json()
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE servicios_medicos SET requiere_orden_medica = 1 WHERE id = :id"),
+            {"id": created["id"]},
+        )
+
+    listing = client.get("/api/v1/services", headers=patient).get_json()["items"]
+    items = {item["id"]: item for item in listing}
+
+    assert created["requiere_orden_medica"] is False
+    assert items[created["id"]]["requiere_orden_medica"] is True
