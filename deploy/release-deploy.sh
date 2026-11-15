@@ -38,27 +38,40 @@ log() {
 }
 
 # Highest X.Y.Z tag across the first pages of the Docker Hub tag list. Prints nothing when no
-# release exists yet. Fails when Docker Hub cannot be read.
+# release exists yet. Returns 1 when Docker Hub cannot be read or answers something unparseable.
+# Every step returns explicitly: set -e does not apply inside a function called from `if`.
 latest_release() {
   local url="https://hub.docker.com/v2/repositories/${repo}/tags?page_size=100"
   local page pages=0 tags_file
   tags_file="$(mktemp)"
   while [ -n "$url" ] && [ "$pages" -lt 10 ]; do
-    page="$("$curl_bin" -fsSL "$url")"
-    printf '%s' "$page" | python3 -c '
+    if ! page="$("$curl_bin" -fsSL "$url")"; then
+      rm -f "$tags_file"
+      return 1
+    fi
+    if ! printf '%s' "$page" | python3 -c '
 import json, sys
 for result in json.load(sys.stdin).get("results", []):
     print(result["name"])
-' >> "$tags_file"
-    url="$(printf '%s' "$page" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("next") or "")')"
+' >> "$tags_file"; then
+      rm -f "$tags_file"
+      return 1
+    fi
+    if ! url="$(printf '%s' "$page" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("next") or "")')"; then
+      rm -f "$tags_file"
+      return 1
+    fi
     pages=$((pages + 1))
   done
-  python3 -c '
+  if ! python3 -c '
 import re, sys
 releases = [line.strip() for line in open(sys.argv[1]) if re.fullmatch(r"\d+\.\d+\.\d+", line.strip())]
 if releases:
     print(max(releases, key=lambda version: tuple(int(part) for part in version.split("."))))
-' "$tags_file"
+' "$tags_file"; then
+    rm -f "$tags_file"
+    return 1
+  fi
   rm -f "$tags_file"
 }
 
