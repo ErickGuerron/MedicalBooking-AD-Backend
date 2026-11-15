@@ -31,7 +31,10 @@ from medicalbooking.modules.laboratory.application.ports import (
     StoredDocument,
 )
 from medicalbooking.modules.laboratory.domain.policies import (
+    ORIGIN_DOCTOR,
+    ORIGIN_PATIENT,
     PERM_ORDER_CREATE,
+    PERM_PATIENT_ORDER,
     PERM_RESULT_READ_CONTEXT,
     PERM_RESULT_READ_OWN,
     PERM_RESULT_REGISTER,
@@ -119,10 +122,57 @@ class LabService:
                 prioridad=prioridad,
                 observaciones=observaciones,
                 tipo_prueba_ids=test_ids,
+                origen=ORIGIN_DOCTOR,
             )
         )
         self._audit(actor, order.paciente_id, "orden_laboratorio", order.id, "crear")
         return order
+
+    def create_patient_order(
+        self,
+        actor: AccessProfile,
+        *,
+        tipo_prueba_ids: list[str],
+        observaciones: str | None,
+    ) -> LabOrder:
+        """An exam the patient asks for without a doctor: no doctor, no review, same results flow.
+
+        Priority is always NORMAL here; urgency is set by a doctor. The actor must be a patient
+        profile, otherwise the uniform 403 is returned.
+        """
+        _require(actor, PERM_PATIENT_ORDER)
+        paciente_id = self._store.resolve_patient_id(actor.user_id)
+        if paciente_id is None:
+            raise Forbidden(_FORBIDDEN)
+        validate_observations(observaciones)
+        test_ids = validate_test_ids(list(tipo_prueba_ids))
+        if set(test_ids) - self._store.active_test_ids(test_ids):
+            raise ValidationFailed("Unknown or inactive test type")
+
+        order = self._store.create_order(
+            NewOrder(
+                order_id=str(uuid.uuid4()),
+                paciente_id=paciente_id,
+                medico_id=None,
+                prioridad="NORMAL",
+                observaciones=observaciones,
+                tipo_prueba_ids=test_ids,
+                origen=ORIGIN_PATIENT,
+            )
+        )
+        self._audit(actor, order.paciente_id, "orden_laboratorio", order.id, "solicitar")
+        return order
+
+    def list_worklist(self, actor: AccessProfile, *, limit: int, offset: int) -> list[LabOrder]:
+        """Pending orders of both origins, oldest first, for the laboratory to work on.
+
+        Only the laboratory permission to record results gives access. The rows carry what the
+        laboratory needs to enter results (test line ids), not the doctor's identity.
+        """
+        _require(actor, PERM_RESULT_REGISTER)
+        rows = self._store.list_pending_orders(limit=limit, offset=offset)
+        self._audit(actor, None, "orden_laboratorio", None, "listar_pendientes")
+        return rows
 
     def get_order(self, actor: AccessProfile, order_id: str) -> LabOrder:
         order = self._readable_order(actor, order_id)

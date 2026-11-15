@@ -36,6 +36,22 @@ class CreateOrderRequest(BaseModel):
     tipo_prueba_ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_TESTS_PER_ORDER)
 
 
+class PatientOrderRequest(BaseModel):
+    """An exam the patient asks for himself or herself. No doctor, no priority, no patient id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tipo_prueba_ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_TESTS_PER_ORDER)
+    observaciones: str | None = Field(default=None, max_length=1000)
+
+
+class WorklistQuery(BaseModel):
+    """Query string of GET /lab/worklist: pending orders, oldest first (default 50, max 200)."""
+
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0, le=2_147_483_647)
+
+
 class ResultItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -116,6 +132,17 @@ def _order_json(order: LabOrder) -> dict[str, Any]:
     }
 
 
+def _work_item_json(order: LabOrder) -> dict[str, Any]:
+    """An order as the laboratory and the patient request see it: plus where it came from."""
+    moment = order.fecha or datetime.now(UTC)
+    moment = moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    return {
+        **_order_json(order),
+        "origen": order.origen,
+        "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+
 def _summary_json(order: LabOrderSummary) -> dict[str, Any]:
     moment = order.fecha if order.fecha.tzinfo is not None else order.fecha.replace(tzinfo=UTC)
     return {
@@ -178,6 +205,27 @@ def create_order() -> tuple[Response, int]:
         tipo_prueba_ids=[str(item) for item in body.tipo_prueba_ids],
     )
     return jsonify(_order_json(order)), 201
+
+
+@lab_bp.post("/lab/patient-orders")
+@authenticated
+def create_patient_order() -> tuple[Response, int]:
+    body = _parse(PatientOrderRequest)
+    order = _service().create_patient_order(
+        g.actor,
+        tipo_prueba_ids=[str(item) for item in body.tipo_prueba_ids],
+        observaciones=body.observaciones,
+    )
+    return jsonify(_work_item_json(order)), 201
+
+
+@lab_bp.get("/lab/worklist")
+@authenticated
+def worklist() -> tuple[Response, int]:
+    query = _validate(WorklistQuery, request.args.to_dict())
+    rows = _service().list_worklist(g.actor, limit=query.limit, offset=query.offset)
+    items = [_work_item_json(row) for row in rows]
+    return jsonify(items=items, limit=query.limit, offset=query.offset), 200
 
 
 @lab_bp.get("/lab/orders")

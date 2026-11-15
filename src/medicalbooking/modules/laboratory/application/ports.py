@@ -21,12 +21,15 @@ class LabOrder:
     id: str
     paciente_id: str
     paciente_user_id: str
-    medico_id: str
-    medico_user_id: str
+    medico_id: str | None
+    medico_user_id: str | None
     prioridad: str
     estado: str
     observaciones: str | None
     details: tuple[LabDetail, ...]
+    origen: str = "MEDICO"
+    # Set on the worklist rows only: when the order was placed.
+    fecha: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -99,10 +102,11 @@ class ResultEntry:
 class NewOrder:
     order_id: str
     paciente_id: str
-    medico_id: str
+    medico_id: str | None
     prioridad: str
     observaciones: str | None
     tipo_prueba_ids: list[str]
+    origen: str = "MEDICO"
 
 
 @dataclass(frozen=True)
@@ -194,6 +198,8 @@ class LabStore(Protocol):
     def create_order(self, command: NewOrder) -> LabOrder: ...
 
     def get_order(self, order_id: str) -> LabOrder | None: ...
+
+    def list_pending_orders(self, *, limit: int, offset: int) -> list[LabOrder]: ...
 
     def list_patients(self, *, medico_id: str, limit: int, offset: int) -> list[PatientSummary]:
         """Patients the doctor treats (cita or lab order, any status) with an ACTIVO account.
