@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Identifies one replica (for example api-1). Echoed in X-Replica-Id so load
     # balancing across instances can be observed; it carries no secrets.
     replica_id: str = Field(default="local", pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    # Name of the machine serving this request, shown by /health/live so the load balancer
+    # can be checked. Unset means the local machine name; carries no secrets.
+    machine_name: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
 
     sqlserver_host: str = "localhost"
     sqlserver_port: int = 1433

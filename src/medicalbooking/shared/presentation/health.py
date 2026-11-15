@@ -6,15 +6,21 @@ only a status, never connection details or clinical data.
 
 from __future__ import annotations
 
+import socket
+
 from flask import Blueprint, Response, current_app, jsonify
 from sqlalchemy import Engine, text
+
+from medicalbooking.config import Settings
 
 health_bp = Blueprint("health", __name__, url_prefix="/health")
 
 
 @health_bp.get("/live")
 def live() -> tuple[Response, int]:
-    return jsonify(status="ok"), 200
+    settings: Settings = current_app.extensions["medicalbooking.settings"]
+    machine = settings.machine_name or socket.gethostname()
+    return jsonify(status="ok", machine=machine, api=settings.replica_id), 200
 
 
 @health_bp.get("/ready")
