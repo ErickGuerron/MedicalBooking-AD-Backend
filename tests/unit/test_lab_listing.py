@@ -49,6 +49,7 @@ class _Row:
     paciente_id: str
     estado: str
     fecha: datetime
+    medico_id: str | None = None
 
 
 @dataclass
@@ -123,7 +124,7 @@ class FakeStore:
         if estado is not None:
             rows = [o for o in rows if o.estado == estado]
         return [
-            _Row(o.id, o.paciente_id, o.estado, self.fecha_by_order[o.id])
+            _Row(o.id, o.paciente_id, o.estado, self.fecha_by_order[o.id], o.medico_id)
             for o in rows[offset : offset + limit]
         ]
 
@@ -292,7 +293,7 @@ def test_listing_answers_403_for_an_actor_without_access(world) -> None:
     assert response.status_code == 403
 
 
-def test_listing_rows_carry_only_identifiers_state_and_date(world) -> None:
+def test_listing_rows_carry_only_identifiers_doctor_state_and_date(world) -> None:
     world.store.add(_order(world.patient_id, world.doctor_id))
 
     response = _http(world).get(LIST_URL, headers=_bearer("tok-patient"))
@@ -300,7 +301,7 @@ def test_listing_rows_carry_only_identifiers_state_and_date(world) -> None:
     body = response.get_json()
     assert response.status_code == 200
     assert set(body) == {"items"}
-    assert set(body["items"][0]) == {"id", "paciente_id", "estado", "fecha"}
+    assert set(body["items"][0]) == {"id", "paciente_id", "medico_id", "estado", "fecha"}
 
 
 def test_listing_dates_are_iso_8601_utc(world) -> None:
@@ -368,7 +369,15 @@ def test_create_order_response_keeps_its_shape(world) -> None:
 
     body = response.get_json()
     assert response.status_code == 201
-    assert set(body) == {"id", "paciente_id", "prioridad", "estado", "observaciones", "pruebas"}
+    assert set(body) == {
+        "id",
+        "paciente_id",
+        "prioridad",
+        "estado",
+        "observaciones",
+        "medico_id",
+        "pruebas",
+    }
     assert set(body["pruebas"][0]) == {"detalle_id", "tipo_prueba_id", "estado"}
 
 
@@ -379,5 +388,13 @@ def test_get_order_response_keeps_its_shape(world) -> None:
 
     body = response.get_json()
     assert response.status_code == 200
-    assert set(body) == {"id", "paciente_id", "prioridad", "estado", "observaciones", "pruebas"}
+    assert set(body) == {
+        "id",
+        "paciente_id",
+        "prioridad",
+        "estado",
+        "observaciones",
+        "medico_id",
+        "pruebas",
+    }
     assert set(body["pruebas"][0]) == {"detalle_id", "tipo_prueba_id", "estado"}

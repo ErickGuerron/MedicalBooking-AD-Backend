@@ -305,7 +305,7 @@ class SqlLabStore:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT o.id, o.paciente_id, o.estado, o.fecha_orden "
+                    "SELECT o.id, o.paciente_id, o.estado, o.fecha_orden, o.medico_id "
                     "FROM ordenes_laboratorio o "
                     "WHERE ((:usa_paciente = 1 AND o.paciente_id = :paciente) "
                     "OR (:usa_medico = 1 AND o.medico_id = :medico)) "
@@ -330,6 +330,7 @@ class SqlLabStore:
                 paciente_id=_canonical(row.paciente_id),
                 estado=row.estado,
                 fecha=row.fecha_orden,
+                medico_id=_canonical(row.medico_id),
             )
             for row in rows
         ]

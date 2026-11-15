@@ -107,6 +107,7 @@ def _order_json(order: LabOrder) -> dict[str, Any]:
         "prioridad": order.prioridad,
         "estado": order.estado,
         "observaciones": order.observaciones,
+        "medico_id": order.medico_id,
         "pruebas": [
             {"detalle_id": d.id, "tipo_prueba_id": d.tipo_prueba_id, "estado": d.estado}
             for d in order.details
@@ -119,6 +120,7 @@ def _summary_json(order: LabOrderSummary) -> dict[str, Any]:
     return {
         "id": order.id,
         "paciente_id": order.paciente_id,
+        "medico_id": order.medico_id,
         "estado": order.estado,
         "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }

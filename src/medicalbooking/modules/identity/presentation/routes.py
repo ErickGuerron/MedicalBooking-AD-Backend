@@ -142,11 +142,15 @@ def verify_email() -> tuple[Response, int]:
 @authenticated
 def me() -> tuple[Response, int]:
     actor = g.actor
+    profile = _service().own_profile(actor)
     return (
         jsonify(
             id=actor.user_id,
             roles=sorted(actor.roles),
             permissions=sorted(actor.permissions),
+            nombre=profile.first_name,
+            apellido=profile.last_name,
+            correo=profile.email,
         ),
         200,
     )

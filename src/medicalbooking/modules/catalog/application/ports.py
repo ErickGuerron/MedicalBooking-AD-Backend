@@ -42,6 +42,7 @@ class Service:
     precio_base: Decimal
     moneda: str
     especialidad_id: int | None
+    requiere_orden_medica: bool = False
 
 
 class WriteStatus(Enum):

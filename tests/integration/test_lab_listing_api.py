@@ -185,7 +185,7 @@ def test_listing_rows_never_carry_result_values(app, engine) -> None:
     items = _listed(app, headers)
 
     assert items
-    assert all(set(item) == {"id", "paciente_id", "estado", "fecha"} for item in items)
+    assert all(set(item) == {"id", "paciente_id", "medico_id", "estado", "fecha"} for item in items)
 
 
 # ---------- HTTP codes ----------
@@ -216,5 +216,31 @@ def test_get_order_keeps_its_response_shape_over_sql(app, engine) -> None:
 
     body = response.get_json()
     assert response.status_code == 200
-    assert set(body) == {"id", "paciente_id", "prioridad", "estado", "observaciones", "pruebas"}
+    assert set(body) == {
+        "id",
+        "paciente_id",
+        "prioridad",
+        "estado",
+        "observaciones",
+        "medico_id",
+        "pruebas",
+    }
     assert set(body["pruebas"][0]) == {"detalle_id", "tipo_prueba_id", "estado"}
+
+
+def test_order_carries_the_doctor_who_placed_it(app, engine) -> None:
+    doctor = _doctor(engine)
+    headers = _token(app, doctor)
+    order_id = _create(app, headers, _linked_patient(app, engine, doctor))
+    with engine.connect() as conn:
+        medico_id = str(
+            conn.execute(
+                text("SELECT id FROM medicos WHERE usuario_id = :u"), {"u": doctor}
+            ).scalar()
+        ).lower()
+
+    listed = {item["id"]: item for item in _listed(app, headers)}
+    detail = app.test_client().get(f"/api/v1/lab/orders/{order_id}", headers=headers).get_json()
+
+    assert listed[order_id]["medico_id"].lower() == medico_id
+    assert detail["medico_id"].lower() == medico_id

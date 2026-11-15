@@ -197,11 +197,14 @@ def identity_fragment() -> dict[str, Any]:
                 },
                 "MeResponse": {
                     "type": "object",
-                    "required": ["id", "roles", "permissions"],
+                    "required": ["id", "roles", "permissions", "nombre", "apellido", "correo"],
                     "properties": {
                         "id": {"type": "string", "format": "uuid"},
                         "roles": {"type": "array", "items": {"type": "string"}},
                         "permissions": {"type": "array", "items": {"type": "string"}},
+                        "nombre": {"type": "string"},
+                        "apellido": {"type": "string"},
+                        "correo": {"type": "string", "format": "email"},
                     },
                 },
                 "UserCreated": {
