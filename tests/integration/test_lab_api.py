@@ -436,3 +436,27 @@ def test_results_carry_their_validated_reference_and_classification(app, engine)
 
     assert (item["referencia_min"], item["referencia_max"]) == (12.0, 16.0)
     assert item["interpretacion"] == "BAJO"
+
+
+def test_patient_downloads_the_pdf_of_their_results_and_others_cannot(app, engine) -> None:
+    order_id, patient, _doctor, doctor_headers = _order_for(app, engine)
+    client = app.test_client()
+    lab_headers = _token(app, _user(engine, "LABORATORISTA"))
+    detail = _detail(app, order_id, doctor_headers)
+    client.post(
+        f"/api/v1/lab/orders/{order_id}/results",
+        json=_result_body(detail, analito=HB),
+        headers=lab_headers,
+    )
+
+    own = client.get(f"/api/v1/lab/orders/{order_id}/report.pdf", headers=_token(app, patient))
+    other = client.get(
+        f"/api/v1/lab/orders/{order_id}/report.pdf",
+        headers=_token(app, _user(engine, "PACIENTE")),
+    )
+
+    assert own.status_code == 200
+    assert own.mimetype == "application/pdf"
+    assert own.data.startswith(b"%PDF-")
+    assert f"resultados-{order_id[:8]}.pdf" in own.headers["Content-Disposition"]
+    assert other.status_code in (403, 404)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
@@ -19,6 +19,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     ResultEntry,
     StoredDocument,
 )
+from medicalbooking.modules.laboratory.application.results_report import build_results_report
 from medicalbooking.modules.laboratory.application.use_cases import LabService
 from medicalbooking.modules.laboratory.domain.policies import MAX_PDF_BYTES, MAX_TESTS_PER_ORDER
 from medicalbooking.shared.domain.errors import ValidationFailed
@@ -237,6 +238,20 @@ def record_results(order_id: uuid.UUID) -> tuple[Response, int]:
     ]
     order = _service().record_results(g.actor, str(order_id), str(body.detalle_id), entries)
     return jsonify(_order_json(order)), 200
+
+
+@lab_bp.get("/lab/orders/<uuid:order_id>/report.pdf")
+@authenticated
+def results_report(order_id: uuid.UUID) -> Response:
+    """The order's results as a PDF, for whoever may read them (patient, doctor, laboratory)."""
+    order = _service().get_order(g.actor, str(order_id))
+    results = _service().list_results(g.actor, str(order_id))
+    content = build_results_report(order, results, generated_at=datetime.now(UTC))
+    response = Response(content, mimetype="application/pdf")
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="resultados-{str(order_id)[:8]}.pdf"'
+    )
+    return response
 
 
 @lab_bp.get("/lab/orders/<uuid:order_id>/results")
