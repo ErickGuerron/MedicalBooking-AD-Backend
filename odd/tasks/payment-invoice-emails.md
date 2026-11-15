@@ -11,7 +11,8 @@ Objective: when a payment is confirmed, email the patient a personalised invoice
 ## Tasks
 - T1 | S4, S5, S6 | inline | done | invoice data read (SqlInvoiceStore, integration test) and invoice PDF builder (build_invoice_pdf). RED observed (collection error), then GREEN (3 unit tests); integration test_invoice_store.py 2 passed.
 - T2 | S2, S3 | inline | done | notification: template PAGO_COMPLETADO, handler maps pago.actualizado only for CONFIRMADO (RED observed: 1 failed, then GREEN), contact lookup for pago, payment_content with escaped HTML (RED: import error, then GREEN), paid_invoice on SqlNotificationStore, PDF attachment in the worker.
-- T3 | S3 | inline | pending | cita.cancelada designed template. Open decision: the current template is deliberately neutral (templates.py docstring); the user must decide neutral or designed.
+- T3 | S3 | inline | done | cita.cancelada designed template (cancellation_content with doctor, date and hour in Ecuador time; content_for reuses cita_reminder). RED observed (collection error), then GREEN (3 unit tests). Decision by the user: designed, for patient confidence. Commit c5bc46c.
+- L4 (preview): visual previews written outside the repo to C:\Users\erick\Documents\medilo-previews (invoice PDF, both emails) with render_previews.py to regenerate after a redesign.
 
 ## Log
 - L1: "si" (user confirmed to start with the invoices) after: "quisiera facturas personalizadas", "no olvidar de la parte de los email que faltan por implementar y generacion de factura".
