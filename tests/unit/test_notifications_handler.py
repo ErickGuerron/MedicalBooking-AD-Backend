@@ -82,7 +82,7 @@ def test_completed_lab_order_creates_a_results_notification_for_the_patient() ->
 
     _handler(repository).handle(
         _event(
-            "resultado_laboratorio.registrado",
+            "orden_laboratorio.confirmada",
             "orden_laboratorio",
             ORDER_ID,
             payload={"estado_orden": "COMPLETADA"},
@@ -97,7 +97,7 @@ def test_partial_lab_results_wait_until_the_order_is_completed() -> None:
 
     _handler(repository).handle(
         _event(
-            "resultado_laboratorio.registrado",
+            "orden_laboratorio.confirmada",
             "orden_laboratorio",
             ORDER_ID,
             payload={"estado_orden": "EN_PROCESO"},
@@ -147,7 +147,7 @@ def test_missing_patient_is_a_permanent_delivery_error() -> None:
 def test_clinical_payload_never_reaches_the_notification_row() -> None:
     repository = _Repository()
     event = _event(
-        "resultado_laboratorio.registrado",
+        "orden_laboratorio.confirmada",
         "orden_laboratorio",
         ORDER_ID,
         payload={"detalle_id": "Hemoglobina 7.2 g/dL", "estado_orden": "COMPLETADA"},

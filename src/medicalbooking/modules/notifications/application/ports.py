@@ -46,11 +46,19 @@ class EmailAttachment:
 
 
 @dataclass(frozen=True)
+class EmailContent:
+    subject: str
+    text: str
+    html: str | None = None
+
+
+@dataclass(frozen=True)
 class EmailMessage:
     to: str
     subject: str
     text: str
     attachments: tuple[EmailAttachment, ...] = ()
+    html: str | None = None
 
 
 class NotificationError(Exception):

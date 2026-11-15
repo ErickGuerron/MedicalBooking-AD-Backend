@@ -15,7 +15,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const outputDir = path.join(root, "src", "medicalbooking", "modules", "identity", "infrastructure", "email_templates");
 
-const templates = [{ source: path.join(here, "activation", "activation.mjml"), output: path.join(outputDir, "activation.html") }];
+const notificationsDir = path.join(root, "src", "medicalbooking", "modules", "notifications", "infrastructure", "email_templates");
+const templates = [
+  { source: path.join(here, "activation", "activation.mjml"), output: path.join(outputDir, "activation.html") },
+  { source: path.join(here, "results", "resultados.mjml"), output: path.join(notificationsDir, "resultados.html") },
+  { source: path.join(here, "reminder", "recordatorio-cita.mjml"), output: path.join(notificationsDir, "recordatorio_cita.html") },
+];
 
 const check = process.argv.includes("--check");
 let stale = false;
