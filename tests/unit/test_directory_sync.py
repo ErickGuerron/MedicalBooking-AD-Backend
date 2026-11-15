@@ -83,3 +83,11 @@ def test_a_failed_insert_propagates_so_the_transaction_rolls_back() -> None:
 
     with pytest.raises(RuntimeError):
         replace_directory(SNAPSHOT, target)
+
+
+def test_directory_ids_are_lowercase_like_the_event_projection() -> None:
+    from medicalbooking.modules.replica.infrastructure.supabase_directory import canonical_id
+
+    assert canonical_id("E0B55F1B-0D15-431B-A293-2564C004D0C3") == (
+        "e0b55f1b-0d15-431b-a293-2564c004d0c3"
+    )

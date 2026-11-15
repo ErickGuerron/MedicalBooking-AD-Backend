@@ -6,9 +6,16 @@ appointment's free text and any clinical data are never selected here.
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import Engine, text
 
 from medicalbooking.modules.replica.application.directory_sync import DirectorySnapshot
+
+
+def canonical_id(value: object) -> str:
+    "Lowercase canonical UUID text. SQL Server returns uppercase; the projection uses lowercase."
+    return str(uuid.UUID(str(value)))
 
 
 def read_directory(engine: Engine) -> DirectorySnapshot:
@@ -20,7 +27,7 @@ def read_directory(engine: Engine) -> DirectorySnapshot:
             ).all()
         )
         medicos = tuple(
-            (str(row.id), row.nombre, row.apellido, bool(row.activo))
+            (canonical_id(row.id), row.nombre, row.apellido, bool(row.activo))
             for row in conn.execute(
                 text(
                     "SELECT m.id, u.nombre, u.apellido, m.activo FROM medicos AS m "
@@ -30,7 +37,7 @@ def read_directory(engine: Engine) -> DirectorySnapshot:
         )
         servicios = tuple(
             (
-                str(row.id),
+                canonical_id(row.id),
                 int(row.especialidad_id) if row.especialidad_id is not None else None,
                 row.nombre,
                 int(row.duracion_min),
@@ -46,7 +53,7 @@ def read_directory(engine: Engine) -> DirectorySnapshot:
             ).all()
         )
         citas_medico = tuple(
-            (str(row.cita_id), str(row.medico_id))
+            (canonical_id(row.cita_id), canonical_id(row.medico_id))
             for row in conn.execute(
                 text(
                     "SELECT c.id AS cita_id, a.medico_id FROM citas AS c "
