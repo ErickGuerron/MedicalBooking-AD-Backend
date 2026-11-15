@@ -19,7 +19,15 @@ import sys
 from datetime import UTC, datetime
 
 from medicalbooking.config import Settings
+from medicalbooking.modules.laboratory.application.order_report import render_order_report
+from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
 from medicalbooking.modules.notifications.application.dispatcher import NotificationDispatcher
+from medicalbooking.modules.notifications.application.ports import (
+    DueNotification,
+    EmailAttachment,
+    NotificationError,
+)
+from medicalbooking.modules.notifications.domain.templates import RESULTADO_LABORATORIO
 from medicalbooking.modules.notifications.infrastructure.brevo import BrevoNotificationSender
 from medicalbooking.modules.notifications.infrastructure.repositories import SqlNotificationStore
 from medicalbooking.shared.infrastructure.database import create_database_engine
@@ -66,6 +74,18 @@ def main() -> int:
         if missing:
             logger.error("worker configuration incomplete: missing %s", ", ".join(missing))
             return 1
+        lab_store = SqlLabStore(engine)
+
+        def attachments_for(due: DueNotification) -> tuple[EmailAttachment, ...]:
+            # The results go out as the order's PDF, built now from the completed order.
+            if due.tipo != RESULTADO_LABORATORIO or due.aggregate_id is None:
+                return ()
+            pdf = render_order_report(lab_store, due.aggregate_id, datetime.now(UTC))
+            if pdf is None:
+                raise NotificationError("ORDER_NOT_FOUND")
+            name = f"resultados-{due.aggregate_id[:8]}.pdf"
+            return (EmailAttachment(name=name, content_type="application/pdf", data=pdf),)
+
         dispatcher = NotificationDispatcher(
             queue=SqlNotificationStore(engine),
             sender=BrevoNotificationSender(
@@ -74,6 +94,7 @@ def main() -> int:
                 sender_name=settings.mail_from_name,
             ),
             clock=lambda: datetime.now(UTC),
+            attachments_for=attachments_for,
         )
         return run(dispatcher)
     finally:

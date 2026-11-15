@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 from medicalbooking.modules.notifications.application.ports import (
     DueNotification,
+    EmailAttachment,
     EmailMessage,
     NotificationError,
     NotificationQueue,
@@ -39,10 +40,12 @@ class NotificationDispatcher:
         queue: NotificationQueue,
         sender: NotificationSender,
         clock: Callable[[], datetime],
+        attachments_for: Callable[[DueNotification], tuple[EmailAttachment, ...]] | None = None,
     ) -> None:
         self._queue = queue
         self._sender = sender
         self._clock = clock
+        self._attachments_for = attachments_for
 
     def send_due(self, limit: int) -> SendReport:
         now = self._clock()
@@ -57,11 +60,13 @@ class NotificationDispatcher:
         attempts = notification.numero_intentos + 1
         try:
             template = TEMPLATES[notification.tipo]
+            attachments = self._attachments_for(notification) if self._attachments_for else ()
             message_id = self._sender.send(
                 EmailMessage(
                     to=notification.destinatario,
                     subject=template.subject,
                     text=template.text,
+                    attachments=attachments,
                 )
             )
         except Exception as error:

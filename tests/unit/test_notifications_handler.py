@@ -77,14 +77,34 @@ def test_cancelled_appointment_creates_its_own_notification() -> None:
     assert [row.tipo for row in repository.rows.values()] == ["CITA_CANCELADA"]
 
 
-def test_lab_result_ready_creates_a_notification_for_the_order_patient() -> None:
+def test_completed_lab_order_creates_a_results_notification_for_the_patient() -> None:
     repository = _Repository()
 
     _handler(repository).handle(
-        _event("resultado_laboratorio.registrado", "orden_laboratorio", ORDER_ID)
+        _event(
+            "resultado_laboratorio.registrado",
+            "orden_laboratorio",
+            ORDER_ID,
+            payload={"estado_orden": "COMPLETADA"},
+        )
     )
 
     assert [row.tipo for row in repository.rows.values()] == ["RESULTADO_LABORATORIO"]
+
+
+def test_partial_lab_results_wait_until_the_order_is_completed() -> None:
+    repository = _Repository()
+
+    _handler(repository).handle(
+        _event(
+            "resultado_laboratorio.registrado",
+            "orden_laboratorio",
+            ORDER_ID,
+            payload={"estado_orden": "EN_PROCESO"},
+        )
+    )
+
+    assert repository.rows == {}
 
 
 def test_same_event_delivered_twice_creates_one_row_and_both_calls_succeed() -> None:

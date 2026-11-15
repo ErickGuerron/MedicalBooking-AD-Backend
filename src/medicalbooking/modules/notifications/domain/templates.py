@@ -1,7 +1,7 @@
-"""Patient-facing templates. Neutral by design: no clinical values, analytes, diagnoses or results.
+"""Patient-facing templates.
 
-The message tells the patient that something changed and where to look. The details stay
-behind the authenticated portal, never in the mail.
+Appointment mails stay neutral: they say something changed and where to look. The laboratory
+results mail attaches the completed results as a PDF, built at send time and never stored.
 """
 
 from __future__ import annotations
@@ -37,11 +37,12 @@ TEMPLATES: dict[str, Template] = {
         ),
     ),
     RESULTADO_LABORATORIO: Template(
-        subject="Tienes una actualización en tu orden de laboratorio",
+        subject="Tus resultados de laboratorio están listos",
         text=(
             "Hola.\n\n"
-            "Tienes una actualización en tu orden de laboratorio. "
-            "Inicia sesión en Medilo para revisarla.\n"
+            "Tus resultados de laboratorio ya están listos. Te los enviamos adjuntos en PDF.\n\n"
+            "Es un documento confidencial: guárdalo con cuidado. También puedes verlo en Medilo, "
+            "en la sección de resultados de tu portal.\n"
         ),
     ),
 }
