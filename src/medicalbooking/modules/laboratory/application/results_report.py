@@ -7,10 +7,12 @@ Spanish accents render). Pure functions: the caller passes order, results and ti
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from medicalbooking.modules.laboratory.application.ports import LabOrder, LabResult, ReportParties
 
+# Ecuador has no daylight saving: a fixed UTC-5 offset is the local time of the clinic.
+ECUADOR = timezone(timedelta(hours=-5))
 PAGE_W = 595.0
 PAGE_H = 842.0
 MARGIN = 44.0
@@ -254,6 +256,7 @@ def build_results_report(
     document = _Document()
     page = document.page
 
+    local = generated_at.astimezone(ECUADOR)
     # Header band.
     page.rect(0, PAGE_H - 132, PAGE_W, 132, ORANGE)
     page.rect(0, PAGE_H - 140, PAGE_W, 8, ORANGE_DEEP)
@@ -262,7 +265,7 @@ def build_results_report(
     page.text(
         MARGIN,
         PAGE_H - 108,
-        f"Orden {order.id[:8].upper()} · generado el {generated_at:%d/%m/%Y %H:%M} (UTC)",
+        f"Orden {order.id[:8].upper()} · generado el {local:%d/%m/%Y %H:%M} (hora de Ecuador)",
         10,
         color=WHITE,
     )

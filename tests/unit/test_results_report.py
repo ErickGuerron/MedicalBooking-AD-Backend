@@ -155,3 +155,12 @@ def test_long_observations_are_wrapped_and_never_cut() -> None:
 
     assert _in_pdf(pdf, "fin-de-la-observacion")
     assert _in_pdf(pdf, "palabra0 ")
+
+
+def test_report_time_is_ecuador_local_time_not_utc() -> None:
+    pdf = build_results_report(_order(1), [], parties=_parties(), generated_at=NOW)
+
+    # NOW is 12:00 UTC, which is 07:00 in Ecuador.
+    assert _in_pdf(pdf, "generado el 14/11/2026 07:00 ")
+    assert _in_pdf(pdf, "hora de Ecuador")
+    assert not _in_pdf(pdf, "12:00")
