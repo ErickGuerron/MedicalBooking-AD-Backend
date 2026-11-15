@@ -1,4 +1,4 @@
-"""Read-only screens in the replica: doctors, specialties, services and the doctor of each appointment.
+"""Read-only screens in the replica: doctors, specialties, services, appointment doctors.
 
 Revision ID: s0012_read_only_screens
 Revises: s0011_patient_orders_replica
