@@ -43,6 +43,15 @@ def expected_present(event_type: str) -> bool:
     return event_type not in DELETED_EVENT_TYPES
 
 
+def plan_orphans(source_ids: frozenset[str], replica_ids: frozenset[str]) -> frozenset[str]:
+    """Replica ids with no row left in the source: hard deletes the outbox never announced.
+
+    Callers read ``replica_ids`` before ``source_ids``: a row created during the cycle then
+    cannot be mistaken for a delete, because a replica only holds rows the outbox delivered.
+    """
+    return replica_ids - source_ids
+
+
 def plan_repairs(
     events: Iterable[LatestEvent],
     present: Mapping[tuple[str, str], frozenset[str]],
