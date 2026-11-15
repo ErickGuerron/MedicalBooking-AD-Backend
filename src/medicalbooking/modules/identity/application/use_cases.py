@@ -24,7 +24,9 @@ from medicalbooking.modules.identity.domain.policies import (
     PERM_USERS_ADMIN,
     can_read_patient,
     is_locked,
+    validate_document,
     validate_page,
+    validate_phone,
 )
 from medicalbooking.shared.domain.demographics import parse_birth_date, validate_sex
 from medicalbooking.shared.domain.errors import (
@@ -83,10 +85,15 @@ class IdentityService:
         password: str,
         first_name: str,
         last_name: str,
+        document_type: str,
+        document_number: str,
+        phone: str | None = None,
         sex: str | None = None,
         birth_date: str | None = None,
     ) -> str:
         """Create an inactive patient and send an activation link.
+
+        The identity document is required and must be new; the phone is optional.
 
         Always returns the same message. An existing email produces the same answer
         and the same work (password hashing), so the response does not reveal which
@@ -100,6 +107,10 @@ class IdentityService:
         parsed_birth = (
             None if birth_date is None else parse_birth_date(birth_date, self._clock().date())
         )
+        number = validate_document(document_type, document_number)
+        parsed_phone = validate_phone(phone)
+        if self._directory.document_taken(document_type, number):
+            raise Conflict("Document already registered")
         password_hash = self._hasher.hash(password)
         token = secrets.token_urlsafe(32)
         new_user = NewUser(
@@ -112,6 +123,9 @@ class IdentityService:
             status=INACTIVE,
             sex=parsed_sex,
             birth_date=parsed_birth,
+            document_type=document_type,
+            document_number=number,
+            phone=parsed_phone,
         )
         try:
             self._directory.create_pending_patient(

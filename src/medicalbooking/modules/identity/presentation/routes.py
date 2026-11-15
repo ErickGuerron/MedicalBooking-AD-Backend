@@ -108,6 +108,9 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=12, max_length=256)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
+    tipo_documento: Literal["CEDULA", "PASAPORTE"]
+    numero_documento: str = Field(min_length=1, max_length=20)
+    telefono: str | None = Field(default=None, max_length=20, description="Optional")
     sexo: Literal["M", "F"] | None = Field(default=None, description="Optional: M or F")
     fecha_nacimiento: str | None = Field(
         default=None,
@@ -125,6 +128,9 @@ def register() -> tuple[Response, int]:
         password=body.password,
         first_name=body.first_name,
         last_name=body.last_name,
+        document_type=body.tipo_documento,
+        document_number=body.numero_documento,
+        phone=body.telefono,
         sex=body.sexo,
         birth_date=body.fecha_nacimiento,
     )

@@ -6,6 +6,7 @@ open it the way the patient would.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -72,10 +73,21 @@ def _email(label: str) -> str:
     return f"paciente-{label}-{uuid.uuid4()}@synthetic.test"
 
 
+def _document() -> dict:
+    """A new cédula per registration: the document must be unique in the database."""
+    return {"tipo_documento": "CEDULA", "numero_documento": str(uuid.uuid4().int)[:10]}
+
+
 def _register(client, email: str, password: str = PASSWORD):
     return client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": password, "first_name": "Ana", "last_name": "Sintetica"},
+        json={
+            "email": email,
+            "password": password,
+            "first_name": "Ana",
+            "last_name": "Sintetica",
+            **_document(),
+        },
     )
 
 
@@ -155,6 +167,7 @@ def _post(client, email: str, **extra):
             "password": PASSWORD,
             "first_name": "Ana",
             "last_name": "Sintetica",
+            **_document(),
             **extra,
         },
     )
@@ -259,3 +272,43 @@ def test_weak_password_is_rejected_before_anything_is_stored(client, mailer, eng
 @pytest.fixture
 def engine_of(app: Flask) -> Engine:
     return app.extensions["medicalbooking.engine"]
+
+
+def test_registration_needs_a_document_and_a_repeated_document_is_a_conflict(
+    client, engine
+) -> None:
+    missing = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "sin-doc@synthetic.test",
+            "password": PASSWORD,
+            "first_name": "Ana",
+            "last_name": "Sintetica",
+        },
+    )
+    body = _document()
+    first = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "doc-1@synthetic.test",
+            "password": PASSWORD,
+            "first_name": "A",
+            "last_name": "B",
+            **body,
+            "telefono": "0991234567",
+        },
+    )
+    repeated = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "doc-2@synthetic.test",
+            "password": PASSWORD,
+            "first_name": "C",
+            "last_name": "D",
+            **body,
+        },
+    )
+
+    assert missing.status_code == 422
+    assert first.status_code == 202
+    assert repeated.status_code == 409
