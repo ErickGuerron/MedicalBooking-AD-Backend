@@ -20,6 +20,7 @@ from typing import Protocol
 from medicalbooking.modules.synchronization.domain.reconciliation import (
     TRACKED_AGGREGATE_TYPES,
     LatestEvent,
+    plan_orphans,
     plan_repairs,
 )
 
@@ -45,6 +46,75 @@ class ReconcileReport:
     aggregates: int
     # Requeues that changed a delivery, per destination code.
     repairs: dict[str, int] = field(default_factory=dict)
+
+
+class ReplicaIdLister(Protocol):
+    """One destination. ``list_ids`` returns every id of the aggregate type it holds."""
+
+    destination_code: str
+
+    def list_ids(self, aggregate_type: str) -> frozenset[str]: ...
+
+
+class SourceIdReader(Protocol):
+    def source_ids(self, aggregate_type: str) -> frozenset[str]: ...
+
+
+class TombstoneWriter(Protocol):
+    def tombstone(self, aggregate_type: str, aggregate_id: str, now: datetime) -> bool: ...
+
+
+@dataclass(frozen=True)
+class HardDeleteReport:
+    # Replica ids with no source row, counted once per aggregate.
+    orphans: int
+    # Tombstones appended this cycle. An orphan that already had a delete event is not counted.
+    tombstones: int
+
+
+class HardDeleteDetector:
+    """Find replica ids with no source row and tombstone them through the outbox.
+
+    Replica ids are read first and source ids second. A replica only holds rows the outbox
+    delivered, so a row created during the cycle is in the source before it can reach a replica.
+    Read in this order, that row is never mistaken for a hard delete. Any failed listing raises
+    before the first tombstone is written, so a partial replica view never creates a delete.
+    """
+
+    def __init__(
+        self,
+        source: SourceIdReader,
+        replicas: Sequence[ReplicaIdLister],
+        tombstones: TombstoneWriter,
+    ) -> None:
+        self._source = source
+        self._replicas = list(replicas)
+        self._tombstones = tombstones
+
+    def run(self, now: datetime) -> HardDeleteReport:
+        if not self._replicas:
+            return HardDeleteReport(orphans=0, tombstones=0)
+        aggregate_types = sorted(TRACKED_AGGREGATE_TYPES)
+        replica_ids: dict[str, set[str]] = {
+            aggregate_type: set() for aggregate_type in aggregate_types
+        }
+        for aggregate_type in aggregate_types:
+            for replica in self._replicas:
+                replica_ids[aggregate_type].update(replica.list_ids(aggregate_type))
+
+        orphans = 0
+        tombstones = 0
+        for aggregate_type in aggregate_types:
+            if not replica_ids[aggregate_type]:
+                continue
+            source = self._source.source_ids(aggregate_type)
+            for aggregate_id in sorted(
+                plan_orphans(source, frozenset(replica_ids[aggregate_type]))
+            ):
+                orphans += 1
+                if self._tombstones.tombstone(aggregate_type, aggregate_id, now):
+                    tombstones += 1
+        return HardDeleteReport(orphans=orphans, tombstones=tombstones)
 
 
 class ReplicaReconciler:

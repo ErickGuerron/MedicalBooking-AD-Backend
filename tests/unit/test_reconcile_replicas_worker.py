@@ -51,6 +51,9 @@ class _Report:
         self.repairs = repairs
 
 
+_ORDER: list[str] = []
+
+
 class _FakeReconciler:
     instances: list[_FakeReconciler] = []
     report = _Report(aggregates=0, repairs={})
@@ -61,8 +64,29 @@ class _FakeReconciler:
         _FakeReconciler.instances.append(self)
 
     def run(self, since: datetime) -> _Report:
+        _ORDER.append("reconciler")
         self.since = since
         return _FakeReconciler.report
+
+
+class _FakeDetector:
+    """Stands in for the hard-delete pass: records its order and its replica targets."""
+
+    instances: list[_FakeDetector] = []
+    error: Exception | None = None
+    report = SimpleNamespace(orphans=0, tombstones=0)
+
+    def __init__(self, source, replicas, tombstones) -> None:
+        self.replicas = list(replicas)
+        self.now = None
+        _FakeDetector.instances.append(self)
+
+    def run(self, now: datetime) -> _Report:
+        _ORDER.append("detector")
+        self.now = now
+        if _FakeDetector.error is not None:
+            raise _FakeDetector.error
+        return _FakeDetector.report
 
 
 def _settings(**overrides):
@@ -82,9 +106,13 @@ def wired(monkeypatch):
     _MongoClient.instances = []
     _FakeReconciler.instances = []
     _FakeReconciler.report = _Report(aggregates=0, repairs={})
+    _FakeDetector.instances = []
+    _FakeDetector.error = None
+    _ORDER.clear()
     monkeypatch.setattr(worker, "create_database_engine", lambda settings: engine)
     monkeypatch.setattr(worker, "SqlReconciliationStore", lambda e: ("store", e))
     monkeypatch.setattr(worker, "ReplicaReconciler", _FakeReconciler)
+    monkeypatch.setattr(worker, "HardDeleteDetector", _FakeDetector)
     monkeypatch.setattr(worker, "MongoClient", _MongoClient)
     monkeypatch.setattr(worker, "MongoPresenceCheck", lambda db: ("mongo-check", db))
     monkeypatch.setattr(
@@ -218,3 +246,62 @@ def test_exits_one_when_the_engine_cannot_be_created(monkeypatch, caplog) -> Non
         assert worker.main() == 1
 
     assert "RuntimeError" in caplog.text
+
+
+def test_runs_the_hard_delete_pass_before_the_repair_pass(monkeypatch, wired, capsys) -> None:
+    monkeypatch.setattr(
+        worker,
+        "Settings",
+        lambda: _settings(
+            mongodb_projection_uri=_Secret("mongodb://host"),
+            mongodb_database="medilo",
+            supabase_database_url=_Secret("postgresql://user:pw@host/db"),
+        ),
+    )
+
+    assert worker.main() == 0
+
+    assert _ORDER == ["detector", "reconciler"]
+    replicas = _FakeDetector.instances[0].replicas
+    assert [name for name, _ in replicas] == ["mongo-check", "supabase-check"]
+    assert _FakeDetector.instances[0].now.tzinfo is not None
+
+
+def test_an_unset_mongodb_target_is_skipped_by_the_hard_delete_pass(
+    monkeypatch, wired, capsys
+) -> None:
+    monkeypatch.setattr(
+        worker,
+        "Settings",
+        lambda: _settings(supabase_database_url=_Secret("postgresql://user:pw@host/db")),
+    )
+
+    assert worker.main() == 0
+
+    assert [name for name, _ in _FakeDetector.instances[0].replicas] == ["supabase-check"]
+
+
+def test_no_hard_delete_target_is_given_when_every_setting_is_unset(
+    monkeypatch, wired, capsys
+) -> None:
+    monkeypatch.setattr(worker, "Settings", lambda: _settings())
+
+    assert worker.main() == 0
+
+    assert _FakeDetector.instances[0].replicas == []
+    assert _ORDER == ["detector", "reconciler"]
+
+
+def test_a_failed_hard_delete_pass_aborts_before_any_repair(
+    monkeypatch, wired, caplog, capsys
+) -> None:
+    _FakeDetector.error = RuntimeError("postgresql://user:hunter2@host")
+    monkeypatch.setattr(worker, "Settings", lambda: _settings())
+
+    with caplog.at_level(logging.ERROR):
+        assert worker.main() == 1
+
+    assert _ORDER == ["detector"]
+    assert _FakeReconciler.instances == []
+    assert "RuntimeError" in caplog.text
+    assert "hunter2" not in caplog.text + capsys.readouterr().out

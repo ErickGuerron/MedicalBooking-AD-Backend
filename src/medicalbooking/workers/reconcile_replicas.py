@@ -1,4 +1,5 @@
-"""Reconcile replicas: requeue outbox deliveries whose replica does not match their latest event.
+"""Reconcile replicas: requeue outbox deliveries whose replica does not match their latest event,
+and tombstone hard deletes that the outbox never announced.
 
 Run every 15 minutes, on ONE VM only. Two schedulers would requeue the same deliveries twice:
 
@@ -10,6 +11,12 @@ window (--days, default 30). Each aggregate is checked against MongoDB (MONGODB_
 MONGODB_DATABASE) and Supabase (SUPABASE_DATABASE_URL). A check whose settings are unset
 is skipped, never failed, and the output says so. A mismatch requeues that event's delivery; the
 outbox dispatcher then applies it.
+
+Hard deletes are detected. Each cycle first reads the usuario and cita ids that the replicas hold,
+then reads the ids of the source tables. An id that a replica holds but the source no longer has
+gets one tombstone event (usuario.eliminado or cita.eliminada) in the outbox, and the dispatcher
+delivers it. The detection covers every row, not only the lookback window, and a failed read
+aborts the cycle before any tombstone is written. The hard-delete pass runs before the repair pass.
 
 Prints: aggregates=<n> repairs_mongodb=<n> repairs_supabase=<n> skipped_supabase=<bool>
 The repair counts are requeues that changed a delivery; a repeat run counts only new changes.
@@ -37,6 +44,7 @@ from medicalbooking.modules.replica.infrastructure.supabase_presence import (
     SupabasePresenceCheck,
 )
 from medicalbooking.modules.synchronization.application.reconciliation import (
+    HardDeleteDetector,
     ReplicaReconciler,
 )
 from medicalbooking.modules.synchronization.infrastructure.mongo_presence import (
@@ -124,6 +132,16 @@ def main() -> int:
                 )
             )
 
+        # Hard deletes first: the pass reads replica ids before source ids and aborts before any
+        # tombstone if a listing fails. An unset target is not in ``targets``, so it is skipped.
+        hard_deletes = HardDeleteDetector(source=store, replicas=targets, tombstones=store).run(
+            now=datetime.now(UTC)
+        )
+        logger.info(
+            "hard deletes: orphans=%d tombstones=%d",
+            hard_deletes.orphans,
+            hard_deletes.tombstones,
+        )
         report = ReplicaReconciler(source=store, targets=targets, repairs=store).run(
             since=datetime.now(UTC) - timedelta(days=days)
         )
