@@ -346,6 +346,7 @@ def laboratory_fragment() -> dict[str, Any]:
                             "enum": ["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"],
                         },
                         "observaciones": {"type": ["string", "null"]},
+                        "medico_id": _UUID_PARAM,
                         "pruebas": {
                             "type": "array",
                             "items": {
@@ -369,10 +370,11 @@ def laboratory_fragment() -> dict[str, Any]:
                 },
                 "LabOrderSummary": {
                     "type": "object",
-                    "required": ["id", "paciente_id", "estado", "fecha"],
+                    "required": ["id", "paciente_id", "medico_id", "estado", "fecha"],
                     "properties": {
                         "id": _UUID_PARAM,
                         "paciente_id": _UUID_PARAM,
+                        "medico_id": _UUID_PARAM,
                         "estado": {
                             "type": "string",
                             "enum": ["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"],

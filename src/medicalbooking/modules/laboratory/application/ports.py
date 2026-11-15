@@ -37,6 +37,7 @@ class LabOrderSummary:
     paciente_id: str
     estado: str
     fecha: datetime
+    medico_id: str | None = None
 
 
 @dataclass(frozen=True)
