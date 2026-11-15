@@ -27,8 +27,14 @@ DOCKER_STUB = """#!/usr/bin/env bash
 echo "docker $* IMAGE=${MEDICALBOOKING_IMAGE:-}" >> "$STUB_LOG"
 case "$1" in
   pull) exit 0 ;;
+  images) cat "$STUB_IMAGES"; exit 0 ;;
+  ps) cat "$STUB_CONTAINERS"; exit 0 ;;
+  inspect)
+    # Container id "ct-<image id>" maps to that image id.
+    echo "${@: -1}" | sed "s/^ct-//"; exit 0 ;;
   image)
     if [ "$2" = "prune" ]; then exit 0; fi
+    if [ "$2" = "rm" ]; then exit 0; fi
     image="${@: -1}"
     echo "${REPO}@sha256:digest-${image##*:}"
     exit 0 ;;
@@ -67,15 +73,29 @@ def env(tmp_path: Path):
     log = tmp_path / "calls.log"
     tags = tmp_path / "tags.json"
     state = tmp_path / "state"
+    images = tmp_path / "images.txt"
+    images.write_text("", encoding="utf-8")
+    containers = tmp_path / "containers.txt"
+    containers.write_text("", encoding="utf-8")
     values = {
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         "STUB_LOG": str(log),
         "STUB_TAGS_FILE": str(tags),
+        "STUB_IMAGES": str(images),
+        "STUB_CONTAINERS": str(containers),
         "MEDILO_STATE_DIR": str(state),
         "MEDILO_WAIT_TIMEOUT": "1",
         "REPO": REPO,
     }
-    return {"values": values, "log": log, "tags": tags, "state": state, "tmp": tmp_path}
+    return {
+        "values": values,
+        "log": log,
+        "tags": tags,
+        "state": state,
+        "images": images,
+        "containers": containers,
+        "tmp": tmp_path,
+    }
 
 
 def _publish(env, names: list[str]) -> None:
@@ -198,3 +218,57 @@ def test_an_unreachable_registry_fails_without_touching_replicas(env) -> None:
     assert result.returncode == 1
     assert "could not read release tags" in result.stdout
     assert not _calls(env)
+
+
+def _image_lines(env, *lines: str) -> None:
+    env["images"].write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _running(env, *image_ids: str) -> None:
+    env["containers"].write_text("".join(f"ct-{i}\n" for i in image_ids), encoding="utf-8")
+
+
+def _removed(env) -> list[str]:
+    return [call.split()[3] for call in _calls(env) if call.startswith("docker image rm ")]
+
+
+def test_unused_images_of_the_backend_are_removed_and_used_ones_kept(env) -> None:
+    _publish(env, ["1.10.0"])
+    _image_lines(
+        env,
+        f"sha256:old111 {REPO}",
+        f"sha256:old222 {REPO}",
+        "sha256:third33 other/app",
+        "sha256:run444 " + REPO,
+    )
+    _running(env, "sha256:run444")
+
+    result = _run(env)
+
+    assert result.returncode == 0, result.stderr
+    assert _removed(env) == ["sha256:old111", "sha256:old222"]
+
+
+def test_pruning_also_runs_when_the_release_is_already_running(env) -> None:
+    _publish(env, ["1.10.0"])
+    env["state"].mkdir(parents=True)
+    (env["state"] / "current").write_text(f"{REPO}@sha256:digest-1.10.0\n")
+    _image_lines(env, f"sha256:leftover {REPO}")
+    _running(env, "sha256:run444")
+
+    result = _run(env)
+
+    assert result.returncode == 0
+    assert "up to date: 1.10.0" in result.stdout
+    assert _removed(env) == ["sha256:leftover"]
+
+
+def test_nothing_is_removed_when_the_rollout_fails(env) -> None:
+    _publish(env, ["1.10.0"])
+    _image_lines(env, f"sha256:old111 {REPO}")
+    _running(env, "sha256:run444")
+
+    result = _run(env, extra={"STUB_FAIL_SERVICE": "replica-a", "STUB_FAIL_ON": "1.10.0"})
+
+    assert result.returncode != 0
+    assert _removed(env) == []
