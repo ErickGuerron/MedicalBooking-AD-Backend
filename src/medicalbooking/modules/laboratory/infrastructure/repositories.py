@@ -25,6 +25,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     NewDocument,
     NewOrder,
     PatientSummary,
+    ReportParties,
     ResultEntry,
     StoredDocument,
 )
@@ -567,6 +568,42 @@ class SqlLabStore:
             )
             for row in rows
         ]
+
+    def report_parties(self, order_id: str) -> ReportParties | None:
+        guid = _as_guid(order_id)
+        if guid is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT pa.tipo_documento, pa.numero_documento, pa.fecha_nacimiento, "
+                    "pa.sexo_registrado, up.nombre AS paciente_nombre, "
+                    "up.apellido AS paciente_apellido, up.email, up.telefono, "
+                    "um.nombre AS medico_nombre, um.apellido AS medico_apellido, "
+                    "me.registro_profesional FROM ordenes_laboratorio o "
+                    "JOIN pacientes pa ON pa.id = o.paciente_id "
+                    "JOIN usuarios up ON up.id = pa.usuario_id "
+                    "LEFT JOIN medicos me ON me.id = o.medico_id "
+                    "LEFT JOIN usuarios um ON um.id = me.usuario_id WHERE o.id = :o"
+                ),
+                {"o": guid},
+            ).first()
+        if row is None:
+            return None
+        document = " ".join(part for part in (row.tipo_documento, row.numero_documento) if part)
+        doctor = " ".join(part for part in (row.medico_nombre, row.medico_apellido) if part)
+        return ReportParties(
+            patient_name=" ".join(
+                part for part in (row.paciente_nombre, row.paciente_apellido) if part
+            ),
+            patient_document=document or None,
+            patient_birth_date=row.fecha_nacimiento,
+            patient_sex=row.sexo_registrado,
+            patient_email=row.email,
+            patient_phone=row.telefono,
+            doctor_name=doctor or None,
+            doctor_registration=row.registro_profesional,
+        )
 
     # ---------- medical review ----------
 

@@ -26,6 +26,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     NewDocument,
     NewOrder,
     PatientSummary,
+    ReportParties,
     ResultEntry,
     StoredDocument,
 )
@@ -282,6 +283,23 @@ class LabService:
                 )
             )
         return classified
+
+    def report_parties(self, actor: AccessProfile, order_id: str) -> ReportParties:
+        """Who the report is about, for the readers allowed to see the order."""
+        order = self._readable_order(actor, order_id)
+        parties = self._store.report_parties(order.id)
+        if parties is None:
+            return ReportParties(
+                patient_name="—",
+                patient_document=None,
+                patient_birth_date=None,
+                patient_sex=None,
+                patient_email=None,
+                patient_phone=None,
+                doctor_name=None,
+                doctor_registration=None,
+            )
+        return parties
 
     def list_results(self, actor: AccessProfile, order_id: str) -> list[LabResult]:
         order = self._readable_order(actor, order_id)
