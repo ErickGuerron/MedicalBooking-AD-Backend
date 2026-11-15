@@ -1,13 +1,15 @@
-"""Copy the authorization catalog (roles, permissions and links) to the Supabase replica.
+"""Copy the authorization catalog and the read-only directory to the replicas.
 
-Run after a migration that changes roles or permissions:
+Run after a migration that changes roles or permissions, and on a schedule so doctors and
+services stay current in both replicas:
 
     uv run python -m medicalbooking.workers.sync_replica_catalog
 
-Required settings: SQLSERVER_* (source) and SUPABASE_WRITER_DATABASE_URL (target).
-The catalog holds no personal data. The whole catalog is replaced in one transaction, so a
-failed run leaves the previous catalog in place. Only counts are printed: the connection
-strings never are.
+Required settings: SQLSERVER_* (source), plus SUPABASE_WRITER_DATABASE_URL (Supabase target)
+and/or MONGODB_PROJECTION_URI with MONGODB_DATABASE (MongoDB target). A target that is not
+configured is skipped. Each target is replaced as a whole in one transaction, so a failed run
+leaves the previous data in place. The directory holds staff names and catalog text only. Only
+counts are printed: the connection strings never are.
 """
 
 from __future__ import annotations
@@ -16,10 +18,12 @@ import logging
 import sys
 
 import psycopg
+from pymongo import MongoClient
 
 from medicalbooking.config import Settings
 from medicalbooking.modules.replica.application.catalog_sync import replace_catalog
 from medicalbooking.modules.replica.application.directory_sync import replace_directory
+from medicalbooking.modules.replica.infrastructure.mongo_directory import replace_directory_mongo
 from medicalbooking.modules.replica.infrastructure.supabase_catalog import (
     SupabaseCatalogTarget,
     read_catalog,
@@ -39,29 +43,56 @@ def main() -> int:
     except Exception as error:
         logger.error("worker configuration failed: %s", type(error).__name__)
         return 1
-    if settings.supabase_writer_database_url is None:
-        logger.error("worker configuration incomplete: missing SUPABASE_WRITER_DATABASE_URL")
+    supabase_configured = settings.supabase_writer_database_url is not None
+    mongo_configured = settings.mongodb_projection_uri is not None and bool(
+        settings.mongodb_database
+    )
+    if not supabase_configured and not mongo_configured:
+        logger.error("worker configuration incomplete: no replica target is configured")
         return 1
 
     engine = create_database_engine(settings)
     try:
-        snapshot = read_catalog(engine)
-        writer_url = settings.supabase_writer_database_url.get_secret_value()
-        target = SupabaseCatalogTarget(lambda: psycopg.connect(writer_url, connect_timeout=15))
-        replace_catalog(snapshot, target)
+        catalog = read_catalog(engine)
         directory = read_directory(engine)
-        replace_directory(directory, target)
     except Exception as error:
         # Log the error type only: driver messages may carry connection data.
-        logger.error("catalog sync failed: %s", type(error).__name__)
+        logger.error("catalog sync failed reading the source: %s", type(error).__name__)
+        engine.dispose()
         return 1
+
+    # Each target is independent: a Supabase migration that is not applied yet must not stop the
+    # MongoDB directory, and the other way around.
+    failed: list[str] = []
+    try:
+        if supabase_configured:
+            writer_url = settings.supabase_writer_database_url.get_secret_value()
+            target = SupabaseCatalogTarget(lambda: psycopg.connect(writer_url, connect_timeout=15))
+            replace_catalog(catalog, target)
+            replace_directory(directory, target)
+    except Exception as error:
+        logger.error("catalog sync failed for supabase: %s", type(error).__name__)
+        failed.append("supabase")
+    try:
+        if mongo_configured:
+            client = MongoClient(
+                settings.mongodb_projection_uri.get_secret_value(), serverSelectionTimeoutMS=5000
+            )
+            replace_directory_mongo(directory, client[settings.mongodb_database])
+    except Exception as error:
+        logger.error("directory sync failed for mongodb: %s", type(error).__name__)
+        failed.append("mongodb")
     finally:
         engine.dispose()
+    if failed:
+        return 1
     print(
-        f"catalog synced roles={len(snapshot.roles)} permisos={len(snapshot.permisos)} "
-        f"links={len(snapshot.roles_permisos)} especialidades={len(directory.especialidades)} "
+        f"catalog synced roles={len(catalog.roles)} permisos={len(catalog.permisos)} "
+        f"links={len(catalog.roles_permisos)} especialidades={len(directory.especialidades)} "
         f"medicos={len(directory.medicos)} servicios={len(directory.servicios)} "
-        f"citas_medico={len(directory.citas_medico)}"
+        f"citas_medico={len(directory.citas_medico)} "
+        f"supabase={'on' if supabase_configured else 'off'} "
+        f"mongodb={'on' if mongo_configured else 'off'}"
     )
     return 0
 

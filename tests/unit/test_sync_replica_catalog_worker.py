@@ -17,6 +17,8 @@ def test_help_flag_prints_help_and_never_touches_settings(monkeypatch, capsys):
 def test_missing_writer_url_fails_without_connecting(monkeypatch, capsys):
     class NoWriter:
         supabase_writer_database_url = None
+        mongodb_projection_uri = None
+        mongodb_database = None
 
     monkeypatch.setattr(sync_replica_catalog, "Settings", lambda: NoWriter())
     monkeypatch.setattr(sys, "argv", ["sync_replica_catalog"])
