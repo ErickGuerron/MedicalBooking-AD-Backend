@@ -408,6 +408,8 @@ def _row(order_id: str, detalle: str, *, origen: str = "PACIENTE", medico: str |
         id=order_id,
         paciente_id=_id(),
         paciente_user_id=_id(),
+        paciente_nombre="Ana",
+        paciente_apellido="Lopez",
         medico_id=medico,
         medico_user_id=None,
         prioridad="NORMAL",
@@ -418,6 +420,9 @@ def _row(order_id: str, detalle: str, *, origen: str = "PACIENTE", medico: str |
         detalle_id=detalle,
         tipo_prueba_id=_id(),
         detalle_estado="PENDIENTE",
+        confirmada_en=None,
+        prueba_nombre="Hemograma completo",
+        prueba_codigo="HEMO-SINT",
     )
 
 
@@ -482,6 +487,9 @@ def test_worklist_statement_is_static_and_binds_only_the_paging_values() -> None
     assert params == {"skip": 10, "take": 5}
     assert "IN ('SOLICITADA', 'EN_PROCESO')" in statement
     assert "LEFT JOIN medicos" in statement
+    # Urgent orders come first, in the page and in the rows, so both sort the same way.
+    assert statement.count("CASE WHEN o.prioridad = 'URGENTE' THEN 0 ELSE 1 END") == 2
+    assert "JOIN tipos_prueba_laboratorio t" in statement
     assert "FETCH NEXT :take ROWS ONLY" in statement
 
 
@@ -495,3 +503,55 @@ def test_an_order_with_no_doctor_loads_without_error() -> None:
     assert order is not None
     assert order.medico_id is None and order.medico_user_id is None
     assert order.origen == "PACIENTE"
+
+
+def test_worklist_lines_carry_the_test_name_and_code() -> None:
+    order_id = _id()
+    engine = _Engine([_row(order_id, _id())])
+
+    [order] = SqlLabStore(engine).list_pending_orders(limit=5, offset=0)
+
+    [line] = order.details
+    assert (line.nombre, line.codigo) == ("Hemograma completo", "HEMO-SINT")
+    assert order.paciente_nombre == "Ana Lopez"
+
+
+def test_test_analytes_are_read_for_the_given_test_in_presentation_order() -> None:
+    test_id = _id()
+    rows = [
+        SimpleNamespace(
+            id=_id(),
+            nombre="Hemoglobina",
+            unidad_canonica="g/dL",
+            tipo_valor="NUMERICO",
+            obligatorio=1,
+            orden_presentacion=1,
+        ),
+        SimpleNamespace(
+            id=_id(),
+            nombre="Hematocrito",
+            unidad_canonica=None,
+            tipo_valor="TEXTO",
+            obligatorio=0,
+            orden_presentacion=None,
+        ),
+    ]
+    engine = _Engine(rows)
+
+    analytes = SqlLabStore(engine).list_test_analytes(test_id)
+
+    [(statement, params)] = engine.calls
+    assert params == {"t": test_id}
+    assert "a.activo = 1" in statement
+    assert "orden_presentacion IS NULL" in statement
+    assert [(a.nombre, a.obligatorio, a.orden) for a in analytes] == [
+        ("Hemoglobina", True, 1),
+        ("Hematocrito", False, None),
+    ]
+
+
+def test_test_analytes_for_a_malformed_id_are_empty_without_a_query() -> None:
+    engine = _Engine()
+
+    assert SqlLabStore(engine).list_test_analytes("not-a-guid") == []
+    assert engine.calls == []

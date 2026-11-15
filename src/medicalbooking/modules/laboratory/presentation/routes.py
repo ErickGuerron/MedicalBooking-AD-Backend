@@ -134,10 +134,22 @@ def _order_json(order: LabOrder) -> dict[str, Any]:
 
 def _work_item_json(order: LabOrder) -> dict[str, Any]:
     """An order as the laboratory and the patient request see it: plus where it came from."""
+    lines = [
+        {
+            "detalle_id": d.id,
+            "tipo_prueba_id": d.tipo_prueba_id,
+            "estado": d.estado,
+            "nombre": d.nombre,
+            "codigo": d.codigo,
+        }
+        for d in order.details
+    ]
     moment = order.fecha or datetime.now(UTC)
     moment = moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
     return {
         **_order_json(order),
+        "paciente_nombre": order.paciente_nombre,
+        "pruebas": lines,
         "origen": order.origen,
         "fecha": moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
@@ -260,6 +272,24 @@ def list_test_types() -> tuple[Response, int]:
     return jsonify(items=[_test_type_json(row) for row in rows]), 200
 
 
+@lab_bp.get("/lab/test-types/<uuid:test_id>/analytes")
+@authenticated
+def list_test_analytes(test_id: uuid.UUID) -> tuple[Response, int]:
+    rows = _service().list_test_analytes(g.actor, str(test_id))
+    items = [
+        {
+            "id": row.id,
+            "nombre": row.nombre,
+            "unidad": row.unidad,
+            "tipo_valor": row.tipo_valor,
+            "obligatorio": row.obligatorio,
+            "orden": row.orden,
+        }
+        for row in rows
+    ]
+    return jsonify(items=items), 200
+
+
 @lab_bp.get("/lab/orders/<uuid:order_id>")
 @authenticated
 def get_order(order_id: uuid.UUID) -> tuple[Response, int]:
@@ -341,6 +371,20 @@ def upload_document(order_id: uuid.UUID) -> tuple[Response, int]:
         tipo_documento=tipo,
     )
     return jsonify(_document_json(document)), 201
+
+
+@lab_bp.post("/lab/orders/<uuid:order_id>/confirm")
+@authenticated
+def confirm_order(order_id: uuid.UUID) -> tuple[Response, int]:
+    _service().confirm_order(g.actor, str(order_id))
+    return jsonify(estado="COMPLETADA", confirmada=True, orden_id=str(order_id)), 200
+
+
+@lab_bp.get("/lab/orders/<uuid:order_id>/documents")
+@authenticated
+def list_order_documents(order_id: uuid.UUID) -> tuple[Response, int]:
+    rows = _service().list_order_documents(g.actor, str(order_id))
+    return jsonify(items=[_document_json(row) for row in rows]), 200
 
 
 @lab_bp.get("/documents/<uuid:document_id>/download")

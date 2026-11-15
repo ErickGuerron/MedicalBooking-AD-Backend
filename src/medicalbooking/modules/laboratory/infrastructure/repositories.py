@@ -22,6 +22,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabOrder,
     LabOrderSummary,
     LabResult,
+    LabTestAnalyte,
     LabTestType,
     NewDocument,
     NewOrder,
@@ -262,7 +263,7 @@ class SqlLabStore:
                 text(
                     "SELECT o.id, o.paciente_id, pa.usuario_id AS paciente_user_id, o.medico_id, "
                     "me.usuario_id AS medico_user_id, o.prioridad, o.estado, o.observaciones, "
-                    "o.origen FROM ordenes_laboratorio o "
+                    "o.origen, o.confirmada_en FROM ordenes_laboratorio o "
                     "JOIN pacientes pa ON pa.id = o.paciente_id "
                     "LEFT JOIN medicos me ON me.id = o.medico_id WHERE o.id = :o"
                 ),
@@ -295,28 +296,65 @@ class SqlLabStore:
                 for row in detail_rows
             ),
             origen=header.origen,
+            confirmada=header.confirmada_en is not None,
         )
 
+    def list_test_analytes(self, test_id: str) -> list[LabTestAnalyte]:
+        guid = _as_guid(test_id)
+        if guid is None:
+            return []
+        # Only active analytes; the link's presentation order first, unordered ones last.
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT a.id, a.nombre, a.unidad_canonica, a.tipo_valor, pa.obligatorio, "
+                    "pa.orden_presentacion FROM conocimiento_pruebas_analitos pa "
+                    "JOIN conocimiento_analitos a ON a.id = pa.analito_id "
+                    "WHERE pa.tipo_prueba_id = :t AND a.activo = 1 "
+                    "ORDER BY CASE WHEN pa.orden_presentacion IS NULL THEN 1 ELSE 0 END, "
+                    "pa.orden_presentacion, a.nombre, a.id"
+                ),
+                {"t": guid},
+            ).all()
+        return [
+            LabTestAnalyte(
+                id=_canonical(row.id),
+                nombre=row.nombre,
+                unidad=row.unidad_canonica,
+                tipo_valor=row.tipo_valor,
+                obligatorio=bool(row.obligatorio),
+                orden=row.orden_presentacion,
+            )
+            for row in rows
+        ]
+
     def list_pending_orders(self, *, limit: int, offset: int) -> list[LabOrder]:
-        """One page of pending orders, oldest first. The page is cut on orders, not on lines."""
+        """One page of pending orders: urgent first, then oldest. Cut on orders, not on lines."""
         # Static statement: only the paging values are bound. Lines are grouped in Python.
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "WITH pagina AS (SELECT o.id FROM ordenes_laboratorio o "
-                    "WHERE o.estado IN ('SOLICITADA', 'EN_PROCESO') "
-                    "ORDER BY o.fecha_orden ASC, o.id ASC "
+                    "WHERE (o.estado IN ('SOLICITADA', 'EN_PROCESO') "
+                    "OR (o.estado = 'COMPLETADA' AND o.confirmada_en IS NULL)) "
+                    "ORDER BY CASE WHEN o.prioridad = 'URGENTE' THEN 0 ELSE 1 END ASC, "
+                    "o.fecha_orden ASC, o.id ASC "
                     "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY) "
                     "SELECT o.id, o.paciente_id, pa.usuario_id AS paciente_user_id, o.medico_id, "
                     "me.usuario_id AS medico_user_id, o.prioridad, o.estado, o.observaciones, "
-                    "o.origen, o.fecha_orden, d.id AS detalle_id, d.tipo_prueba_id, "
-                    "d.estado AS detalle_estado "
+                    "o.origen, o.fecha_orden, up.nombre AS paciente_nombre, "
+                    "up.apellido AS paciente_apellido, d.id AS detalle_id, d.tipo_prueba_id, "
+                    "d.estado AS detalle_estado, t.nombre AS prueba_nombre, "
+                    "t.codigo AS prueba_codigo "
                     "FROM pagina "
                     "JOIN ordenes_laboratorio o ON o.id = pagina.id "
                     "JOIN pacientes pa ON pa.id = o.paciente_id "
+                    "JOIN usuarios up ON up.id = pa.usuario_id "
                     "LEFT JOIN medicos me ON me.id = o.medico_id "
                     "JOIN ordenes_laboratorio_detalle d ON d.orden_id = o.id "
-                    "ORDER BY o.fecha_orden ASC, o.id ASC, d.id ASC"
+                    "JOIN tipos_prueba_laboratorio t ON t.id = d.tipo_prueba_id "
+                    "ORDER BY CASE WHEN o.prioridad = 'URGENTE' THEN 0 ELSE 1 END ASC, "
+                    "o.fecha_orden ASC, o.id ASC, d.id ASC"
                 ),
                 {"skip": offset, "take": limit},
             ).all()
@@ -337,6 +375,10 @@ class SqlLabStore:
                     details=(),
                     origen=row.origen,
                     fecha=row.fecha_orden,
+                    paciente_nombre=" ".join(
+                        part for part in (row.paciente_nombre, row.paciente_apellido) if part
+                    )
+                    or None,
                 )
                 lines[key] = []
             lines[key].append(
@@ -344,6 +386,8 @@ class SqlLabStore:
                     id=_canonical(row.detalle_id),
                     tipo_prueba_id=_canonical(row.tipo_prueba_id),
                     estado=row.detalle_estado,
+                    nombre=row.prueba_nombre,
+                    codigo=row.prueba_codigo,
                 )
             )
         return [replace(order, details=tuple(lines[key])) for key, order in orders.items()]
@@ -440,6 +484,39 @@ class SqlLabStore:
 
     # ---------- results ----------
 
+    def confirm_order(self, order_id: str, now: datetime, actor_user_id: str) -> str:
+        return retry_on_deadlock(lambda: self._confirm_once(order_id, now, actor_user_id))
+
+    def _confirm_once(self, order_id: str, now: datetime, actor_user_id: str) -> str:
+        moment = _utc_naive(now)
+        with self._engine.begin() as conn:
+            estado = _lock_order(conn, order_id)
+            if estado is None:
+                return "NOT_FOUND"
+            if _is_confirmed(conn, order_id):
+                return "ALREADY_CONFIRMED"
+            if estado != "COMPLETADA":
+                return "NOT_COMPLETED"
+            with_report = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM documentos_clinicos "
+                    "WHERE orden_id = :o AND estado = 'DISPONIBLE'"
+                ),
+                {"o": order_id},
+            ).scalar_one()
+            conn.execute(
+                text("UPDATE ordenes_laboratorio SET confirmada_en = :m WHERE id = :o"),
+                {"m": moment, "o": order_id},
+            )
+            _outbox(
+                conn,
+                order_id,
+                "orden_laboratorio.confirmada",
+                {"estado_orden": "COMPLETADA", "tiene_informe": with_report > 0},
+                moment,
+            )
+        return "CONFIRMED"
+
     def record_results(
         self,
         order_id: str,
@@ -463,6 +540,8 @@ class SqlLabStore:
         moment = _utc_naive(now)
         with self._engine.begin() as conn:
             _lock_order(conn, order_id)
+            if _is_confirmed(conn, order_id):
+                return "ORDER_CONFIRMED"
             detail = conn.execute(
                 text(
                     "SELECT estado, tipo_prueba_id FROM ordenes_laboratorio_detalle "
@@ -752,6 +831,42 @@ class SqlLabStore:
         assert document is not None
         return document
 
+    def list_order_documents(self, order_id: str) -> list[StoredDocument]:
+        guid = _as_guid(order_id)
+        if guid is None:
+            return []
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT d.id, d.orden_id, d.nombre_archivo, d.ruta_storage, d.hash_sha256, "
+                    "d.tipo_mime, d.tamano_bytes, pa.id AS paciente_id, "
+                    "pa.usuario_id AS paciente_user_id, "
+                    "me.usuario_id AS medico_user_id "
+                    "FROM documentos_clinicos d "
+                    "JOIN pacientes pa ON pa.id = d.paciente_id "
+                    "LEFT JOIN ordenes_laboratorio o ON o.id = d.orden_id "
+                    "LEFT JOIN medicos me ON me.id = o.medico_id "
+                    "WHERE d.orden_id = :o AND d.estado = 'DISPONIBLE' "
+                    "ORDER BY d.creado_en ASC, d.id ASC"
+                ),
+                {"o": guid},
+            ).all()
+        return [
+            StoredDocument(
+                id=_canonical(row.id),
+                paciente_id=_canonical(row.paciente_id),
+                paciente_user_id=_canonical(row.paciente_user_id),
+                orden_id=_canonical(row.orden_id),
+                medico_user_id=_optional_canonical(row.medico_user_id),
+                nombre_archivo=row.nombre_archivo,
+                ruta_storage=row.ruta_storage,
+                hash_sha256=row.hash_sha256,
+                tipo_mime=row.tipo_mime,
+                tamano_bytes=row.tamano_bytes,
+            )
+            for row in rows
+        ]
+
     def get_document(self, document_id: str) -> StoredDocument | None:
         guid = _as_guid(document_id)
         if guid is None:
@@ -808,6 +923,14 @@ class SqlLabStore:
                     "correlacion": _as_guid(event.correlation_id) if event.correlation_id else None,
                 },
             )
+
+
+def _is_confirmed(conn: Connection, order_id: str) -> bool:
+    value = conn.execute(
+        text("SELECT confirmada_en FROM ordenes_laboratorio WHERE id = :o"),
+        {"o": order_id},
+    ).scalar()
+    return value is not None
 
 
 def _lock_order(conn: Connection, order_id: str) -> str:

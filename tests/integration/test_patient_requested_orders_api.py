@@ -318,6 +318,8 @@ def test_worklist_lists_pending_orders_of_both_origins(app, engine) -> None:
     assert by_id[doctor_order]["medico_id"] is not None
     # The date is what the laboratory sorts and reads by, in UTC with a Z suffix.
     assert by_id[patient_order]["fecha"].endswith("Z")
+    # The queue names the patient, so the laboratory can match the sample to the person.
+    assert by_id[patient_order]["paciente_nombre"]
     # The lines carry the ids the laboratory needs to record results.
     assert all(line["detalle_id"] for line in by_id[patient_order]["pruebas"])
 
@@ -331,7 +333,8 @@ def test_worklist_leaves_out_completed_and_cancelled_orders(app, engine) -> None
     _set_order(engine, cancelled, estado="CANCELADA")
 
     ids = [item["id"] for item in _worklist(app, lab, limit=200)["items"]]
-    assert done not in ids
+    # A completed order waits in the queue until the laboratory confirms it.
+    assert done in ids
     assert cancelled not in ids
     assert pending in ids
 
@@ -424,8 +427,8 @@ def test_patient_request_to_results_to_completed_and_the_patient_reads_them(app,
     assert report.status_code == 200
     assert report.mimetype == "application/pdf"
 
-    # A completed order leaves the worklist.
-    assert order_id not in [item["id"] for item in _worklist(app, lab, limit=200)["items"]]
+    # Completed but not confirmed: it stays in the queue until the laboratory closes it.
+    assert order_id in [item["id"] for item in _worklist(app, lab, limit=200)["items"]]
 
 
 def test_lab_uploads_the_pdf_of_a_patient_order_and_the_patient_downloads_it(app, engine) -> None:
@@ -490,3 +493,45 @@ def test_migration_grants_the_request_permission_to_patients_only(app, engine) -
             ).all()
         }
     assert roles == {"PACIENTE"}
+
+
+def test_worklist_puts_urgent_orders_first_then_the_oldest(app, engine) -> None:
+    lab = _lab_headers(app, engine)
+    old_normal, _ = _patient_request(app, engine)
+    urgent, _ = _patient_request(app, engine)
+    _set_order(engine, old_normal, fecha_orden="2000-01-01 08:00:00")
+    _set_order(engine, urgent, prioridad="URGENTE", fecha_orden="2026-06-01 08:00:00")
+
+    ids = [item["id"] for item in _worklist(app, lab, limit=200)["items"]]
+    assert ids.index(urgent) < ids.index(old_normal)
+
+
+def test_worklist_lines_carry_the_test_name_and_code(app, engine) -> None:
+    order_id, _ = _patient_request(app, engine)
+
+    items = _worklist(app, _lab_headers(app, engine), limit=200)["items"]
+    line = next(item for item in items if item["id"] == order_id)["pruebas"][0]
+    assert line["nombre"]
+    assert line["codigo"]
+
+
+def test_laboratory_reads_the_analytes_of_a_test_with_their_mandatory_flag(app, engine) -> None:
+    response = app.test_client().get(
+        f"/api/v1/lab/test-types/{_test_type(engine)}/analytes",
+        headers=_lab_headers(app, engine),
+    )
+
+    assert response.status_code == 200, response.get_json()
+    items = response.get_json()["items"]
+    hemoglobin = next(item for item in items if item["id"] == HB)
+    assert hemoglobin["nombre"] == "Hemoglobina (SINTETICO)"
+    assert hemoglobin["obligatorio"] is True
+    assert "unidad" in hemoglobin
+
+
+def test_test_analytes_are_refused_to_patients_and_doctors(app, engine) -> None:
+    url = f"/api/v1/lab/test-types/{_test_type(engine)}/analytes"
+    client = app.test_client()
+
+    assert client.get(url, headers=_token(app, _patient(engine))).status_code == 403
+    assert client.get(url, headers=_token(app, _doctor(engine))).status_code == 403
