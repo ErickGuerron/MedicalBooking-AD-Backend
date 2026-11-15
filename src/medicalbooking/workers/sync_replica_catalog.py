@@ -19,10 +19,12 @@ import psycopg
 
 from medicalbooking.config import Settings
 from medicalbooking.modules.replica.application.catalog_sync import replace_catalog
+from medicalbooking.modules.replica.application.directory_sync import replace_directory
 from medicalbooking.modules.replica.infrastructure.supabase_catalog import (
     SupabaseCatalogTarget,
     read_catalog,
 )
+from medicalbooking.modules.replica.infrastructure.supabase_directory import read_directory
 from medicalbooking.shared.infrastructure.database import create_database_engine
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,8 @@ def main() -> int:
         writer_url = settings.supabase_writer_database_url.get_secret_value()
         target = SupabaseCatalogTarget(lambda: psycopg.connect(writer_url, connect_timeout=15))
         replace_catalog(snapshot, target)
+        directory = read_directory(engine)
+        replace_directory(directory, target)
     except Exception as error:
         # Log the error type only: driver messages may carry connection data.
         logger.error("catalog sync failed: %s", type(error).__name__)
@@ -55,7 +59,9 @@ def main() -> int:
         engine.dispose()
     print(
         f"catalog synced roles={len(snapshot.roles)} permisos={len(snapshot.permisos)} "
-        f"links={len(snapshot.roles_permisos)}"
+        f"links={len(snapshot.roles_permisos)} especialidades={len(directory.especialidades)} "
+        f"medicos={len(directory.medicos)} servicios={len(directory.servicios)} "
+        f"citas_medico={len(directory.citas_medico)}"
     )
     return 0
 
