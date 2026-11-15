@@ -78,13 +78,16 @@ class _Transaction:
 
     def upsert_order(self, orden: dict[str, Any]) -> None:
         self._cur.execute(
-            "INSERT INTO replica.ordenes_laboratorio (id, paciente_id, medico_id, fecha_orden, "
-            "prioridad, estado, actualizado_en) VALUES (%s, %s, %s, %s, %s, %s, now()) "
+            "INSERT INTO replica.ordenes_laboratorio (id, paciente_id, medico_id, origen, "
+            "fecha_orden, prioridad, estado, actualizado_en) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, now()) "
             "ON CONFLICT (id) DO UPDATE SET estado = excluded.estado, actualizado_en = now()",
             (
                 orden["id"],
                 orden["paciente_id"],
                 orden["medico_id"],
+                # Events written before patient requests carry no origin: they are doctor orders.
+                orden.get("origen", "MEDICO"),
                 orden["fecha_orden"],
                 orden["prioridad"],
                 orden["estado"],

@@ -17,6 +17,12 @@ PERM_RESULT_REGISTER = "resultados.registrar"
 PERM_RESULT_READ_OWN = "resultados.leer_propios"
 PERM_RESULT_READ_CONTEXT = "resultados.leer_con_acceso"
 PERM_REVIEW = "revisiones.registrar"
+PERM_PATIENT_ORDER = "ordenes.solicitar_propias"
+
+ORIGIN_DOCTOR = "MEDICO"
+ORIGIN_PATIENT = "PACIENTE"
+# Orders the laboratory still has to work on: the worklist shows only these.
+PENDING_STATES = ("SOLICITADA", "EN_PROCESO")
 
 PRIORITIES = frozenset({"NORMAL", "URGENTE"})
 DOCUMENT_TYPES = frozenset({"INFORME_LABORATORIO"})

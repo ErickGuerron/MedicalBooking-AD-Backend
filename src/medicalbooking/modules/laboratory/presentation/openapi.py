@@ -315,6 +315,70 @@ def laboratory_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/lab/patient-orders": {
+                "post": {
+                    "tags": ["Laboratory"],
+                    "operationId": "createPatientLabOrder",
+                    "summary": "Request a lab exam as the patient, with no doctor",
+                    "description": (
+                        "Requires ordenes.solicitar_propias and a patient profile. Creates an "
+                        "order with origen PACIENTE, medico_id null and prioridad NORMAL. It "
+                        "skips the doctor, so it has no review and no proposal. Results follow "
+                        "the same flow."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": _body("PatientOrderRequest"),
+                    "responses": {
+                        "201": _json("Order created", "LabWorkItem"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller has no patient profile or no permission"),
+                        "422": _problem("Invalid body or unknown or inactive test type"),
+                    },
+                }
+            },
+            "/api/v1/lab/worklist": {
+                "get": {
+                    "tags": ["Laboratory"],
+                    "operationId": "listLabWorklist",
+                    "summary": "List the pending orders the laboratory works on, both origins",
+                    "description": (
+                        "Requires resultados.registrar. Orders in SOLICITADA or EN_PROCESO, oldest "
+                        "first, then id, with their test lines (detalle_id) to record results. "
+                        "Audited without values."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                                "default": 50,
+                            },
+                        },
+                        {
+                            "name": "offset",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "default": 0,
+                            },
+                        },
+                    ],
+                    "responses": {
+                        "200": _json("Pending orders", "LabWorklist"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks resultados.registrar"),
+                        "422": _problem("Invalid limit or offset"),
+                    },
+                }
+            },
             "/api/v1/lab/test-types": {
                 "get": {
                     "tags": ["Laboratory"],
@@ -360,6 +424,45 @@ def laboratory_fragment() -> dict[str, Any]:
                 "CreateOrderRequest": CreateOrderRequest.model_json_schema(),
                 "RecordResultsRequest": RecordResultsRequest.model_json_schema(),
                 "ReviewRequest": ReviewRequest.model_json_schema(),
+                "PatientOrderRequest": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["tipo_prueba_ids"],
+                    "properties": {
+                        "tipo_prueba_ids": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "items": _UUID_PARAM,
+                        },
+                        "observaciones": {"type": ["string", "null"], "maxLength": 1000},
+                    },
+                },
+                "LabWorkItem": {
+                    "allOf": [
+                        {"$ref": "#/components/schemas/LabOrder"},
+                        {
+                            "type": "object",
+                            "required": ["origen", "fecha"],
+                            "properties": {
+                                "origen": {"type": "string", "enum": ["MEDICO", "PACIENTE"]},
+                                "fecha": {"type": "string", "format": "date-time"},
+                            },
+                        },
+                    ]
+                },
+                "LabWorklist": {
+                    "type": "object",
+                    "required": ["items", "limit", "offset"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/LabWorkItem"},
+                        },
+                        "limit": {"type": "integer"},
+                        "offset": {"type": "integer"},
+                    },
+                },
                 "LabOrder": {
                     "type": "object",
                     "required": ["id", "paciente_id", "prioridad", "estado", "pruebas"],
@@ -372,7 +475,7 @@ def laboratory_fragment() -> dict[str, Any]:
                             "enum": ["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"],
                         },
                         "observaciones": {"type": ["string", "null"]},
-                        "medico_id": _UUID_PARAM,
+                        "medico_id": {"type": ["string", "null"], "format": "uuid"},
                         "pruebas": {
                             "type": "array",
                             "items": {
@@ -400,7 +503,7 @@ def laboratory_fragment() -> dict[str, Any]:
                     "properties": {
                         "id": _UUID_PARAM,
                         "paciente_id": _UUID_PARAM,
-                        "medico_id": _UUID_PARAM,
+                        "medico_id": {"type": ["string", "null"], "format": "uuid"},
                         "estado": {
                             "type": "string",
                             "enum": ["SOLICITADA", "EN_PROCESO", "COMPLETADA", "CANCELADA"],

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 from sqlalchemy import Connection, Engine, text
@@ -39,6 +40,10 @@ def _canonical(value: object) -> str:
 
 def _utc_naive(moment: datetime) -> datetime:
     return moment.astimezone(UTC).replace(tzinfo=None)
+
+
+def _optional_canonical(value: object) -> str | None:
+    return None if value is None else _canonical(value)
 
 
 def _as_guid(value: str) -> str | None:
@@ -200,8 +205,8 @@ class SqlLabStore:
             conn.execute(
                 text(
                     "INSERT INTO ordenes_laboratorio (id, paciente_id, medico_id, fecha_orden, "
-                    "prioridad, estado, observaciones) "
-                    "VALUES (:id, :p, :m, :ahora, :prioridad, 'SOLICITADA', :obs)"
+                    "prioridad, estado, observaciones, origen) "
+                    "VALUES (:id, :p, :m, :ahora, :prioridad, 'SOLICITADA', :obs, :origen)"
                 ),
                 {
                     "id": command.order_id,
@@ -210,6 +215,7 @@ class SqlLabStore:
                     "ahora": now,
                     "prioridad": command.prioridad,
                     "obs": command.observaciones,
+                    "origen": command.origen,
                 },
             )
             detalles = []
@@ -230,6 +236,7 @@ class SqlLabStore:
                 "id": command.order_id,
                 "paciente_id": command.paciente_id,
                 "medico_id": command.medico_id,
+                "origen": command.origen,
                 "fecha_orden": now.isoformat(),
                 "prioridad": command.prioridad,
                 "estado": "SOLICITADA",
@@ -254,10 +261,10 @@ class SqlLabStore:
             header = conn.execute(
                 text(
                     "SELECT o.id, o.paciente_id, pa.usuario_id AS paciente_user_id, o.medico_id, "
-                    "me.usuario_id AS medico_user_id, o.prioridad, o.estado, o.observaciones "
-                    "FROM ordenes_laboratorio o "
+                    "me.usuario_id AS medico_user_id, o.prioridad, o.estado, o.observaciones, "
+                    "o.origen FROM ordenes_laboratorio o "
                     "JOIN pacientes pa ON pa.id = o.paciente_id "
-                    "JOIN medicos me ON me.id = o.medico_id WHERE o.id = :o"
+                    "LEFT JOIN medicos me ON me.id = o.medico_id WHERE o.id = :o"
                 ),
                 {"o": guid},
             ).first()
@@ -274,8 +281,8 @@ class SqlLabStore:
             id=_canonical(header.id),
             paciente_id=_canonical(header.paciente_id),
             paciente_user_id=_canonical(header.paciente_user_id),
-            medico_id=_canonical(header.medico_id),
-            medico_user_id=_canonical(header.medico_user_id),
+            medico_id=_optional_canonical(header.medico_id),
+            medico_user_id=_optional_canonical(header.medico_user_id),
             prioridad=header.prioridad,
             estado=header.estado,
             observaciones=header.observaciones,
@@ -287,7 +294,59 @@ class SqlLabStore:
                 )
                 for row in detail_rows
             ),
+            origen=header.origen,
         )
+
+    def list_pending_orders(self, *, limit: int, offset: int) -> list[LabOrder]:
+        """One page of pending orders, oldest first. The page is cut on orders, not on lines."""
+        # Static statement: only the paging values are bound. Lines are grouped in Python.
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "WITH pagina AS (SELECT o.id FROM ordenes_laboratorio o "
+                    "WHERE o.estado IN ('SOLICITADA', 'EN_PROCESO') "
+                    "ORDER BY o.fecha_orden ASC, o.id ASC "
+                    "OFFSET :skip ROWS FETCH NEXT :take ROWS ONLY) "
+                    "SELECT o.id, o.paciente_id, pa.usuario_id AS paciente_user_id, o.medico_id, "
+                    "me.usuario_id AS medico_user_id, o.prioridad, o.estado, o.observaciones, "
+                    "o.origen, o.fecha_orden, d.id AS detalle_id, d.tipo_prueba_id, "
+                    "d.estado AS detalle_estado "
+                    "FROM pagina "
+                    "JOIN ordenes_laboratorio o ON o.id = pagina.id "
+                    "JOIN pacientes pa ON pa.id = o.paciente_id "
+                    "LEFT JOIN medicos me ON me.id = o.medico_id "
+                    "JOIN ordenes_laboratorio_detalle d ON d.orden_id = o.id "
+                    "ORDER BY o.fecha_orden ASC, o.id ASC, d.id ASC"
+                ),
+                {"skip": offset, "take": limit},
+            ).all()
+        orders: dict[str, LabOrder] = {}
+        lines: dict[str, list[LabDetail]] = {}
+        for row in rows:
+            key = _canonical(row.id)
+            if key not in orders:
+                orders[key] = LabOrder(
+                    id=key,
+                    paciente_id=_canonical(row.paciente_id),
+                    paciente_user_id=_canonical(row.paciente_user_id),
+                    medico_id=_optional_canonical(row.medico_id),
+                    medico_user_id=_optional_canonical(row.medico_user_id),
+                    prioridad=row.prioridad,
+                    estado=row.estado,
+                    observaciones=row.observaciones,
+                    details=(),
+                    origen=row.origen,
+                    fecha=row.fecha_orden,
+                )
+                lines[key] = []
+            lines[key].append(
+                LabDetail(
+                    id=_canonical(row.detalle_id),
+                    tipo_prueba_id=_canonical(row.tipo_prueba_id),
+                    estado=row.detalle_estado,
+                )
+            )
+        return [replace(order, details=tuple(lines[key])) for key, order in orders.items()]
 
     def list_orders(
         self,
@@ -331,7 +390,7 @@ class SqlLabStore:
                 paciente_id=_canonical(row.paciente_id),
                 estado=row.estado,
                 fecha=row.fecha_orden,
-                medico_id=_canonical(row.medico_id),
+                medico_id=_optional_canonical(row.medico_id),
             )
             for row in rows
         ]
