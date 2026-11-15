@@ -40,6 +40,7 @@ REPLICA_KEYS = {
     "id",
     "paciente_id",
     "servicio_id",
+    "medico_id",
     "estado",
     "reservada_en",
     "confirmada_en",
