@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
-from medicalbooking.modules.laboratory.application.ports import LabDetail, LabOrder, LabResult
+from medicalbooking.modules.laboratory.application.ports import (
+    LabDetail,
+    LabOrder,
+    LabResult,
+    ReportParties,
+)
 from medicalbooking.modules.laboratory.application.results_report import build_results_report
 
 ORDER_ID = "11111111-2222-3333-4444-555555555555"
@@ -44,6 +49,19 @@ def _result(detail: str, name: str, **fields) -> LabResult:
     return LabResult(**base)
 
 
+def _parties() -> ReportParties:
+    return ReportParties(
+        patient_name="María Pérez",
+        patient_document="CEDULA 1712345678",
+        patient_birth_date=date(1992, 5, 14),
+        patient_sex="F",
+        patient_email="maria@test.test",
+        patient_phone="0999999999",
+        doctor_name="Andrés Mora",
+        doctor_registration="MSP-1234",
+    )
+
+
 def _text(pdf: bytes) -> str:
     return pdf.decode("latin-1")
 
@@ -55,7 +73,9 @@ def _in_pdf(pdf: bytes, expected: str) -> bool:
 
 def test_report_is_a_valid_pdf_with_its_xref_offsets(  # the file must open in any reader
 ) -> None:
-    pdf = build_results_report(_order(1), [_result("d0", "Hemoglobina")], generated_at=NOW)
+    pdf = build_results_report(
+        _order(1), [_result("d0", "Hemoglobina")], parties=_parties(), generated_at=NOW
+    )
 
     text = _text(pdf)
     assert pdf.startswith(b"%PDF-1.4")
@@ -82,6 +102,7 @@ def test_report_shows_the_order_results_references_and_classification() -> None:
                 interpretacion="NO_EVALUABLE",
             ),
         ],
+        parties=_parties(),
         generated_at=NOW,
     )
 
@@ -102,7 +123,7 @@ def test_report_shows_the_order_results_references_and_classification() -> None:
 def test_results_are_grouped_by_test_and_pages_are_counted() -> None:
     results = [_result(f"d{i}", f"Analito {i}-{n}") for i in range(3) for n in range(12)]
 
-    text = _text(build_results_report(_order(3), results, generated_at=NOW))
+    text = _text(build_results_report(_order(3), results, parties=_parties(), generated_at=NOW))
 
     assert "Prueba 1" in text and "Prueba 3" in text
     assert "/Count 2" in text  # 36 rows do not fit one page
@@ -111,5 +132,26 @@ def test_results_are_grouped_by_test_and_pages_are_counted() -> None:
 
 def test_order_without_results_still_gives_a_readable_report() -> None:
     assert _in_pdf(
-        build_results_report(_order(1), [], generated_at=NOW), "Todavía no hay resultados validados"
+        build_results_report(_order(1), [], parties=_parties(), generated_at=NOW),
+        "Todavía no hay resultados validados",
     )
+
+
+def test_long_observations_are_wrapped_and_never_cut() -> None:
+    observation = " ".join(f"palabra{i}" for i in range(60)) + " fin-de-la-observacion"
+    order = LabOrder(
+        id=ORDER_ID,
+        paciente_id="p",
+        paciente_user_id="u",
+        medico_id="m",
+        medico_user_id="mu",
+        prioridad="NORMAL",
+        estado="COMPLETADA",
+        observaciones=observation,
+        details=(),
+    )
+
+    pdf = build_results_report(order, [], parties=_parties(), generated_at=NOW)
+
+    assert _in_pdf(pdf, "fin-de-la-observacion")
+    assert _in_pdf(pdf, "palabra0 ")

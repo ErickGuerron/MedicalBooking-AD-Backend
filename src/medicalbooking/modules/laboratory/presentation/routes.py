@@ -246,7 +246,8 @@ def results_report(order_id: uuid.UUID) -> Response:
     """The order's results as a PDF, for whoever may read them (patient, doctor, laboratory)."""
     order = _service().get_order(g.actor, str(order_id))
     results = _service().list_results(g.actor, str(order_id))
-    content = build_results_report(order, results, generated_at=datetime.now(UTC))
+    parties = _service().report_parties(g.actor, str(order_id))
+    content = build_results_report(order, results, parties=parties, generated_at=datetime.now(UTC))
     response = Response(content, mimetype="application/pdf")
     response.headers["Content-Disposition"] = (
         f'attachment; filename="resultados-{str(order_id)[:8]}.pdf"'

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from medicalbooking.modules.laboratory.application.ports import LabOrder, LabResult
+from medicalbooking.modules.laboratory.application.ports import LabOrder, LabResult, ReportParties
 
 PAGE_W = 595.0
 PAGE_H = 842.0
@@ -35,6 +35,21 @@ INTERPRETATION = {
     "DENTRO_REFERENCIA": ("Dentro de rango", SUCCESS),
     "NO_EVALUABLE": ("No evaluable", MUTED),
 }
+
+SEX = {"F": "Femenino", "M": "Masculino"}
+ORDER_LABEL = "Orden"
+
+
+def _birth(born, generated_at: datetime) -> str:
+    if born is None:
+        return "—"
+    years = (
+        generated_at.year
+        - born.year
+        - ((generated_at.month, generated_at.day) < (born.month, born.day))
+    )
+    return f"{born:%d/%m/%Y} ({years} años)"
+
 
 ORDER_STATUS = {
     "SOLICITADA": "Solicitada",
@@ -72,6 +87,32 @@ def _escape(text: str) -> str:
     """A PDF literal string: WinAnsi bytes, delimiters escaped, unknown glyphs as '?'."""
     raw = text.encode("cp1252", errors="replace").decode("cp1252")
     return raw.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+OBSERVATION_CHARS = 98
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    """Greedy word wrap at [width] characters; a longer word is broken, never dropped."""
+    lines: list[str] = []
+    for paragraph in text.splitlines() or [""]:
+        current = ""
+        for word in paragraph.split():
+            while len(word) > width:
+                if current:
+                    lines.append(current)
+                    current = ""
+                lines.append(word[:width])
+                word = word[width:]
+            candidate = f"{current} {word}" if current else word
+            if len(candidate) <= width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+    return lines
 
 
 def _clip(text: str, width_chars: int) -> str:
@@ -205,6 +246,7 @@ def build_results_report(
     order: LabOrder,
     results: list[LabResult],
     *,
+    parties: ReportParties,
     generated_at: datetime,
     status_label: str | None = None,
 ) -> bytes:
@@ -225,24 +267,52 @@ def build_results_report(
         color=WHITE,
     )
 
-    # Order summary card.
+    # Patient and requesting doctor, as on a real lab report.
     y = PAGE_H - 170
-    page.rect(MARGIN, y - 46, PAGE_W - 2 * MARGIN, 58, TINT)
+    card_h = 122
+    page.rect(MARGIN, y - card_h + 12, PAGE_W - 2 * MARGIN, card_h, TINT)
+    left, right = MARGIN + 16, MARGIN + 300
+    page.text(left, y - 4, "PACIENTE", 8, bold=True, color=MUTED)
+    page.text(left, y - 22, _clip(parties.patient_name, 40), 13, bold=True, color=SLATE)
+    rows = [
+        ("Documento", parties.patient_document or "—"),
+        ("Fecha de nacimiento", _birth(parties.patient_birth_date, generated_at)),
+        ("Sexo", SEX.get(parties.patient_sex or "", "—")),
+        ("Correo", parties.patient_email or "—"),
+        ("Teléfono", parties.patient_phone or "—"),
+    ]
+    row_y = y - 40
+    for label, value in rows:
+        page.text(left, row_y, label, 8, bold=True, color=MUTED)
+        page.text(left + 110, row_y, _clip(value, 30), 9, color=SLATE)
+        row_y -= 15
+
+    page.text(right, y - 4, "MÉDICO SOLICITANTE", 8, bold=True, color=MUTED)
+    page.text(right, y - 22, _clip(parties.doctor_name or "—", 30), 13, bold=True, color=SLATE)
+    if parties.doctor_registration:
+        page.text(
+            right, y - 40, f"Registro profesional {parties.doctor_registration}", 9, color=MUTED
+        )
+
+    page.text(right, y - 74, "ORDEN", 8, bold=True, color=MUTED)
     status = status_label or ORDER_STATUS.get(order.estado, order.estado)
-    page.text(MARGIN + 16, y - 6, "ESTADO DE LA ORDEN", 8, bold=True, color=MUTED)
-    page.text(MARGIN + 16, y - 24, status, 12, bold=True, color=SLATE)
-    page.text(MARGIN + 210, y - 6, "PRIORIDAD", 8, bold=True, color=MUTED)
-    page.text(
-        MARGIN + 210,
-        y - 24,
-        "Urgente" if order.prioridad == "URGENTE" else "Normal",
-        12,
-        color=SLATE,
-    )
+    page.text(right, y - 90, f"{ORDER_LABEL} {order.id[:8].upper()} · {status}", 9, color=SLATE)
+    prioridad = "Urgente" if order.prioridad == "URGENTE" else "Normal"
+    page.text(right, y - 104, f"Prioridad {prioridad.lower()}", 9, color=MUTED)
+    y -= card_h + 22
+
+    # Observations wrap over as many lines as they need, never cut short.
     if order.observaciones:
-        page.text(MARGIN + 340, y - 6, "OBSERVACIONES", 8, bold=True, color=MUTED)
-        page.text(MARGIN + 340, y - 24, _clip(order.observaciones, 34), 10, color=SLATE)
-    y -= 84
+        page.text(MARGIN, y, "OBSERVACIONES", 8, bold=True, color=MUTED)
+        y -= 14
+        for line in _wrap(order.observaciones, OBSERVATION_CHARS):
+            if y < BOTTOM:
+                document.new_page()
+                page = document.page
+                y = PAGE_H - 60
+            page.text(MARGIN, y, line, 9.5, color=SLATE)
+            y -= 13
+        y -= 16
 
     by_detail: dict[str, list[LabResult]] = {}
     for result in results:

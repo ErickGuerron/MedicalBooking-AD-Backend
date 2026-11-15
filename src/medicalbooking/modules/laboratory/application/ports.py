@@ -146,6 +146,20 @@ class AuditEvent:
     correlation_id: str | None = None
 
 
+@dataclass(frozen=True)
+class ReportParties:
+    """Who the results report is about and who requested the tests. Missing data is None."""
+
+    patient_name: str
+    patient_document: str | None
+    patient_birth_date: date | None
+    patient_sex: str | None
+    patient_email: str | None
+    patient_phone: str | None
+    doctor_name: str | None
+    doctor_registration: str | None
+
+
 class LabStore(Protocol):
     def analyte_exists(self, analito_id: str) -> bool:
         """True when the analyte is in the active knowledge catalog."""
@@ -219,6 +233,8 @@ class LabStore(Protocol):
         ...
 
     def list_results(self, order_id: str) -> list[LabResult]: ...
+
+    def report_parties(self, order_id: str) -> ReportParties | None: ...
 
     def record_review(
         self,
