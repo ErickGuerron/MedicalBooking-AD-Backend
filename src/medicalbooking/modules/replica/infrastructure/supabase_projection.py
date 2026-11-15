@@ -12,6 +12,7 @@ delete. The replica's deletes are plain DELETE statements, and a missing row is 
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -24,6 +25,8 @@ from medicalbooking.modules.synchronization.application.ports import (
     TransientDeliveryError,
 )
 from medicalbooking.modules.synchronization.domain.events import OutboxEvent
+
+logger = logging.getLogger(__name__)
 
 _MARK = """
 INSERT INTO replica.eventos_procesados (evento_id, consumidor, tipo_agregado)
@@ -379,10 +382,22 @@ class SupabaseOutboxHandler:
         }
         try:
             apply_event(envelope, self._sink, SUPABASE_CONSUMER)
+        except psycopg.errors.NotNullViolation:
+            # A required field arrived empty. The event is skipped, not retried: a retry would
+            # fail the same way. The driver message is not logged (it names the column).
+            _log_skipped(event, "a required field is empty")
         except psycopg.Error as error:
             # Error type only: driver messages may carry connection data.
             raise TransientDeliveryError("supabase did not apply the event") from error
-        except (KeyError, TypeError, ValueError, AttributeError) as error:
+        except KeyError as error:
+            # A field the projection reads is missing from the payload. Skip the event so one
+            # incomplete message never stops the replica; the key name is safe to log.
+            _log_skipped(event, f"field {error.args[0]!r} is missing")
+        except (TypeError, ValueError, AttributeError) as error:
             raise PermanentDeliveryError(
                 "event payload does not fit the Supabase projection"
             ) from error
+
+
+def _log_skipped(event: OutboxEvent, reason: str) -> None:
+    logger.warning("supabase skipped an incomplete %s event: %s", event.event_type, reason)
