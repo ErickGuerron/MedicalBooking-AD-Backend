@@ -31,3 +31,10 @@ class MongoPresenceCheck:
             for document in collection.find({"_id": {"$in": batch}}, {"_id": 1}):
                 found.add(str(document["_id"]).lower())
         return found
+
+    def list_ids(self, aggregate_type: str) -> frozenset[str]:
+        """Every aggregate id the collection holds, lower-case. Used for hard-delete detection."""
+        collection = self._database[COLLECTIONS[aggregate_type]]
+        return frozenset(
+            str(document["_id"]).lower() for document in collection.find({}, {"_id": 1})
+        )

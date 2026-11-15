@@ -18,6 +18,11 @@ _PRESENT_QUERY: dict[str, str] = {
     "cita": "SELECT lower(id::text) FROM replica.citas WHERE lower(id::text) = ANY(%s)",
 }
 
+_LIST_QUERY: dict[str, str] = {
+    "usuario": "SELECT lower(id::text) FROM replica.usuarios",
+    "cita": "SELECT lower(id::text) FROM replica.citas",
+}
+
 
 class SupabasePresenceCheck:
     destination_code = DESTINATION_CODE
@@ -36,5 +41,15 @@ class SupabasePresenceCheck:
                     cursor.execute(query, (batch,))
                     found.update(str(row[0]) for row in cursor.fetchall())
             return found
+        finally:
+            connection.close()
+
+    def list_ids(self, aggregate_type: str) -> frozenset[str]:
+        """Every id the replica table holds, lower-case, read over one connection."""
+        connection = self._connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(_LIST_QUERY[aggregate_type])
+                return frozenset(str(row[0]) for row in cursor.fetchall())
         finally:
             connection.close()

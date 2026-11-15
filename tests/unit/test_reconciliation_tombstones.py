@@ -146,3 +146,53 @@ def test_only_tracked_aggregate_types_can_be_tombstoned(appended) -> None:
         store.tombstone("orden_laboratorio", USUARIO, NOW)
 
     assert appended == []
+
+
+class _ReadResult:
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[Any]:
+        return list(self._rows)
+
+
+class _ReadConnection:
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+        self.statements: list[str] = []
+
+    def execute(self, statement, params=None) -> _ReadResult:
+        self.statements.append(str(statement))
+        return _ReadResult(self._rows)
+
+
+class _ReadEngine:
+    def __init__(self, connection: _ReadConnection) -> None:
+        self.connection = connection
+
+    @contextmanager
+    def connect(self) -> Iterator[_ReadConnection]:
+        yield self.connection
+
+
+def test_source_ids_are_read_from_the_usuarios_table_in_lower_case() -> None:
+    connection = _ReadConnection([(USUARIO.upper(),), (CITA,)])
+    store = SqlReconciliationStore(_ReadEngine(connection))
+
+    assert store.source_ids("usuario") == frozenset({USUARIO, CITA})
+    assert "FROM usuarios" in connection.statements[0]
+
+
+def test_source_ids_for_cita_are_read_from_the_citas_table() -> None:
+    connection = _ReadConnection([(CITA,)])
+    store = SqlReconciliationStore(_ReadEngine(connection))
+
+    assert store.source_ids("cita") == frozenset({CITA})
+    assert "FROM citas" in connection.statements[0]
+
+
+def test_source_ids_of_an_untracked_type_are_refused() -> None:
+    store = SqlReconciliationStore(_ReadEngine(_ReadConnection([])))
+
+    with pytest.raises(ValueError):
+        store.source_ids("orden_laboratorio")

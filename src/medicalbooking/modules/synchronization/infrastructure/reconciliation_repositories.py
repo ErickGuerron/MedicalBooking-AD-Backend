@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, bindparam, text
+from sqlalchemy import Engine, TextClause, bindparam, text
 
 from medicalbooking.modules.synchronization.domain.reconciliation import (
     DELETED_EVENT_TYPES,
@@ -37,6 +37,13 @@ _LATEST_EVENTS = text(
     "AND ultima.version_max = ev.version_agregado "
     "WHERE ev.creado_en >= :desde"
 ).bindparams(bindparam("tipos", expanding=True))
+
+# Every id of the source table of each tracked aggregate. The caller reads replica ids before these,
+# so a row created in between is never mistaken for a hard delete.
+_SOURCE_IDS: dict[str, TextClause] = {
+    "usuario": text("SELECT id FROM usuarios"),
+    "cita": text("SELECT id FROM citas"),
+}
 
 _REQUEUE = text(
     "UPDATE entregas_eventos SET estado = 'PENDIENTE', intentos = 0, proximo_intento = NULL, "
@@ -143,6 +150,14 @@ class SqlReconciliationStore:
                 return True
 
         return retry_on_deadlock(work)
+
+    def source_ids(self, aggregate_type: str) -> frozenset[str]:
+        """Every id of the source table of a tracked aggregate, as lower-case text."""
+        if aggregate_type not in _SOURCE_IDS:
+            raise ValueError(f"no source table for aggregate type {aggregate_type!r}")
+        with self._engine.connect() as conn:
+            rows = conn.execute(_SOURCE_IDS[aggregate_type]).all()
+        return frozenset(_lower_guid(row[0]) for row in rows)
 
     def requeue(self, event_id: str, destination_code: str) -> bool:
         """Return True when a row changed. A PENDIENTE or dispatcher-owned row returns False."""
