@@ -7,6 +7,7 @@ appointment hour is shown at UTC-5 and never converted with the server's local z
 from __future__ import annotations
 
 import html
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from functools import cache
 from pathlib import Path
@@ -21,6 +22,7 @@ from medicalbooking.modules.notifications.application.ports import (
 from medicalbooking.modules.notifications.domain.templates import (
     CITA_CANCELADA,
     CITA_RECORDATORIO,
+    CITA_RESERVADA,
     PAGO_COMPLETADO,
     RESULTADO_LABORATORIO,
     TEMPLATES,
@@ -44,10 +46,14 @@ def _page(name: str) -> Template:
     return Template((TEMPLATE_DIR / name).read_text(encoding="utf-8"))
 
 
+def _base(asset_base_url: str) -> str:
+    return html.escape(asset_base_url.rstrip("/"), quote=True)
+
+
 def results_content(first_name: str, asset_base_url: str) -> EmailContent:
     html_body = _page("resultados.html").substitute(
         first_name=html.escape(first_name),
-        asset_base_url=html.escape(asset_base_url.rstrip("/"), quote=True),
+        asset_base_url=_base(asset_base_url),
     )
     text_body = (
         f"Hola {first_name}.\n\n"
@@ -65,7 +71,7 @@ def reminder_content(first_name: str, medico: str, hora: str, asset_base_url: st
         first_name=html.escape(first_name),
         medico_nombre=html.escape(medico),
         hora=html.escape(hora),
-        asset_base_url=html.escape(asset_base_url.rstrip("/"), quote=True),
+        asset_base_url=_base(asset_base_url),
     )
     text_body = (
         f"Hola {first_name}.\n\n"
@@ -83,45 +89,12 @@ def cancellation_content(
     first_name: str, medico: str, fecha: str, hora: str, asset_base_url: str
 ) -> EmailContent:
     """Appointment cancelled: names the visit so the patient knows exactly which one."""
-    name = html.escape(first_name)
-    doctor = html.escape(medico)
-    day = html.escape(fecha)
-    time_of_day = html.escape(hora)
-    base = html.escape(asset_base_url.rstrip("/"), quote=True)
-    html_body = (
-        '<!doctype html><html lang="es"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
-        '<body style="margin:0;padding:0;background:#fff4ea;font-family:Arial,Helvetica,'
-        'sans-serif;color:#1f2937;">'
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-        'style="background:#fff4ea;padding:24px 12px;"><tr><td align="center">'
-        '<table role="presentation" width="560" cellpadding="0" cellspacing="0" '
-        'style="max-width:560px;width:100%;background:#ffffff;border-radius:16px;'
-        'overflow:hidden;">'
-        '<tr><td style="background:#c2410c;padding:24px 28px;color:#ffffff;">'
-        '<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;'
-        'opacity:.9;">Medilo · Citas</div>'
-        '<div style="font-size:24px;font-weight:700;margin-top:6px;">Tu cita fue cancelada'
-        "</div></td></tr>"
-        '<tr><td style="padding:28px;">'
-        '<p style="margin:0 0 16px;font-size:16px;line-height:1.5;">Hola '
-        f"{name}.</p>"
-        '<p style="margin:0 0 20px;font-size:16px;line-height:1.5;">Te avisamos que '
-        "esta cita fue cancelada:</p>"
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-        'style="background:#fff4ea;border-radius:12px;"><tr><td style="padding:16px 18px;'
-        'font-size:15px;line-height:1.7;">'
-        f'<strong style="color:#9a3412;">Médico:</strong> {doctor}<br>'
-        f'<strong style="color:#9a3412;">Fecha:</strong> {day}<br>'
-        f'<strong style="color:#9a3412;">Hora:</strong> {time_of_day}'
-        "</td></tr></table>"
-        '<p style="margin:20px 0 0;font-size:14px;line-height:1.5;color:#475569;">Si quieres '
-        "agendar otra cita, entra a Medilo en cualquier momento.</p>"
-        f'<p style="margin:20px 0 0;"><a href="{base}" style="color:#c2410c;">Ir a Medilo</a></p>'
-        "</td></tr>"
-        '<tr><td style="padding:18px 28px;background:#f8fafc;font-size:12px;line-height:1.5;'
-        'color:#475569;">Medilo · Este mensaje es automatico, no lo respondas.</td></tr>'
-        "</table></td></tr></table></body></html>"
+    html_body = _page("cita_cancelada.html").substitute(
+        first_name=html.escape(first_name),
+        medico_nombre=html.escape(medico),
+        fecha=html.escape(fecha),
+        hora=html.escape(hora),
+        asset_base_url=_base(asset_base_url),
     )
     text_body = (
         f"Hola {first_name}.\n\n"
@@ -134,72 +107,88 @@ def cancellation_content(
     return EmailContent(subject=TEMPLATES[CITA_CANCELADA].subject, text=text_body, html=html_body)
 
 
-def payment_content(
-    first_name: str, invoice_number: str, total: str, asset_base_url: str
+def reservation_content(
+    first_name: str, medico: str, fecha: str, hora: str, asset_base_url: str
 ) -> EmailContent:
-    """Payment confirmed: greets the patient and names the invoice attached as a PDF."""
-    name = html.escape(first_name)
-    number = html.escape(invoice_number)
-    amount = html.escape(total)
-    html_body = (
-        '<!doctype html><html lang="es"><head><meta charset="utf-8"></head>'
-        '<body style="margin:0;padding:24px;background:#fff4ea;font-family:Arial,Helvetica,'
-        'sans-serif;color:#1f2937;">'
-        '<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;'
-        'padding:28px;">'
-        '<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;'
-        'color:#c2410c;">Medilo · Pagos</div>'
-        '<p style="font-size:16px;line-height:1.5;">Hola '
-        f"{name}.</p>"
-        '<p style="font-size:16px;line-height:1.5;">Recibimos tu pago. Te enviamos tu factura '
-        "adjunta en PDF.</p>"
-        '<table role="presentation" width="100%" style="background:#fff4ea;border-radius:12px;">'
-        '<tr><td style="padding:16px 18px;font-size:15px;line-height:1.6;">'
-        f"<strong>Factura</strong> {number}<br><strong>Total</strong> {amount}"
-        "</td></tr></table>"
-        '<p style="font-size:12px;color:#475569;margin-top:20px;">Medilo · Este mensaje es '
-        "automatico, no lo respondas.</p></div></body></html>"
+    """Appointment booked: confirms the visit with the doctor, date and hour."""
+    html_body = _page("cita_reservada.html").substitute(
+        first_name=html.escape(first_name),
+        medico_nombre=html.escape(medico),
+        fecha=html.escape(fecha),
+        hora=html.escape(hora),
+        asset_base_url=_base(asset_base_url),
+    )
+    text_body = (
+        f"Hola {first_name}.\n\n"
+        "Tu cita está reservada:\n"
+        f"Médico: {medico}\n"
+        f"Fecha: {fecha}\n"
+        f"Hora: {hora}\n\n"
+        "Si necesitas cambiar algo, entra a Medilo con anticipación.\n"
+    )
+    return EmailContent(subject=TEMPLATES[CITA_RESERVADA].subject, text=text_body, html=html_body)
+
+
+def payment_content(
+    first_name: str, invoice_number: str, total: str, asset_base_url: str, download_url: str
+) -> EmailContent:
+    """Payment confirmed: greets the patient, attaches the invoice and links a signed PDF."""
+    html_body = _page("pago_completado.html").substitute(
+        first_name=html.escape(first_name),
+        invoice_number=html.escape(invoice_number),
+        total=html.escape(total),
+        asset_base_url=_base(asset_base_url),
+        download_url=html.escape(download_url, quote=True),
     )
     text_body = (
         f"Hola {first_name}.\n\n"
         "Recibimos tu pago. Te enviamos tu factura adjunta en PDF.\n\n"
-        f"Factura: {invoice_number}\nTotal: {total}\n"
+        f"Factura: {invoice_number}\nTotal: {total}\n\n"
+        f"También puedes descargarla aquí (el enlace caduca en 7 días):\n{download_url}\n"
     )
     return EmailContent(subject=TEMPLATES[PAGO_COMPLETADO].subject, text=text_body, html=html_body)
 
 
+def _visit(store: EmailContext, aggregate_id: str | None) -> tuple[str, str, str]:
+    """Doctor, date and hour of the appointment, with the hour shown in Ecuador time."""
+    details = store.cita_reminder(aggregate_id or "")
+    if details is None:
+        raise NotificationError("APPOINTMENT_NOT_FOUND")
+    medico, inicio_utc = details
+    local = inicio_utc + ECUADOR_OFFSET
+    return medico, local.strftime("%d/%m/%Y"), local.strftime("%H:%M")
+
+
 def content_for(
-    notification: DueNotification, store: EmailContext, asset_base_url: str
+    notification: DueNotification,
+    store: EmailContext,
+    asset_base_url: str,
+    invoice_download_url: Callable[[str], str] | None = None,
 ) -> EmailContent:
-    """The message of one notification: the patient's name, and the visit for a reminder."""
+    """The message of one notification: the patient's name, and the visit for appointments.
+
+    `invoice_download_url` maps a payment id to its signed PDF link. Payment emails need it.
+    """
     first_name = store.patient_first_name(notification.destinatario) or _FALLBACK_NAME
     if notification.tipo == RESULTADO_LABORATORIO:
         return results_content(first_name, asset_base_url)
     if notification.tipo == CITA_CANCELADA:
-        details = store.cita_reminder(notification.aggregate_id or "")
-        if details is None:
-            raise NotificationError("APPOINTMENT_NOT_FOUND")
-        medico, inicio_utc = details
-        local = inicio_utc + ECUADOR_OFFSET
-        return cancellation_content(
-            first_name,
-            medico,
-            local.strftime("%d/%m/%Y"),
-            local.strftime("%H:%M"),
-            asset_base_url,
-        )
+        medico, fecha, hora = _visit(store, notification.aggregate_id)
+        return cancellation_content(first_name, medico, fecha, hora, asset_base_url)
+    if notification.tipo == CITA_RESERVADA:
+        medico, fecha, hora = _visit(store, notification.aggregate_id)
+        return reservation_content(first_name, medico, fecha, hora, asset_base_url)
     if notification.tipo == PAGO_COMPLETADO:
         receipt = store.paid_invoice(notification.aggregate_id or "")
         if receipt is None:
             raise NotificationError("INVOICE_NOT_FOUND")
+        if invoice_download_url is None:
+            raise NotificationError("INVOICE_LINK_NOT_CONFIGURED")
         number, total = receipt
-        return payment_content(first_name, number, total, asset_base_url)
+        download_url = invoice_download_url(notification.aggregate_id or "")
+        return payment_content(first_name, number, total, asset_base_url, download_url)
     if notification.tipo == CITA_RECORDATORIO:
-        details = store.cita_reminder(notification.aggregate_id or "")
-        if details is None:
-            raise NotificationError("APPOINTMENT_NOT_FOUND")
-        medico, inicio_utc = details
-        hora = (inicio_utc + ECUADOR_OFFSET).strftime("%H:%M")
+        medico, _, hora = _visit(store, notification.aggregate_id)
         return reminder_content(first_name, medico, hora, asset_base_url)
     template = TEMPLATES[notification.tipo]
     return EmailContent(subject=template.subject, text=template.text, html=template.html)

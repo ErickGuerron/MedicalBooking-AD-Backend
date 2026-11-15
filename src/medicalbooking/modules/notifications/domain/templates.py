@@ -66,7 +66,7 @@ RESULTADO_HTML = """<!doctype html>
 
 TEMPLATES: dict[str, Template] = {
     CITA_RESERVADA: Template(
-        subject="Tienes una actualización en tu cita",
+        subject="Tu cita en Medilo está reservada",
         text=(
             "Hola.\n\n"
             "Tienes una actualización en tu cita. Inicia sesión en Medilo para revisarla.\n"
