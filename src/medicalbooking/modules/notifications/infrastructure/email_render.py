@@ -20,6 +20,7 @@ from medicalbooking.modules.notifications.application.ports import (
 )
 from medicalbooking.modules.notifications.domain.templates import (
     CITA_RECORDATORIO,
+    PAGO_COMPLETADO,
     RESULTADO_LABORATORIO,
     TEMPLATES,
 )
@@ -33,6 +34,8 @@ class EmailContext(Protocol):
     def patient_first_name(self, email: str) -> str | None: ...
 
     def cita_reminder(self, cita_id: str) -> tuple[str, datetime] | None: ...
+
+    def paid_invoice(self, pago_id: str) -> tuple[str, str] | None: ...
 
 
 @cache
@@ -75,6 +78,40 @@ def reminder_content(first_name: str, medico: str, hora: str, asset_base_url: st
     )
 
 
+def payment_content(
+    first_name: str, invoice_number: str, total: str, asset_base_url: str
+) -> EmailContent:
+    """Payment confirmed: greets the patient and names the invoice attached as a PDF."""
+    name = html.escape(first_name)
+    number = html.escape(invoice_number)
+    amount = html.escape(total)
+    html_body = (
+        '<!doctype html><html lang="es"><head><meta charset="utf-8"></head>'
+        '<body style="margin:0;padding:24px;background:#fff4ea;font-family:Arial,Helvetica,'
+        'sans-serif;color:#1f2937;">'
+        '<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;'
+        'padding:28px;">'
+        '<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;'
+        'color:#c2410c;">Medilo · Pagos</div>'
+        '<p style="font-size:16px;line-height:1.5;">Hola '
+        f"{name}.</p>"
+        '<p style="font-size:16px;line-height:1.5;">Recibimos tu pago. Te enviamos tu factura '
+        "adjunta en PDF.</p>"
+        '<table role="presentation" width="100%" style="background:#fff4ea;border-radius:12px;">'
+        '<tr><td style="padding:16px 18px;font-size:15px;line-height:1.6;">'
+        f"<strong>Factura</strong> {number}<br><strong>Total</strong> {amount}"
+        "</td></tr></table>"
+        '<p style="font-size:12px;color:#475569;margin-top:20px;">Medilo · Este mensaje es '
+        "automatico, no lo respondas.</p></div></body></html>"
+    )
+    text_body = (
+        f"Hola {first_name}.\n\n"
+        "Recibimos tu pago. Te enviamos tu factura adjunta en PDF.\n\n"
+        f"Factura: {invoice_number}\nTotal: {total}\n"
+    )
+    return EmailContent(subject=TEMPLATES[PAGO_COMPLETADO].subject, text=text_body, html=html_body)
+
+
 def content_for(
     notification: DueNotification, store: EmailContext, asset_base_url: str
 ) -> EmailContent:
@@ -82,6 +119,12 @@ def content_for(
     first_name = store.patient_first_name(notification.destinatario) or _FALLBACK_NAME
     if notification.tipo == RESULTADO_LABORATORIO:
         return results_content(first_name, asset_base_url)
+    if notification.tipo == PAGO_COMPLETADO:
+        receipt = store.paid_invoice(notification.aggregate_id or "")
+        if receipt is None:
+            raise NotificationError("INVOICE_NOT_FOUND")
+        number, total = receipt
+        return payment_content(first_name, number, total, asset_base_url)
     if notification.tipo == CITA_RECORDATORIO:
         details = store.cita_reminder(notification.aggregate_id or "")
         if details is None:

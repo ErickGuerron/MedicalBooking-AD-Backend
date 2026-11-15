@@ -30,10 +30,15 @@ from medicalbooking.modules.notifications.application.ports import (
     EmailAttachment,
     NotificationError,
 )
-from medicalbooking.modules.notifications.domain.templates import RESULTADO_LABORATORIO
+from medicalbooking.modules.notifications.domain.templates import (
+    PAGO_COMPLETADO,
+    RESULTADO_LABORATORIO,
+)
 from medicalbooking.modules.notifications.infrastructure.brevo import BrevoNotificationSender
 from medicalbooking.modules.notifications.infrastructure.email_render import content_for
 from medicalbooking.modules.notifications.infrastructure.repositories import SqlNotificationStore
+from medicalbooking.modules.payments.application.invoice_report import build_invoice_pdf
+from medicalbooking.modules.payments.infrastructure.invoice_store import SqlInvoiceStore
 from medicalbooking.shared.infrastructure.database import create_database_engine
 
 logger = logging.getLogger(__name__)
@@ -81,7 +86,17 @@ def main() -> int:
         lab_store = SqlLabStore(engine)
         documents = LocalDocumentStorage(Path(settings.lab_documents_dir))
 
+        invoices = SqlInvoiceStore(engine)
+
         def attachments_for(due: DueNotification) -> tuple[EmailAttachment, ...]:
+            if due.tipo == PAGO_COMPLETADO and due.aggregate_id is not None:
+                # The invoice is built now from the paid payment and never stored.
+                invoice = invoices.paid_invoice_for_payment(due.aggregate_id)
+                if invoice is None:
+                    raise NotificationError("INVOICE_NOT_FOUND")
+                name = f"factura-{invoice.numero_factura}.pdf"
+                pdf = build_invoice_pdf(invoice)
+                return (EmailAttachment(name=name, content_type="application/pdf", data=pdf),)
             # The results go out as the order's PDF, built now from the completed order.
             if due.tipo != RESULTADO_LABORATORIO or due.aggregate_id is None:
                 return ()
