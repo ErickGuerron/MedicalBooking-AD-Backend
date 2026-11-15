@@ -68,6 +68,7 @@ def test_embedded_session_is_created_with_return_url_and_returns_its_client_secr
     assert "mode=payment" in seen["body"]
     assert "customer=cus_test_patient_0001" in seen["body"]
     assert "payment_intent_data%5Bsetup_future_usage%5D=off_session" in seen["body"]
+    assert "saved_payment_method_options%5Bpayment_method_save%5D=enabled" in seen["body"]
     assert "ui_mode=embedded_page" in seen["body"]
     assert "return_url=" in seen["body"]
     assert "%7BCHECKOUT_SESSION_ID%7D" in seen["body"]

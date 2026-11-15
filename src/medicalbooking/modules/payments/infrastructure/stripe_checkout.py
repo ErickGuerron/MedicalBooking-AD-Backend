@@ -84,6 +84,8 @@ class StripeCheckoutGateway:
             "customer": request.customer_id,
             # Lets the embedded form offer to save the card for later off-session payments.
             "payment_intent_data[setup_future_usage]": "off_session",
+            # Shows the customer's saved cards in the embedded form and lets them keep a new one.
+            "saved_payment_method_options[payment_method_save]": "enabled",
             "return_url": self._return_url,
             "client_reference_id": request.reference,
             "line_items[0][quantity]": "1",
