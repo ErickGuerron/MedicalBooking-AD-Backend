@@ -401,6 +401,12 @@ def laboratory_fragment() -> dict[str, Any]:
                         "valor_texto": {"type": ["string", "null"]},
                         "valor_numerico": {"type": ["number", "null"]},
                         "unidad": {"type": ["string", "null"]},
+                        "referencia_min": {"type": ["number", "null"]},
+                        "referencia_max": {"type": ["number", "null"]},
+                        "interpretacion": {
+                            "type": ["string", "null"],
+                            "enum": ["BAJO", "DENTRO_REFERENCIA", "ALTO", "NO_EVALUABLE", None],
+                        },
                     },
                 },
                 "LabResultList": {
