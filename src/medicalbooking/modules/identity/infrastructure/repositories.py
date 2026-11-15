@@ -95,6 +95,20 @@ class SqlUserDirectory:
                 },
             )
 
+    def update_password_hash(self, user_id: str, password_hash: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE credenciales_usuario SET password_hash = :h, intentos_fallidos = 0, "
+                    "actualizado_en = SYSUTCDATETIME() WHERE usuario_id = :u"
+                ),
+                {"h": password_hash, "u": user_id},
+            )
+            conn.execute(
+                text("UPDATE usuarios SET bloqueado_hasta = NULL WHERE id = :u"),
+                {"u": user_id},
+            )
+
     def reset_failed_logins(self, user_id: str) -> None:
         with self._engine.begin() as conn:
             conn.execute(

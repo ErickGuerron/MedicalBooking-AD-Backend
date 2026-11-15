@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from medicalbooking.modules.notifications.application.ports import (
     DueNotification,
     EmailAttachment,
+    EmailContent,
     EmailMessage,
     NotificationError,
     NotificationQueue,
@@ -41,11 +42,13 @@ class NotificationDispatcher:
         sender: NotificationSender,
         clock: Callable[[], datetime],
         attachments_for: Callable[[DueNotification], tuple[EmailAttachment, ...]] | None = None,
+        content_for: Callable[[DueNotification], EmailContent] | None = None,
     ) -> None:
         self._queue = queue
         self._sender = sender
         self._clock = clock
         self._attachments_for = attachments_for
+        self._content_for = content_for
 
     def send_due(self, limit: int) -> SendReport:
         now = self._clock()
@@ -56,17 +59,24 @@ class NotificationDispatcher:
                 sent += 1
         return SendReport(attempted=len(claimed), sent=sent, failed=len(claimed) - sent)
 
+    def _content(self, notification: DueNotification) -> EmailContent:
+        if self._content_for is not None:
+            return self._content_for(notification)
+        template = TEMPLATES[notification.tipo]
+        return EmailContent(subject=template.subject, text=template.text, html=template.html)
+
     def _attempt(self, notification: DueNotification, now: datetime) -> bool:
         attempts = notification.numero_intentos + 1
         try:
-            template = TEMPLATES[notification.tipo]
+            content = self._content(notification)
             attachments = self._attachments_for(notification) if self._attachments_for else ()
             message_id = self._sender.send(
                 EmailMessage(
                     to=notification.destinatario,
-                    subject=template.subject,
-                    text=template.text,
+                    subject=content.subject,
+                    text=content.text,
                     attachments=attachments,
+                    html=content.html,
                 )
             )
         except Exception as error:

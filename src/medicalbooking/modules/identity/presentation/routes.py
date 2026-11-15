@@ -144,6 +144,21 @@ def verify_email() -> tuple[Response, int]:
     return jsonify(verified=True), 200
 
 
+class PasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
+@identity_bp.post("/me/password")
+@authenticated
+def change_password() -> tuple[str, int]:
+    body = _parse(PasswordChangeRequest)
+    _service().change_password(g.actor, body.current_password, body.new_password)
+    return "", 204
+
+
 @identity_bp.get("/me")
 @authenticated
 def me() -> tuple[Response, int]:

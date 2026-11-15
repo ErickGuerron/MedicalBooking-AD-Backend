@@ -62,6 +62,45 @@ def identity_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/me/password": {
+                "post": {
+                    "tags": ["Identity"],
+                    "operationId": "changeOwnPassword",
+                    "summary": "Change the signed-in account's password",
+                    "description": (
+                        "Proves the current password first. A wrong current password is 403, "
+                        "never 401, so the session is kept. The new password must differ and have "
+                        "at least 12 characters. A wrong current password is a failed sign-in."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["current_password", "new_password"],
+                                    "properties": {
+                                        "current_password": {"type": "string", "minLength": 1},
+                                        "new_password": {
+                                            "type": "string",
+                                            "minLength": 12,
+                                            "maxLength": 256,
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "204": {"description": "Password changed"},
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("The current password is not correct"),
+                        "422": _problem("New password too short, or equal to the current one"),
+                    },
+                }
+            },
             "/api/v1/me": {
                 "get": {
                     "tags": ["Identity"],

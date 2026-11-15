@@ -14,13 +14,16 @@ the provider or database error may carry the api key or connection data. Only co
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 from medicalbooking.config import Settings
 from medicalbooking.modules.laboratory.application.order_report import render_order_report
 from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
+from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
 from medicalbooking.modules.notifications.application.dispatcher import NotificationDispatcher
 from medicalbooking.modules.notifications.application.ports import (
     DueNotification,
@@ -29,6 +32,7 @@ from medicalbooking.modules.notifications.application.ports import (
 )
 from medicalbooking.modules.notifications.domain.templates import RESULTADO_LABORATORIO
 from medicalbooking.modules.notifications.infrastructure.brevo import BrevoNotificationSender
+from medicalbooking.modules.notifications.infrastructure.email_render import content_for
 from medicalbooking.modules.notifications.infrastructure.repositories import SqlNotificationStore
 from medicalbooking.shared.infrastructure.database import create_database_engine
 
@@ -75,6 +79,7 @@ def main() -> int:
             logger.error("worker configuration incomplete: missing %s", ", ".join(missing))
             return 1
         lab_store = SqlLabStore(engine)
+        documents = LocalDocumentStorage(Path(settings.lab_documents_dir))
 
         def attachments_for(due: DueNotification) -> tuple[EmailAttachment, ...]:
             # The results go out as the order's PDF, built now from the completed order.
@@ -84,10 +89,24 @@ def main() -> int:
             if pdf is None:
                 raise NotificationError("ORDER_NOT_FOUND")
             name = f"resultados-{due.aggregate_id[:8]}.pdf"
-            return (EmailAttachment(name=name, content_type="application/pdf", data=pdf),)
+            attachments = [EmailAttachment(name=name, content_type="application/pdf", data=pdf)]
+            # The laboratory's own report goes with the results, when it was uploaded.
+            for document in lab_store.list_order_documents(due.aggregate_id):
+                content = documents.read(document.ruta_storage)
+                if hashlib.sha256(content).hexdigest() != document.hash_sha256:
+                    raise NotificationError("REPORT_INTEGRITY")
+                attachments.append(
+                    EmailAttachment(
+                        name=document.nombre_archivo,
+                        content_type="application/pdf",
+                        data=content,
+                    )
+                )
+            return tuple(attachments)
 
+        notifications = SqlNotificationStore(engine)
         dispatcher = NotificationDispatcher(
-            queue=SqlNotificationStore(engine),
+            queue=notifications,
             sender=BrevoNotificationSender(
                 api_key=settings.brevo_api_key.get_secret_value(),
                 sender_email=settings.mail_from,
@@ -95,6 +114,7 @@ def main() -> int:
             ),
             clock=lambda: datetime.now(UTC),
             attachments_for=attachments_for,
+            content_for=lambda due: content_for(due, notifications, settings.email_assets_base_url),
         )
         return run(dispatcher)
     finally:

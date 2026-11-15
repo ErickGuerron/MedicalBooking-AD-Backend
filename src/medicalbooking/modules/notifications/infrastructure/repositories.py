@@ -43,6 +43,29 @@ def _utc_naive(moment: datetime) -> datetime:
 
 
 class SqlNotificationStore:
+    def patient_first_name(self, email: str) -> str | None:
+        with self._engine.connect() as conn:
+            return conn.execute(
+                text("SELECT nombre FROM usuarios WHERE email = :e"), {"e": email}
+            ).scalar()
+
+    def cita_reminder(self, cita_id: str) -> tuple[str, datetime] | None:
+        """The doctor's full name and the start (UTC) of an appointment, for the reminder."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT um.nombre, um.apellido, h.inicio_utc FROM citas c "
+                    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+                    "JOIN agendas a ON a.id = h.agenda_id "
+                    "JOIN medicos me ON me.id = a.medico_id "
+                    "JOIN usuarios um ON um.id = me.usuario_id WHERE c.id = :c"
+                ),
+                {"c": cita_id},
+            ).first()
+        if row is None:
+            return None
+        return f"{row.nombre} {row.apellido}".strip(), row.inicio_utc
+
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 

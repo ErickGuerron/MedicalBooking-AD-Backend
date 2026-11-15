@@ -37,6 +37,8 @@ class BrevoNotificationSender:
             "subject": message.subject,
             "textContent": message.text,
         }
+        if message.html is not None:
+            payload["htmlContent"] = message.html
         if message.attachments:
             payload["attachment"] = [
                 {"name": item.name, "content": base64.b64encode(item.data).decode("ascii")}

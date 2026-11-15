@@ -22,6 +22,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabOrderSummary,
     LabResult,
     LabStore,
+    LabTestAnalyte,
     LabTestType,
     NewDocument,
     NewOrder,
@@ -236,6 +237,23 @@ class LabService:
         self._audit(actor, None, "paciente", None, "listar")
         return rows
 
+    def confirm_order(self, actor: AccessProfile, order_id: str) -> None:
+        """The laboratory closes a completed order, with or without report. Then it is final."""
+        _require(actor, PERM_RESULT_REGISTER)
+        status = self._store.confirm_order(order_id, self._clock(), actor.user_id)
+        if status == "NOT_FOUND":
+            raise NotFound("Order not found")
+        if status == "NOT_COMPLETED":
+            raise Conflict("Every test needs its results before the order can be confirmed")
+        if status == "ALREADY_CONFIRMED":
+            raise Conflict("This order is already confirmed")
+        self._audit(actor, None, "orden_laboratorio", order_id, "confirmar")
+
+    def list_test_analytes(self, actor: AccessProfile, test_id: str) -> list[LabTestAnalyte]:
+        """The analytes a test asks for, for the laboratory entering its results."""
+        _require(actor, PERM_RESULT_REGISTER)
+        return self._store.list_test_analytes(test_id)
+
     def list_test_types(self) -> list[LabTestType]:
         """Static synthetic catalog: any authenticated actor, no personal data, no audit row."""
         return self._store.list_test_types()
@@ -280,6 +298,8 @@ class LabService:
             self._clock(),
             actor.user_id,
         )
+        if status == "ORDER_CONFIRMED":
+            raise Conflict("This order is confirmed and can no longer change")
         if status == "DETAIL_NOT_FOUND":
             raise NotFound("Order detail not found")
         if status == "DETAIL_ALREADY_COMPLETED":
@@ -396,6 +416,9 @@ class LabService:
     ) -> StoredDocument:
         _require(actor, PERM_RESULT_REGISTER)
         order = self._store.get_order(order_id)
+        if order is not None and order.confirmada:
+            raise Conflict("This order is confirmed and can no longer change")
+        order = self._store.get_order(order_id)
         if order is None:
             raise NotFound("Order not found")
         validate_pdf(content, mime)
@@ -423,6 +446,13 @@ class LabService:
             raise
         self._audit(actor, order.paciente_id, "documento_clinico", document.id, "subir")
         return document
+
+    def list_order_documents(self, actor: AccessProfile, order_id: str) -> list[StoredDocument]:
+        """The uploaded reports of an order: for who records results, and who may read the order."""
+        if PERM_RESULT_REGISTER not in actor.permissions:
+            # Readers of the order only; anyone else gets the same 403 as a missing order.
+            self._readable_order(actor, order_id)
+        return self._store.list_order_documents(order_id)
 
     def download_document(
         self, actor: AccessProfile, document_id: str

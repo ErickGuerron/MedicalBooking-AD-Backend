@@ -53,6 +53,16 @@ def _birth(born, generated_at: datetime) -> str:
     return f"{born:%d/%m/%Y} ({years} años)"
 
 
+def _masked_document(value: str | None) -> str:
+    """Document type and the last four digits only: the PDF never prints the full cédula."""
+    if not value:
+        return "—"
+    kind, _, number = value.rpartition(" ")
+    visible = number[-4:] if len(number) > 4 else ""
+    hidden = "*" * max(len(number) - len(visible), 4)
+    return f"{kind} {hidden}{visible}".strip()
+
+
 ORDER_STATUS = {
     "SOLICITADA": "Solicitada",
     "EN_PROCESO": "En proceso",
@@ -278,7 +288,7 @@ def build_results_report(
     page.text(left, y - 4, "PACIENTE", 8, bold=True, color=MUTED)
     page.text(left, y - 22, _clip(parties.patient_name, 40), 13, bold=True, color=SLATE)
     rows = [
-        ("Documento", parties.patient_document or "—"),
+        ("Documento", _masked_document(parties.patient_document)),
         ("Fecha de nacimiento", _birth(parties.patient_birth_date, generated_at)),
         ("Sexo", SEX.get(parties.patient_sex or "", "—")),
         ("Correo", parties.patient_email or "—"),

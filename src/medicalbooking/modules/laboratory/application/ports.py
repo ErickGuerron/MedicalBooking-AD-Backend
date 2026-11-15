@@ -14,6 +14,9 @@ class LabDetail:
     id: str
     tipo_prueba_id: str
     estado: str
+    # Set on the worklist only: the test's name and code, so the queue reads by name.
+    nombre: str | None = None
+    codigo: str | None = None
 
 
 @dataclass(frozen=True)
@@ -28,8 +31,11 @@ class LabOrder:
     observaciones: str | None
     details: tuple[LabDetail, ...]
     origen: str = "MEDICO"
-    # Set on the worklist rows only: when the order was placed.
+    # Null while open; once set the order and its results and reports are closed.
+    confirmada: bool = False
+    # Set on the worklist rows only: when the order was placed and who it is for (names only).
     fecha: datetime | None = None
+    paciente_nombre: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,18 @@ class PatientSummary:
     id: str
     nombre: str
     apellido: str
+
+
+@dataclass(frozen=True)
+class LabTestAnalyte:
+    """An analyte the test asks for, in its presentation order."""
+
+    id: str
+    nombre: str
+    unidad: str | None
+    tipo_valor: str
+    obligatorio: bool
+    orden: int | None
 
 
 @dataclass(frozen=True)
@@ -201,6 +219,8 @@ class LabStore(Protocol):
 
     def list_pending_orders(self, *, limit: int, offset: int) -> list[LabOrder]: ...
 
+    def confirm_order(self, order_id: str, now: datetime, actor_user_id: str) -> str: ...
+
     def list_patients(self, *, medico_id: str, limit: int, offset: int) -> list[PatientSummary]:
         """Patients the doctor treats (cita or lab order, any status) with an ACTIVO account.
 
@@ -211,6 +231,8 @@ class LabStore(Protocol):
     def list_test_types(self) -> list[LabTestType]:
         """Active test types only, ordered by nombre then id."""
         ...
+
+    def list_test_analytes(self, test_id: str) -> list[LabTestAnalyte]: ...
 
     def list_orders(
         self,
@@ -254,6 +276,8 @@ class LabStore(Protocol):
         ...
 
     def create_document(self, command: NewDocument) -> StoredDocument: ...
+
+    def list_order_documents(self, order_id: str) -> list[StoredDocument]: ...
 
     def get_document(self, document_id: str) -> StoredDocument | None: ...
 
