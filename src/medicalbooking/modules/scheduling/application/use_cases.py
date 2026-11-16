@@ -239,6 +239,11 @@ class SchedulingService:
             query = self._store.list_patient_appointments
         elif self._store.has_doctor_profile(actor.user_id):
             query = self._store.list_agenda_appointments
+        elif PERM_REVIEW_CANCELLATIONS in actor.permissions:
+            def query(
+                _uid: str, est: str | None, lim: int, off: int
+            ) -> list[AppointmentSummary]:
+                return self._store.list_admin_appointments(est, lim, off)
         else:
             raise Forbidden("Access to this resource is not allowed")
         validate_page(limit, offset)

@@ -114,6 +114,10 @@ def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
     # Only the doctor's agenda listing carries the patient; a patient's own listing never does.
     if appointment.paciente_id is not None:
         item["paciente"] = {"id": appointment.paciente_id, "nombre": appointment.paciente_nombre}
+    if appointment.medico_id is not None:
+        item["medico"] = {"id": appointment.medico_id, "nombre": appointment.medico_nombre}
+    if appointment.tiene_aprobacion:
+        item["tiene_aprobacion"] = True
     return item
 
 

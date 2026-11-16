@@ -32,7 +32,8 @@ class Appointment:
 
 @dataclass(frozen=True)
 class AppointmentSummary:
-    """Listing row. The patient is set only on the doctor's agenda listing, never on a patient's."""
+    """Listing row. The patient is set on doctor agenda and admin listing,
+    never on a patient's."""
 
     id: str
     estado: str
@@ -40,6 +41,9 @@ class AppointmentSummary:
     fin_utc: datetime
     paciente_id: str | None = None
     paciente_nombre: str | None = None
+    medico_id: str | None = None
+    medico_nombre: str | None = None
+    tiene_aprobacion: bool = False
 
 
 @dataclass(frozen=True)
@@ -159,6 +163,12 @@ class SchedulingStore(Protocol):
         self, doctor_user_id: str, estado: str | None, limit: int, offset: int
     ) -> list[AppointmentSummary]:
         """One page of appointments booked on the doctor's own agendas."""
+        ...
+
+    def list_admin_appointments(
+        self, estado: str | None, limit: int, offset: int
+    ) -> list[AppointmentSummary]:
+        """One page of appointments for administrative cancellation reviews."""
         ...
 
     def reserve(self, command: ReserveCommand) -> ReserveOutcome: ...
