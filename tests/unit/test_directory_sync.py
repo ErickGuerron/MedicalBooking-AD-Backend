@@ -22,7 +22,7 @@ SNAPSHOT = DirectorySnapshot(
             "USD",
             True,
             True,
-            False,
+            None,
         ),
     ),
     citas_medico=(

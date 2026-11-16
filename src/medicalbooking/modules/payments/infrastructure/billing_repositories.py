@@ -45,7 +45,7 @@ class SqlBillingStore:
             row = conn.execute(
                 text(
                     "SELECT c.id, p.usuario_id, c.estado, s.id AS servicio_id, s.nombre, "
-                    "s.precio_base, s.moneda, s.requiere_toma_sangre, "
+                    "s.precio_base, s.moneda, s.servicio_adicional_id, "
                     "(SELECT TOP 1 f.id FROM facturas AS f WHERE f.cita_id = c.id) AS factura_id "
                     "FROM citas AS c "
                     "JOIN pacientes AS p ON p.id = c.paciente_id "
@@ -65,7 +65,9 @@ class SqlBillingStore:
             moneda=row.moneda.strip(),
             factura_id=str(row.factura_id).lower() if row.factura_id else None,
             servicio_id=str(row.servicio_id).lower(),
-            requiere_toma_sangre=bool(row.requiere_toma_sangre),
+            servicio_adicional_id=(
+                str(row.servicio_adicional_id).lower() if row.servicio_adicional_id else None
+            ),
         )
 
     def find_service_charge(self, servicio_id: str) -> ServiceCharge | None:

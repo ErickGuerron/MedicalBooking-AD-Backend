@@ -304,7 +304,7 @@ def _exam_with_sample(owner: str) -> tuple[FakeBillingStore, AppointmentBilling]
         moneda="USD",
         factura_id=None,
         servicio_id=_id(),
-        requiere_toma_sangre=True,
+        servicio_adicional_id=SAMPLE_ID,
     )
     store.appointments[exam.cita_id] = exam
     store.services[SAMPLE_ID] = ServiceCharge(
@@ -313,15 +313,11 @@ def _exam_with_sample(owner: str) -> tuple[FakeBillingStore, AppointmentBilling]
     return store, exam
 
 
-def test_an_exam_that_needs_a_sample_is_invoiced_with_the_sample_as_its_own_line():
+def test_an_exam_with_a_dependent_service_is_invoiced_with_it_as_its_own_line():
     owner = _id()
     store, exam = _exam_with_sample(owner)
     service = BillingService(
-        store=store,
-        gateway=FakeGateway(),
-        clock=lambda: NOW,
-        customers=FakeCustomers(),
-        blood_sample_service_id=SAMPLE_ID,
+        store=store, gateway=FakeGateway(), clock=lambda: NOW, customers=FakeCustomers()
     )
 
     invoice = service.create_invoice(_patient(owner), cita_id=exam.cita_id)
@@ -337,28 +333,25 @@ def test_an_exam_that_needs_a_sample_is_invoiced_with_the_sample_as_its_own_line
     assert invoice.total == Decimal("23.00")
 
 
-def test_an_exam_that_needs_a_sample_is_not_invoiced_without_the_sample_service_configured():
+def test_a_service_without_a_dependency_is_invoiced_with_one_line():
     owner = _id()
     store, exam = _exam_with_sample(owner)
+    store.appointments[exam.cita_id] = replace(exam, servicio_adicional_id=None)
     service = BillingService(
         store=store, gateway=FakeGateway(), clock=lambda: NOW, customers=FakeCustomers()
     )
 
-    with pytest.raises(ServiceUnavailable):
-        service.create_invoice(_patient(owner), cita_id=exam.cita_id)
-    assert store.created_invoices == []
+    service.create_invoice(_patient(owner), cita_id=exam.cita_id)
+
+    assert len(store.created_invoices[0].lineas) == 1
 
 
-def test_an_inactive_or_missing_sample_service_blocks_the_invoice():
+def test_an_inactive_or_missing_dependent_service_blocks_the_invoice():
     owner = _id()
     store, exam = _exam_with_sample(owner)
     store.services.clear()
     service = BillingService(
-        store=store,
-        gateway=FakeGateway(),
-        clock=lambda: NOW,
-        customers=FakeCustomers(),
-        blood_sample_service_id=SAMPLE_ID,
+        store=store, gateway=FakeGateway(), clock=lambda: NOW, customers=FakeCustomers()
     )
 
     with pytest.raises(ServiceUnavailable):

@@ -48,7 +48,8 @@ class AppointmentBilling:
     moneda: str
     factura_id: str | None
     servicio_id: str = ""
-    requiere_toma_sangre: bool = False
+    # The service charged as a second invoice line with this one (a blood sample for an exam).
+    servicio_adicional_id: str | None = None
 
     def with_factura(self, factura_id: str) -> AppointmentBilling:
         return replace(self, factura_id=factura_id)
@@ -241,13 +242,11 @@ class BillingService:
         gateway: CheckoutGateway,
         clock: Callable[[], datetime],
         customers: CustomerResolver,
-        blood_sample_service_id: str | None = None,
     ) -> None:
         self._store = store
         self._gateway = gateway
         self._clock = clock
         self._customers = customers
-        self._blood_sample_service_id = blood_sample_service_id
 
     def create_invoice(self, actor: AccessProfile, *, cita_id: str) -> InvoiceRecord:
         _require(actor, PERM_INVOICE_CREATE)
@@ -265,9 +264,9 @@ class BillingService:
                 precio=appointment.precio,
             )
         ]
-        if appointment.requiere_toma_sangre:
-            # Fails closed: an exam that needs a sample is not invoiced without its sample line.
-            lines.append(self._blood_sample_line())
+        if appointment.servicio_adicional_id is not None:
+            # Fails closed: a service that depends on another is not invoiced without its line.
+            lines.append(self._additional_service_line(appointment.servicio_adicional_id))
         total = sum((line.precio for line in lines), Decimal("0"))
         return self._store.create_invoice(
             NewInvoice(
@@ -285,14 +284,12 @@ class BillingService:
             )
         )
 
-    def _blood_sample_line(self) -> NewInvoiceLine:
-        if self._blood_sample_service_id is None:
-            raise ServiceUnavailable("The blood sample service is not configured")
-        sample = self._store.find_service_charge(self._blood_sample_service_id)
-        if sample is None:
-            raise ServiceUnavailable("The blood sample service is not available")
+    def _additional_service_line(self, servicio_id: str) -> NewInvoiceLine:
+        charge = self._store.find_service_charge(servicio_id)
+        if charge is None:
+            raise ServiceUnavailable("The additional service is not available")
         return NewInvoiceLine(
-            servicio_id=sample.servicio_id, descripcion=sample.nombre, precio=sample.precio
+            servicio_id=charge.servicio_id, descripcion=charge.nombre, precio=charge.precio
         )
 
     def start_checkout(

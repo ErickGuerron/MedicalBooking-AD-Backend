@@ -226,11 +226,6 @@ def build_billing(settings: Settings, engine: Any) -> BillingService:
         gateway=gateway,
         clock=lambda: datetime.now(UTC),
         customers=CustomerDirectory(store=SqlStripeCustomerStore(engine), gateway=gateway),
-        blood_sample_service_id=(
-            str(settings.blood_sample_service_id).lower()
-            if settings.blood_sample_service_id
-            else None
-        ),
     )
 
 

@@ -20,8 +20,15 @@ SPECIALTY_NAMES = {name for name, _ in seed.SPECIALTIES}
 
 
 def test_every_service_points_to_a_declared_specialty_or_none() -> None:
-    for name, _minutes, _price, specialty, _order in seed.SERVICE_CATALOG:
+    for name, _minutes, _price, specialty, _order, _dependency in seed.SERVICE_CATALOG:
         assert specialty is None or specialty in SPECIALTY_NAMES, name
+
+
+def test_every_dependency_points_to_a_declared_service() -> None:
+    names = {row[0] for row in seed.SERVICE_CATALOG}
+    for row in seed.SERVICE_CATALOG:
+        dependency = row[5]
+        assert dependency is None or dependency in names, row[0]
 
 
 def test_every_doctor_of_the_plan_has_a_declared_specialty() -> None:
@@ -48,3 +55,9 @@ def test_the_lab_exams_are_priced_at_fifteen_and_last_forty_five_minutes() -> No
     rows = {row[0]: row for row in seed.SERVICE_CATALOG if row[0] in exams}
     assert set(rows) == exams
     assert all(row[1] == 45 and row[2] == "15.00" for row in rows.values())
+
+
+def test_the_lab_exams_are_charged_with_the_blood_sample() -> None:
+    exams = {"Hemograma completo", "Perfil lipídico", "Glucosa en ayunas"}
+    dependencies = {row[0]: row[5] for row in seed.SERVICE_CATALOG if row[0] in exams}
+    assert dependencies == {exam: seed.BLOOD_SAMPLE for exam in exams}

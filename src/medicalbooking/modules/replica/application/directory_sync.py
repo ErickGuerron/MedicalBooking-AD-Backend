@@ -19,8 +19,8 @@ class DirectorySnapshot:
     especialidades: tuple[tuple[int, str, bool], ...]
     medicos: tuple[tuple[str, str, str, bool], ...]
     # (id, especialidad_id, nombre, duracion_min, precio_base, moneda, activo,
-    #  requiere_orden_medica, requiere_toma_sangre)
-    servicios: tuple[tuple[str, int | None, str, int, str, str, bool, bool, bool], ...]
+    #  requiere_orden_medica, servicio_adicional_id)
+    servicios: tuple[tuple[str, int | None, str, int, str, str, bool, bool, str | None], ...]
     citas_medico: tuple[tuple[str, str], ...]
 
 
@@ -41,7 +41,7 @@ _INSERT_MEDICO = (
 )
 _INSERT_SERVICIO = (
     "INSERT INTO replica.servicios (id, especialidad_id, nombre, duracion_min, precio_base, "
-    "moneda, activo, requiere_orden_medica, requiere_toma_sangre) "
+    "moneda, activo, requiere_orden_medica, servicio_adicional_id) "
     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
 _SET_CITA_MEDICO = "UPDATE replica.citas SET medico_id = %s WHERE id = %s"

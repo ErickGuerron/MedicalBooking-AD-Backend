@@ -99,14 +99,16 @@ SPECIALTIES: tuple[tuple[str, str], ...] = (
     ("Hematología", "Consultas y exámenes de sangre"),
     ("Bioquímica clínica", "Pruebas de química sanguínea: lípidos y glucosa"),
 )
-SERVICE_CATALOG: tuple[tuple[str, int, str, str | None, bool], ...] = (
-    ("Consulta médica", 30, "25.00", "Medicina general", False),
-    ("Consulta de hematología", 30, "30.00", "Hematología", False),
-    ("Revisión de resultados con el médico", 20, "15.00", None, True),
-    ("Toma de muestra de sangre", 20, "8.00", None, False),
-    ("Hemograma completo", 45, "15.00", "Hematología", False),
-    ("Perfil lipídico", 45, "15.00", "Bioquímica clínica", False),
-    ("Glucosa en ayunas", 45, "15.00", "Bioquímica clínica", False),
+BLOOD_SAMPLE = "Toma de muestra de sangre"
+# (name, minutes, price, specialty, requires medical order, dependent service charged with it)
+SERVICE_CATALOG: tuple[tuple[str, int, str, str | None, bool, str | None], ...] = (
+    ("Consulta médica", 30, "25.00", "Medicina general", False, None),
+    ("Consulta de hematología", 30, "30.00", "Hematología", False, None),
+    ("Revisión de resultados con el médico", 20, "15.00", None, True, None),
+    (BLOOD_SAMPLE, 20, "8.00", None, False, None),
+    ("Hemograma completo", 45, "15.00", "Hematología", False, BLOOD_SAMPLE),
+    ("Perfil lipídico", 45, "15.00", "Bioquímica clínica", False, BLOOD_SAMPLE),
+    ("Glucosa en ayunas", 45, "15.00", "Bioquímica clínica", False, BLOOD_SAMPLE),
 )
 # The specialty each doctor of the plan practises (by local name).
 DOCTOR_SPECIALTY: dict[str, str] = {
@@ -733,8 +735,8 @@ def _insert_services(conn: Connection, metadata: MetaData, specialty_ids: dict[s
     is inserted with a derived id.
     """
     services = metadata.tables["servicios_medicos"]
-    booking_id: str | None = None
-    for name, minutes, price, specialty, requires_order in SERVICE_CATALOG:
+    ids: dict[str, str] = {}
+    for name, minutes, price, specialty, requires_order, _dependency in SERVICE_CATALOG:
         values = {
             "nombre": name,
             "duracion_min": minutes,
@@ -751,11 +753,17 @@ def _insert_services(conn: Connection, metadata: MetaData, specialty_ids: dict[s
         else:
             service_id = str(existing)
             conn.execute(update(services).where(services.c.id == existing).values(**values))
-        if name == BOOKING_SERVICE:
-            booking_id = service_id
-    if booking_id is None:
+        ids[name] = service_id
+    # Dependencies are set once every service has its id: a dependent points at its sample.
+    for name, _minutes, _price, _specialty, _requires_order, dependency in SERVICE_CATALOG:
+        conn.execute(
+            update(services)
+            .where(services.c.id == ids[name])
+            .values(servicio_adicional_id=ids[dependency] if dependency else None)
+        )
+    if BOOKING_SERVICE not in ids:
         raise ValueError(f"the catalog has no {BOOKING_SERVICE!r} service")
-    return booking_id
+    return ids[BOOKING_SERVICE]
 
 
 def _book_slots(
