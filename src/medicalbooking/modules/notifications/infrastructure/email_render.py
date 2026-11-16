@@ -192,7 +192,6 @@ def doctor_cancellation_content(
         "Entra a Medilo para ver los detalles de tu agenda.\n"
     )
     return EmailContent(subject=subject, text=text_body)
-    return EmailContent(subject=TEMPLATES[CITA_CANCELADA_MEDICO].subject, text=text_body)
 
 
 def reservation_content(
