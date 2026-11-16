@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     lab_documents_dir: str = Field(default="storage/documents", min_length=1, max_length=260)
     # Where PDFs are kept: "mongo" stores them in GridFS so every VM reads the same documents.
     document_storage: Literal["local", "mongo"] = "local"
+    # The "Toma de muestra de sangre" service, charged as its own invoice line when an exam needs a
+    # blood sample. Required only when such an exam is invoiced.
+    blood_sample_service_id: str | None = None
 
     # Transactional email for account verification (Brevo HTTP API). Secrets stay in
     # environment variables or the git-ignored .env file.

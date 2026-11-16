@@ -47,9 +47,27 @@ class AppointmentBilling:
     precio: Decimal
     moneda: str
     factura_id: str | None
+    servicio_id: str = ""
+    requiere_toma_sangre: bool = False
 
     def with_factura(self, factura_id: str) -> AppointmentBilling:
         return replace(self, factura_id=factura_id)
+
+
+@dataclass(frozen=True)
+class ServiceCharge:
+    """A catalog service and its base price, charged as one invoice line."""
+
+    servicio_id: str
+    nombre: str
+    precio: Decimal
+
+
+@dataclass(frozen=True)
+class NewInvoiceLine:
+    servicio_id: str
+    descripcion: str
+    precio: Decimal
 
 
 @dataclass(frozen=True)
@@ -64,6 +82,9 @@ class NewInvoice:
     total: Decimal
     moneda: str
     creada_en: datetime
+    # The invoice lines when the appointment is billed line by line (the exam and its blood
+    # sample). Empty: one line from the appointment's service, as before.
+    lineas: tuple[NewInvoiceLine, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -168,6 +189,8 @@ class CheckoutStart:
 class BillingStore(Protocol):
     def find_appointment_billing(self, cita_id: str) -> AppointmentBilling | None: ...
 
+    def find_service_charge(self, servicio_id: str) -> ServiceCharge | None: ...
+
     def create_invoice(self, invoice: NewInvoice) -> InvoiceRecord: ...
 
     def find_invoice(self, factura_id: str) -> InvoiceRecord | None: ...
@@ -218,11 +241,13 @@ class BillingService:
         gateway: CheckoutGateway,
         clock: Callable[[], datetime],
         customers: CustomerResolver,
+        blood_sample_service_id: str | None = None,
     ) -> None:
         self._store = store
         self._gateway = gateway
         self._clock = clock
         self._customers = customers
+        self._blood_sample_service_id = blood_sample_service_id
 
     def create_invoice(self, actor: AccessProfile, *, cita_id: str) -> InvoiceRecord:
         _require(actor, PERM_INVOICE_CREATE)
@@ -233,7 +258,17 @@ class BillingService:
             raise Conflict("The appointment cannot be invoiced in its current state")
         if appointment.factura_id is not None:
             raise Conflict("The appointment already has an invoice")
-        price = appointment.precio
+        lines = [
+            NewInvoiceLine(
+                servicio_id=appointment.servicio_id,
+                descripcion=appointment.servicio_nombre,
+                precio=appointment.precio,
+            )
+        ]
+        if appointment.requiere_toma_sangre:
+            # Fails closed: an exam that needs a sample is not invoiced without its sample line.
+            lines.append(self._blood_sample_line())
+        total = sum((line.precio for line in lines), Decimal("0"))
         return self._store.create_invoice(
             NewInvoice(
                 id=str(uuid.uuid4()),
@@ -241,12 +276,23 @@ class BillingService:
                 cita_id=appointment.cita_id,
                 paciente_user_id=appointment.paciente_user_id,
                 descripcion=appointment.servicio_nombre,
-                subtotal=price,
+                subtotal=total,
                 impuestos=Decimal("0"),
-                total=price,
+                total=total,
                 moneda=appointment.moneda,
                 creada_en=self._clock(),
+                lineas=tuple(lines),
             )
+        )
+
+    def _blood_sample_line(self) -> NewInvoiceLine:
+        if self._blood_sample_service_id is None:
+            raise ServiceUnavailable("The blood sample service is not configured")
+        sample = self._store.find_service_charge(self._blood_sample_service_id)
+        if sample is None:
+            raise ServiceUnavailable("The blood sample service is not available")
+        return NewInvoiceLine(
+            servicio_id=sample.servicio_id, descripcion=sample.nombre, precio=sample.precio
         )
 
     def start_checkout(

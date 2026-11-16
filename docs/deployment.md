@@ -71,6 +71,10 @@ docker compose -f deploy/vm1/compose.yaml up -d      # VM1
 docker compose -f deploy/vm2/compose.yaml up -d      # VM2
 ```
 
+Blood sample on invoices: an exam flagged `requiere_toma_sangre` is invoiced with its sample as a separate
+line. Set `BLOOD_SAMPLE_SERVICE_ID` to the id of the "Toma de muestra de sangre" service in each VM's `.env`.
+Until it is set, invoices for those exams are refused (503), so no invoice goes out without its sample line.
+
 Lab PDFs are stored in MongoDB GridFS when `DOCUMENT_STORAGE=mongo`, so both VMs read the same documents.
 Set it in each VM's `.env` (the Mongo user of `MONGODB_PROJECTION_URI` needs `readWrite` on the database).
 With `DOCUMENT_STORAGE=local` (the default), PDFs go to `LAB_DOCUMENTS_DIR`, which the image sets to
