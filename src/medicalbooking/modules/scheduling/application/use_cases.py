@@ -241,9 +241,8 @@ class SchedulingService:
         elif self._store.has_doctor_profile(actor.user_id):
             query = self._store.list_agenda_appointments
         elif PERM_REVIEW_CANCELLATIONS in actor.permissions:
-            def query(
-                _uid: str, est: str | None, lim: int, off: int
-            ) -> list[AppointmentSummary]:
+
+            def query(_uid: str, est: str | None, lim: int, off: int) -> list[AppointmentSummary]:
                 return self._store.list_admin_appointments(
                     est, lim, off, medico_registro=medico_registro
                 )
