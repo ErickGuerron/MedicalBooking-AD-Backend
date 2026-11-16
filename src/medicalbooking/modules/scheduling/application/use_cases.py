@@ -14,6 +14,7 @@ from medicalbooking.modules.scheduling.application.ports import (
     AvailableSlot,
     CancelCommand,
     CancelStatus,
+    CloseConsultationCommand,
     Consultation,
     ConsultationStatus,
     OpenConsultationCommand,
@@ -29,6 +30,7 @@ from medicalbooking.modules.scheduling.domain.policies import (
     PERM_REVIEW_CANCELLATIONS,
     ROLE_PATIENT,
     is_same_request,
+    normalize_clinical_note,
     normalize_patient_reason,
     validate_approval_reason,
     validate_cancellation_reason,
@@ -204,6 +206,39 @@ class SchedulingService:
             raise Conflict("The appointment is not in a state that allows a consultation")
         assert outcome.consultation is not None
         return outcome.consultation, outcome.status is ConsultationStatus.CREATED
+
+    def close_consultation(
+        self,
+        actor: AccessProfile,
+        appointment_id: str,
+        *,
+        observaciones: object,
+        plan_tratamiento: object,
+    ) -> Consultation:
+        """The doctor of the agenda registers the attention: notes and treatment plan, then the
+        consultation is closed (CERRADA). Closing is final: a second attempt is a 409."""
+        _require(actor, PERM_OPEN_CONSULTATION)
+        diagnosis = normalize_clinical_note("observaciones", observaciones)
+        if diagnosis is None:
+            raise ValidationFailed("'observaciones' (the diagnosis) is required")
+        outcome = self._store.close_consultation(
+            CloseConsultationCommand(
+                actor_user_id=actor.user_id,
+                appointment_id=str(appointment_id),
+                now=self._clock(),
+                allowed_states=CONSULTATION_APPOINTMENT_STATES,
+                observaciones=diagnosis,
+                plan_tratamiento=normalize_clinical_note("plan_tratamiento", plan_tratamiento),
+            )
+        )
+        if outcome.status is ConsultationStatus.NOT_FOUND_OR_FORBIDDEN:
+            raise Forbidden("Access to this resource is not allowed")
+        if outcome.status is ConsultationStatus.STATE_NOT_ALLOWED:
+            raise Conflict("The appointment is not in a state that allows a consultation")
+        if outcome.status is ConsultationStatus.ALREADY_CLOSED:
+            raise Conflict("The consultation is already registered")
+        assert outcome.consultation is not None
+        return outcome.consultation
 
     def approve_doctor_cancellation(
         self, actor: AccessProfile, appointment_id: str, *, motivo: str | None

@@ -99,6 +99,16 @@ class CancelOutcome:
 
 
 @dataclass(frozen=True)
+class CloseConsultationCommand:
+    actor_user_id: str
+    appointment_id: str
+    now: datetime
+    allowed_states: frozenset[str]
+    observaciones: str | None
+    plan_tratamiento: str | None
+
+
+@dataclass(frozen=True)
 class OpenConsultationCommand:
     actor_user_id: str
     appointment_id: str
@@ -111,6 +121,8 @@ class ConsultationStatus(Enum):
     EXISTING = "existing"
     NOT_FOUND_OR_FORBIDDEN = "not_found_or_forbidden"
     STATE_NOT_ALLOWED = "state_not_allowed"
+    CLOSED = "closed"
+    ALREADY_CLOSED = "already_closed"
 
 
 @dataclass(frozen=True)
@@ -120,6 +132,9 @@ class Consultation:
     estado: str
     inicio_atencion: datetime | None
     motivo_consulta: str | None
+    observaciones: str | None = None
+    plan_tratamiento: str | None = None
+    fin_atencion: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -181,6 +196,10 @@ class SchedulingStore(Protocol):
 
     def open_consultation(self, command: OpenConsultationCommand) -> ConsultationOutcome:
         """Open (once) the consultation of an appointment of the actor's own agenda."""
+        ...
+
+    def close_consultation(self, command: CloseConsultationCommand) -> ConsultationOutcome:
+        """Record the attention notes and close the consultation (CERRADA), once."""
         ...
 
     def cancel(self, command: CancelCommand) -> CancelOutcome: ...
