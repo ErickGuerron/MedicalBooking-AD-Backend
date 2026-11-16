@@ -141,6 +141,14 @@ def test_find_patient_contact_is_none_for_an_unknown_aggregate(
     assert store.find_patient_contact("cita", uuid.uuid4()) is None
 
 
+def test_find_doctor_contact_is_none_for_an_unknown_appointment(
+    store: SqlNotificationStore,
+) -> None:
+    assert store.find_doctor_contact("cita", uuid.uuid4()) is None
+    assert store.cita_patient_name(str(uuid.uuid4())) is None
+    assert store.cita_cancellation(str(uuid.uuid4())) is None
+
+
 def test_a_second_claim_does_not_get_a_row_leased_by_the_first(
     store: SqlNotificationStore, patient: dict[str, str]
 ) -> None:

@@ -12,7 +12,19 @@ from medicalbooking.modules.replica.infrastructure.mongo_directory import replac
 SNAPSHOT = DirectorySnapshot(
     especialidades=((1, "Hematologia", True),),
     medicos=(("11111111-1111-1111-1111-111111111111", "Luis", "Perez", True),),
-    servicios=(("22222222-2222-2222-2222-222222222222", 1, "Hemograma", 30, "25.00", "USD", True),),
+    servicios=(
+        (
+            "22222222-2222-2222-2222-222222222222",
+            1,
+            "Hemograma",
+            30,
+            "25.00",
+            "USD",
+            True,
+            True,
+            None,
+        ),
+    ),
     citas_medico=(
         ("33333333-3333-3333-3333-333333333333", "11111111-1111-1111-1111-111111111111"),
     ),

@@ -18,12 +18,11 @@ import hashlib
 import logging
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 from medicalbooking.config import Settings
 from medicalbooking.modules.laboratory.application.order_report import render_order_report
+from medicalbooking.modules.laboratory.infrastructure.mongo_storage import document_storage_for
 from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
-from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
 from medicalbooking.modules.notifications.application.dispatcher import NotificationDispatcher
 from medicalbooking.modules.notifications.application.ports import (
     DueNotification,
@@ -85,7 +84,7 @@ def main() -> int:
             logger.error("worker configuration incomplete: missing %s", ", ".join(missing))
             return 1
         lab_store = SqlLabStore(engine)
-        documents = LocalDocumentStorage(Path(settings.lab_documents_dir))
+        documents = document_storage_for(settings)
 
         invoices = SqlInvoiceStore(engine)
         signing_key = (

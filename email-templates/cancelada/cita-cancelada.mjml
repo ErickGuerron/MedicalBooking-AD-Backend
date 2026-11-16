@@ -1,7 +1,7 @@
 <mjml lang="es">
   <mj-head>
     <mj-title>Tu cita en Medilo fue cancelada</mj-title>
-    <mj-preview>Tu cita con $medico_nombre del $fecha a las $hora fue cancelada.</mj-preview>
+    <mj-preview>$preheader</mj-preview>
     <mj-font name="Bricolage Grotesque" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700;12..96,800&display=swap" />
     <mj-attributes>
       <mj-all font-family="'Bricolage Grotesque', 'Trebuchet MS', 'Segoe UI', Arial, sans-serif" />
@@ -51,8 +51,8 @@
         <mj-column width="62%" padding="0px 12px 0px 0px">
           <mj-text color="#16206B">
             <span style="display:inline-block;background:#4A5280;color:#FFFFFF;font-size:13.5px;font-weight:700;padding:5px 12px;margin-bottom:16px;">Cita cancelada</span>
-            <div class="h1" style="font-size:40px;line-height:1.02;font-weight:800;letter-spacing:-1.4px;color:#16206B;">Tu cita fue<br>cancelada.</div>
-            <div style="margin-top:16px;font-size:16px;line-height:1.5;color:#4A5280;">Hola $first_name. Esta cita ya no está programada y no tienes que hacer nada más.</div>
+            <div class="h1" style="font-size:40px;line-height:1.02;font-weight:800;letter-spacing:-1.4px;color:#16206B;">$titulo</div>
+            <div style="margin-top:16px;font-size:16px;line-height:1.5;color:#4A5280;">Hola $first_name. $detalle</div>
           </mj-text>
         </mj-column>
         <mj-column width="38%" padding="6px 0px 0px 0px">
@@ -71,6 +71,7 @@
               <div style="font-size:17px;font-weight:700;color:#16206B;margin-bottom:12px;">$fecha</div>
               <div style="font-size:13.5px;color:#4A5280;">Hora</div>
               <div style="font-size:17px;font-weight:700;color:#16206B;">$hora</div>
+              $motivo_bloque
             </div>
           </mj-text>
         </mj-column>

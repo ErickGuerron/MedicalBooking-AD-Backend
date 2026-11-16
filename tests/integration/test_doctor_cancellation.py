@@ -213,16 +213,17 @@ def test_patient_cancellation_still_works_and_stores_no_reason(app, engine) -> N
     assert row.motivo_cancelacion_texto is None
 
 
-def test_reason_fields_sent_by_a_patient_are_ignored(app, engine) -> None:
+def test_a_patient_text_is_stored_without_a_code_and_a_patient_code_is_ignored(app, engine) -> None:
     patient, _, cita = _booked_by_patient(app, engine)
+    reason = _valid_reason()
 
-    response = _cancel(app, _token(app, patient), cita, _valid_reason())
+    response = _cancel(app, _token(app, patient), cita, reason)
 
     assert response.status_code == 200, response.get_json()
     row = _row(engine, cita)
     assert row.estado == "CANCELADA"
     assert row.motivo_cancelacion_codigo is None
-    assert row.motivo_cancelacion_texto is None
+    assert row.motivo_cancelacion_texto == reason["motivo_texto"]
 
 
 def test_a_patient_body_that_is_not_a_json_object_is_ignored_as_before(app, engine) -> None:

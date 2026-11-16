@@ -71,10 +71,16 @@ docker compose -f deploy/vm1/compose.yaml up -d      # VM1
 docker compose -f deploy/vm2/compose.yaml up -d      # VM2
 ```
 
-Lab PDFs are stored under `LAB_DOCUMENTS_DIR`, which the image sets to `/app/data/documents`. Mount a
-persistent volume there on each VM (`docker run -v <name>:/app/data/documents ...`), or the files are lost
-when the container is recreated. Until shared storage exists (see "Not yet implemented"), each VM keeps its
-own files.
+Service dependencies on invoices: a service whose `servicio_adicional_id` is set (for example, the lab exams
+point to "Toma de muestra de sangre") is invoiced with that dependent service as a separate line. The
+dependency lives in the database and replicates to Supabase and Mongo, so no `.env` value is needed. If
+the dependent service is missing or inactive, the invoice is refused (503).
+
+Lab PDFs are stored in MongoDB GridFS when `DOCUMENT_STORAGE=mongo`, so both VMs read the same documents.
+Set it in each VM's `.env` (the Mongo user of `MONGODB_PROJECTION_URI` needs `readWrite` on the database).
+With `DOCUMENT_STORAGE=local` (the default), PDFs go to `LAB_DOCUMENTS_DIR`, which the image sets to
+`/app/data/documents`. Mount a persistent volume there on each VM (`docker run -v <name>:/app/data/documents ...`),
+or the files are lost when the container is recreated, and each VM keeps its own files.
 
 Run the knowledge importer on demand, not on a schedule: it needs clinical review of its output before
 any draft is published. Command and guarantees: `docs/knowledge-import.md`.
@@ -138,10 +144,6 @@ Results are not yet measured. These will be recorded in `docs/experiments/`.
 
 ## Not yet implemented
 
-- **Shared document storage (blocks multi-VM deployment).** Uploaded lab PDFs are written to
-  `LAB_DOCUMENTS_DIR` on the local disk of the host that handles the upload. Replicas on
-  VM1 and VM2 do not share that disk, so a PDF uploaded through one VM is not found by a
-  download routed to the other. Move storage to Azure Blob or a shared volume before E7.
 - Deploying the published image to the VMs. The CI `publish` job pushes `develop` and `<version>` images
   to Docker Hub after every check passes, but only once `IMAGE_PUBLISH_ENABLED` is `true`. The VM pull
   and restart are still manual.

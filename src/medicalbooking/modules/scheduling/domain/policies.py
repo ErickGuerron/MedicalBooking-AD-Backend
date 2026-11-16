@@ -76,6 +76,18 @@ def validate_cancellation_reason(codigo: str | None, texto: str | None) -> None:
         raise ValidationFailed(REASON_INVALID)
 
 
+def normalize_patient_reason(texto: str | None) -> str | None:
+    """A patient's optional free-text reason: stripped, None when blank, same length limit.
+
+    It carries no code: the closed doctor catalog and its quota never count patient reasons.
+    """
+    if texto is None or not texto.strip():
+        return None
+    if len(texto.encode("utf-16-le")) > 2 * MOTIVO_TEXTO_MAX:
+        raise ValidationFailed(REASON_INVALID)
+    return texto.strip()
+
+
 def validate_approval_reason(texto: str | None) -> None:
     """The admin's reason for an exception: non-blank, within the same 1500-unit limit."""
     if texto is None or not texto.strip():
