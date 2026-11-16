@@ -297,7 +297,11 @@ class SqlSchedulingStore:
         )
 
     def list_admin_appointments(
-        self, estado: str | None, limit: int, offset: int
+        self,
+        estado: str | None,
+        limit: int,
+        offset: int,
+        medico_registro: str | None = None,
     ) -> list[AppointmentSummary]:
         sql = _ADMIN_SUMMARY_SELECT + _ADMIN_SOURCE
         params: dict[str, object] = {
@@ -307,6 +311,9 @@ class SqlSchedulingStore:
         if estado is not None:
             sql += "AND c.estado = :estado "
             params["estado"] = estado
+        if medico_registro:
+            sql += "AND (m.registro_profesional LIKE :reg OR mu.telefono LIKE :reg) "
+            params["reg"] = f"%{medico_registro}%"
         sql += "ORDER BY h.inicio_utc, c.id OFFSET :saltar ROWS FETCH NEXT :cantidad ROWS ONLY"
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql), params).all()
@@ -320,6 +327,8 @@ class SqlSchedulingStore:
                 paciente_nombre=f"{row.paciente_nombre} {row.paciente_apellido}".strip(),
                 medico_id=_canonical(row.medico_id),
                 medico_nombre=f"{row.medico_nombre} {row.medico_apellido}".strip(),
+                medico_registro=row.medico_registro,
+                medico_telefono=row.medico_telefono,
                 tiene_aprobacion=bool(row.tiene_aprobacion),
             )
             for row in rows
@@ -653,6 +662,7 @@ _ADMIN_SUMMARY_SELECT = (
     "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc, c.paciente_id, "
     "pu.nombre AS paciente_nombre, pu.apellido AS paciente_apellido, "
     "m.id AS medico_id, mu.nombre AS medico_nombre, mu.apellido AS medico_apellido, "
+    "m.registro_profesional AS medico_registro, mu.telefono AS medico_telefono, "
     "CASE WHEN acm.id IS NOT NULL THEN 1 ELSE 0 END AS tiene_aprobacion "
 )
 # Patient ownership: citas.paciente_id -> pacientes.usuario_id.

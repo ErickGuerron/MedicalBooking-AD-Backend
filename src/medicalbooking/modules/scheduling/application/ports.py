@@ -43,6 +43,8 @@ class AppointmentSummary:
     paciente_nombre: str | None = None
     medico_id: str | None = None
     medico_nombre: str | None = None
+    medico_registro: str | None = None
+    medico_telefono: str | None = None
     tiene_aprobacion: bool = False
 
 
@@ -166,7 +168,11 @@ class SchedulingStore(Protocol):
         ...
 
     def list_admin_appointments(
-        self, estado: str | None, limit: int, offset: int
+        self,
+        estado: str | None,
+        limit: int,
+        offset: int,
+        medico_registro: str | None = None,
     ) -> list[AppointmentSummary]:
         """One page of appointments for administrative cancellation reviews."""
         ...

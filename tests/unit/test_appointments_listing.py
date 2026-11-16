@@ -55,6 +55,8 @@ class Row:
     paciente_nombre: str | None = None
     medico_id: str | None = None
     medico_nombre: str | None = None
+    medico_registro: str | None = None
+    medico_telefono: str | None = None
     tiene_aprobacion: bool = False
 
 
@@ -89,8 +91,8 @@ class ListingStore(FakeStore):
         ]
         return self._page(rows, estado, limit, offset)
 
-    def list_admin_appointments(self, estado, limit, offset):
-        self.list_calls.append(("admin", estado, limit, offset))
+    def list_admin_appointments(self, estado, limit, offset, medico_registro=None):
+        self.list_calls.append(("admin", estado, limit, offset, medico_registro))
         rows = [
             replace(
                 row,
@@ -98,8 +100,10 @@ class ListingStore(FakeStore):
                 paciente_nombre=f"Name {row.patient_user}",
                 medico_id=f"mid-{row.doctor_user}",
                 medico_nombre=f"Dr. {row.doctor_user}",
+                medico_registro=f"REG-{row.doctor_user}",
             )
             for row in self.rows
+            if medico_registro is None or medico_registro in f"REG-{row.doctor_user}"
         ]
         return self._page(rows, estado, limit, offset)
 
@@ -386,3 +390,24 @@ def test_admin_with_citas_revisar_cancelaciones_can_list_all_appointments(
     first = data["items"][0]
     assert "paciente" in first
     assert "medico" in first
+    assert "registro_profesional" in first["medico"]
+
+
+def test_admin_can_filter_appointments_by_doctor_registration_number(
+    client: FlaskClient, store: ListingStore
+) -> None:
+    row_1 = _row(PATIENT_A, DOCTOR)
+    row_2 = _row(PATIENT_B, OTHER_DOCTOR)
+    store.rows = [row_1, row_2]
+
+    response = client.get(
+        PATH,
+        query_string={"medico_registro": f"REG-{DOCTOR}"},
+        headers=_auth("tok-admin"),
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == row_1.id
+    assert data["items"][0]["medico"]["registro_profesional"] == f"REG-{DOCTOR}"
