@@ -90,8 +90,34 @@ OPENS = time(8, 0)
 CLOSES = time(17, 0)
 SLOT_MINUTES = 30
 PATIENT_COUNT = 6
-DOCTOR_COUNT = 2
-SERVICE_NAMES = ("Consulta general", "Control de laboratorio")
+DOCTOR_COUNT = 3
+# The laboratory catalog, the same rows an operator sets up in a real environment: specialties,
+# and services as (name, duration in minutes, base price in USD, specialty or None, medical order
+# required). Services are matched by name, so a rerun converges instead of duplicating them.
+SPECIALTIES: tuple[tuple[str, str], ...] = (
+    ("Medicina general", "Consultas médicas generales"),
+    ("Hematología", "Consultas y exámenes de sangre"),
+    ("Bioquímica clínica", "Pruebas de química sanguínea: lípidos y glucosa"),
+)
+BLOOD_SAMPLE = "Toma de muestra de sangre"
+# (name, minutes, price, specialty, requires medical order, dependent service charged with it)
+SERVICE_CATALOG: tuple[tuple[str, int, str, str | None, bool, str | None], ...] = (
+    ("Consulta médica", 30, "25.00", "Medicina general", False, None),
+    ("Consulta de hematología", 30, "30.00", "Hematología", False, None),
+    ("Revisión de resultados con el médico", 20, "15.00", None, True, None),
+    (BLOOD_SAMPLE, 20, "8.00", None, False, None),
+    ("Hemograma completo", 45, "15.00", "Hematología", False, BLOOD_SAMPLE),
+    ("Perfil lipídico", 45, "15.00", "Bioquímica clínica", False, BLOOD_SAMPLE),
+    ("Glucosa en ayunas", 45, "15.00", "Bioquímica clínica", False, BLOOD_SAMPLE),
+)
+# The specialty each doctor of the plan practises (by local name).
+DOCTOR_SPECIALTY: dict[str, str] = {
+    "medico1": "Medicina general",
+    "medico2": "Hematología",
+    "medico3": "Bioquímica clínica",
+}
+# Every demo booking uses this service: a medical consultation.
+BOOKING_SERVICE = "Consulta médica"
 ACCOUNT_PLAN: tuple[tuple[str, str], ...] = (
     ("administrador", "ADMINISTRADOR"),
     ("laboratorista", "LABORATORISTA"),
@@ -657,7 +683,9 @@ def _seed_schedule(
                     },
                 )
                 slots.append(Slot(id=slot_id, doctor_local=doctor.local, start=start))
-        service_id = _insert_services(conn, metadata)
+        specialty_ids = _ensure_specialties(conn, metadata)
+        _link_doctor_specialties(conn, metadata, doctors, specialty_ids)
+        service_id = _insert_services(conn, metadata, specialty_ids)
     return service_id, slots
 
 
@@ -667,26 +695,75 @@ def _medico_id(conn: Connection, metadata: MetaData, user_id: str) -> str:
     return conn.execute(select(medicos.c.id).where(medicos.c.usuario_id == user_id)).scalar_one()
 
 
-def _insert_services(conn: Connection, metadata: MetaData) -> str:
-    """Creates the demo services and returns the first one, which every demo booking uses."""
-    service_ids: list[str] = []
-    for name in SERVICE_NAMES:
-        service_id = demo_id(f"servicio:{name}")
-        _insert_if_missing(
-            conn,
-            metadata,
-            "servicios_medicos",
-            {
-                "id": service_id,
-                "nombre": name,
-                "duracion_min": SLOT_MINUTES,
-                "precio_base": Decimal("25.00"),
-                "moneda": "USD",
-                "activo": True,
-            },
+def _ensure_specialties(conn: Connection, metadata: MetaData) -> dict[str, int]:
+    """Creates the specialties missing by name (identity ids) and returns their ids by name."""
+    table = metadata.tables["especialidades"]
+    for name, description in SPECIALTIES:
+        if conn.execute(select(table.c.id).where(table.c.nombre == name)).first() is None:
+            conn.execute(insert(table).values(nombre=name, descripcion=description, activo=True))
+    return {
+        name: conn.execute(select(table.c.id).where(table.c.nombre == name)).scalar_one()
+        for name, _ in SPECIALTIES
+    }
+
+
+def _link_doctor_specialties(
+    conn: Connection, metadata: MetaData, doctors: list[Account], specialty_ids: dict[str, int]
+) -> None:
+    """Each doctor of the plan gets its specialty; a link that already exists is left alone."""
+    links = metadata.tables["medicos_especialidades"]
+    for doctor in doctors:
+        name = DOCTOR_SPECIALTY.get(doctor.local)
+        if name is None:
+            continue
+        medico_id = _medico_id(conn, metadata, doctor.user_id)
+        present = conn.execute(
+            select(links.c.medico_id).where(
+                links.c.medico_id == medico_id, links.c.especialidad_id == specialty_ids[name]
+            )
+        ).first()
+        if present is None:
+            conn.execute(
+                insert(links).values(medico_id=medico_id, especialidad_id=specialty_ids[name])
+            )
+
+
+def _insert_services(conn: Connection, metadata: MetaData, specialty_ids: dict[str, int]) -> str:
+    """Sets the catalog services and returns the id of the one every demo booking uses.
+
+    A service is matched by name: an existing one is brought to the catalog values, a missing one
+    is inserted with a derived id.
+    """
+    services = metadata.tables["servicios_medicos"]
+    ids: dict[str, str] = {}
+    for name, minutes, price, specialty, requires_order, _dependency in SERVICE_CATALOG:
+        values = {
+            "nombre": name,
+            "duracion_min": minutes,
+            "precio_base": Decimal(price),
+            "moneda": "USD",
+            "activo": True,
+            "requiere_orden_medica": requires_order,
+            "especialidad_id": specialty_ids[specialty] if specialty else None,
+        }
+        existing = conn.execute(select(services.c.id).where(services.c.nombre == name)).scalar()
+        if existing is None:
+            service_id = demo_id(f"servicio:{name}")
+            _insert(conn, metadata, "servicios_medicos", {"id": service_id, **values})
+        else:
+            service_id = str(existing)
+            conn.execute(update(services).where(services.c.id == existing).values(**values))
+        ids[name] = service_id
+    # Dependencies are set once every service has its id: a dependent points at its sample.
+    for name, _minutes, _price, _specialty, _requires_order, dependency in SERVICE_CATALOG:
+        conn.execute(
+            update(services)
+            .where(services.c.id == ids[name])
+            .values(servicio_adicional_id=ids[dependency] if dependency else None)
         )
-        service_ids.append(service_id)
-    return service_ids[0]
+    if BOOKING_SERVICE not in ids:
+        raise ValueError(f"the catalog has no {BOOKING_SERVICE!r} service")
+    return ids[BOOKING_SERVICE]
 
 
 def _book_slots(

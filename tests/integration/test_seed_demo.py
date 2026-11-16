@@ -40,6 +40,7 @@ EXPECTED_ROLES = {
     "laboratorista@demo.test": "LABORATORISTA",
     "medico1@demo.test": "MEDICO",
     "medico2@demo.test": "MEDICO",
+    "medico3@demo.test": "MEDICO",
     **{f"paciente{n}@demo.test": "PACIENTE" for n in range(1, 7)},
 }
 
@@ -169,6 +170,7 @@ def test_doctors_get_a_professional_profile_through_the_service(
     assert profiles == {
         "medico1@demo.test": ("DEMO-MEDICO1", 30, True),
         "medico2@demo.test": ("DEMO-MEDICO2", 30, True),
+        "medico3@demo.test": ("DEMO-MEDICO3", 30, True),
     }
 
 

@@ -50,6 +50,8 @@ def replace_directory_mongo(snapshot: DirectorySnapshot, database: Any) -> None:
                             "precio_base": precio_base,
                             "moneda": moneda,
                             "activo": activo,
+                            "requiere_orden_medica": requiere_orden_medica,
+                            "servicio_adicional_id": servicio_adicional_id,
                         }
                         for (
                             servicio_id,
@@ -59,6 +61,8 @@ def replace_directory_mongo(snapshot: DirectorySnapshot, database: Any) -> None:
                             precio_base,
                             moneda,
                             activo,
+                            requiere_orden_medica,
+                            servicio_adicional_id,
                         ) in snapshot.servicios
                     ],
                     session=session,

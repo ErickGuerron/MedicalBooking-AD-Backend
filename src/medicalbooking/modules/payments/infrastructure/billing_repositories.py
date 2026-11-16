@@ -20,9 +20,11 @@ from medicalbooking.modules.payments.application.billing_service import (
     AppointmentBilling,
     InvoiceRecord,
     NewInvoice,
+    NewInvoiceLine,
     NewPayment,
     PaymentRecord,
     PaymentReservation,
+    ServiceCharge,
 )
 from medicalbooking.modules.scheduling.infrastructure.repositories import (
     confirm_appointment_of_invoice,
@@ -42,7 +44,8 @@ class SqlBillingStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT c.id, p.usuario_id, c.estado, s.nombre, s.precio_base, s.moneda, "
+                    "SELECT c.id, p.usuario_id, c.estado, s.id AS servicio_id, s.nombre, "
+                    "s.precio_base, s.moneda, s.servicio_adicional_id, "
                     "(SELECT TOP 1 f.id FROM facturas AS f WHERE f.cita_id = c.id) AS factura_id "
                     "FROM citas AS c "
                     "JOIN pacientes AS p ON p.id = c.paciente_id "
@@ -61,6 +64,25 @@ class SqlBillingStore:
             precio=Decimal(row.precio_base),
             moneda=row.moneda.strip(),
             factura_id=str(row.factura_id).lower() if row.factura_id else None,
+            servicio_id=str(row.servicio_id).lower(),
+            servicio_adicional_id=(
+                str(row.servicio_adicional_id).lower() if row.servicio_adicional_id else None
+            ),
+        )
+
+    def find_service_charge(self, servicio_id: str) -> ServiceCharge | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, nombre, precio_base FROM servicios_medicos "
+                    "WHERE id = :servicio AND activo = 1"
+                ),
+                {"servicio": servicio_id},
+            ).first()
+        if row is None:
+            return None
+        return ServiceCharge(
+            servicio_id=str(row.id).lower(), nombre=row.nombre, precio=Decimal(row.precio_base)
         )
 
     def create_invoice(self, invoice: NewInvoice) -> InvoiceRecord:
@@ -85,27 +107,46 @@ class SqlBillingStore:
                         "cita": invoice.cita_id,
                     },
                 )
-                detalle_id = str(uuid.uuid4())
-                conn.execute(
-                    text(
-                        "INSERT INTO facturas_detalle (id, factura_id, servicio_id, descripcion, "
-                        "cantidad, precio_unitario, subtotal) "
-                        "SELECT :detalle, :id, c.servicio_id, :descripcion, 1, :precio, :precio "
-                        "FROM citas AS c WHERE c.id = :cita"
-                    ),
-                    {
-                        "detalle": detalle_id,
-                        "id": invoice.id,
-                        "descripcion": invoice.descripcion,
-                        "precio": invoice.subtotal,
-                        "cita": invoice.cita_id,
-                    },
-                )
-                # Replica snapshot: the invoice and its detail line. No contact data.
                 paciente_row = conn.execute(
                     text("SELECT paciente_id, servicio_id FROM citas WHERE id = :c"),
                     {"c": invoice.cita_id},
                 ).one()
+                # One line per exam or sample; without explicit lines, the appointment's service.
+                lines = invoice.lineas or (
+                    NewInvoiceLine(
+                        servicio_id=str(paciente_row.servicio_id),
+                        descripcion=invoice.descripcion,
+                        precio=invoice.subtotal,
+                    ),
+                )
+                detalles: list[dict[str, Any]] = []
+                for line in lines:
+                    detalle_id = str(uuid.uuid4())
+                    conn.execute(
+                        text(
+                            "INSERT INTO facturas_detalle (id, factura_id, servicio_id, "
+                            "descripcion, cantidad, precio_unitario, subtotal) "
+                            "VALUES (:detalle, :id, :servicio, :descripcion, 1, :precio, :precio)"
+                        ),
+                        {
+                            "detalle": detalle_id,
+                            "id": invoice.id,
+                            "servicio": line.servicio_id,
+                            "descripcion": line.descripcion,
+                            "precio": line.precio,
+                        },
+                    )
+                    detalles.append(
+                        {
+                            "id": detalle_id,
+                            "servicio_id": str(line.servicio_id).lower(),
+                            "descripcion": line.descripcion,
+                            "cantidad": 1,
+                            "precio_unitario": str(line.precio),
+                            "subtotal": str(line.precio),
+                        }
+                    )
+                # Replica snapshot: the invoice and its detail lines. No contact data.
                 append_outbox(
                     conn,
                     "factura",
@@ -124,16 +165,7 @@ class SqlBillingStore:
                             "estado": "PENDIENTE",
                             "creada_en": _utc_naive(invoice.creada_en).isoformat(),
                         },
-                        "detalles": [
-                            {
-                                "id": detalle_id,
-                                "servicio_id": str(paciente_row.servicio_id).lower(),
-                                "descripcion": invoice.descripcion,
-                                "cantidad": 1,
-                                "precio_unitario": str(invoice.subtotal),
-                                "subtotal": str(invoice.subtotal),
-                            }
-                        ],
+                        "detalles": detalles,
                     },
                     _utc_naive(invoice.creada_en),
                 )

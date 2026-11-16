@@ -71,6 +71,11 @@ docker compose -f deploy/vm1/compose.yaml up -d      # VM1
 docker compose -f deploy/vm2/compose.yaml up -d      # VM2
 ```
 
+Service dependencies on invoices: a service whose `servicio_adicional_id` is set (for example, the lab exams
+point to "Toma de muestra de sangre") is invoiced with that dependent service as a separate line. The
+dependency lives in the database and replicates to Supabase and Mongo, so no `.env` value is needed. If
+the dependent service is missing or inactive, the invoice is refused (503).
+
 Lab PDFs are stored in MongoDB GridFS when `DOCUMENT_STORAGE=mongo`, so both VMs read the same documents.
 Set it in each VM's `.env` (the Mongo user of `MONGODB_PROJECTION_URI` needs `readWrite` on the database).
 With `DOCUMENT_STORAGE=local` (the default), PDFs go to `LAB_DOCUMENTS_DIR`, which the image sets to
