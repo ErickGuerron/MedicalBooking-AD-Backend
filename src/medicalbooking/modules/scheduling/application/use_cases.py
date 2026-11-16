@@ -229,6 +229,7 @@ class SchedulingService:
         estado: str | None,
         limit: int,
         offset: int,
+        medico_registro: str | None = None,
     ) -> list[AppointmentSummary]:
         """Appointments the actor owns: a patient's own, or those of the doctor's agenda.
 
@@ -239,6 +240,12 @@ class SchedulingService:
             query = self._store.list_patient_appointments
         elif self._store.has_doctor_profile(actor.user_id):
             query = self._store.list_agenda_appointments
+        elif PERM_REVIEW_CANCELLATIONS in actor.permissions:
+
+            def query(_uid: str, est: str | None, lim: int, off: int) -> list[AppointmentSummary]:
+                return self._store.list_admin_appointments(
+                    est, lim, off, medico_registro=medico_registro
+                )
         else:
             raise Forbidden("Access to this resource is not allowed")
         validate_page(limit, offset)

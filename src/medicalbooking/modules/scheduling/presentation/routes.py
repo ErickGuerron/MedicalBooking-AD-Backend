@@ -114,6 +114,18 @@ def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
     # Only the doctor's agenda listing carries the patient; a patient's own listing never does.
     if appointment.paciente_id is not None:
         item["paciente"] = {"id": appointment.paciente_id, "nombre": appointment.paciente_nombre}
+    if appointment.medico_id is not None:
+        medico_data: dict[str, Any] = {
+            "id": appointment.medico_id,
+            "nombre": appointment.medico_nombre,
+        }
+        if appointment.medico_registro is not None:
+            medico_data["registro_profesional"] = appointment.medico_registro
+        if appointment.medico_telefono is not None:
+            medico_data["telefono"] = appointment.medico_telefono
+        item["medico"] = medico_data
+    if appointment.tiene_aprobacion:
+        item["tiene_aprobacion"] = True
     return item
 
 
@@ -224,6 +236,7 @@ def list_appointments() -> tuple[Response, int]:
     items = _service().list_appointments(
         g.actor,
         estado=request.args.get("estado"),
+        medico_registro=request.args.get("medico_registro"),
         limit=_int_query("limit", DEFAULT_PAGE_SIZE),
         offset=_int_query("offset", 0),
     )
