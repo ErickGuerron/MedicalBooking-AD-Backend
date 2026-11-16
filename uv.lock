@@ -1,4 +1,4 @@
-version = 1
+﻿version = 1
 revision = 3
 requires-python = "==3.12.*"
 
@@ -466,7 +466,7 @@ wheels = [
 
 [[package]]
 name = "medicalbooking-backend"
-version = "1.2.5"
+version = "1.2.6"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
