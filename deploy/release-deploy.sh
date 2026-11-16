@@ -15,9 +15,10 @@
 # image, not the schema.
 #
 # Usage: release-deploy.sh <compose-file> [--migrate]
-# Cron, every 15 minutes (VM1 migrates, VM2 does not):
-#   */15 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm1/compose.yaml --migrate >> $HOME/logs/release-deploy.log 2>&1
-#   */15 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm2/compose.yaml >> $HOME/logs/release-deploy.log 2>&1
+# Cron, every 5 minutes (VM1 migrates, VM2 does not). A new release reaches a VM within 5 minutes
+# of its publication; a run that finds the release already running only removes unused images.
+#   */5 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm1/compose.yaml --migrate >> $HOME/logs/release-deploy.log 2>&1
+#   */5 * * * * /opt/medicalbooking/deploy/release-deploy.sh /opt/medicalbooking/deploy/vm2/compose.yaml >> $HOME/logs/release-deploy.log 2>&1
 set -euo pipefail
 
 compose_file="${1:?usage: release-deploy.sh <compose-file> [--migrate]}"
