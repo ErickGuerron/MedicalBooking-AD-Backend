@@ -32,6 +32,10 @@ class CatalogService:
     def list_services(self, actor: AccessProfile) -> list[Service]:
         return self._store.list_services()
 
+    def list_public_services(self) -> list[Service]:
+        """Active services for the public landing. The catalog is public data: no session needed."""
+        return self._store.list_services()
+
     # ---------- writes: catalogo.administrar ----------
 
     def create_specialty(
