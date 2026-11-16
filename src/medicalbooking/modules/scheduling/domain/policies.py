@@ -15,6 +15,9 @@ PERM_OPEN_CONSULTATION = "consultas.abrir"
 # Payment confirmation does not move an appointment to CONFIRMADA yet (pagos and facturas change,
 # citas.estado does not): until it does, widen this set or fix that step.
 CONSULTATION_APPOINTMENT_STATES = frozenset({"CONFIRMADA", "COMPLETADA"})
+# Notes of the attention (observaciones, plan_tratamiento): mirror the frontend clinical rule.
+CONSULTATION_TEXT_MAX = 1000
+_CLINICAL_TEXT = re.compile(r"[A-Za-z0-9áéíóúÁÉÍÓÚñÑüÜ\s.,:;()/\-–%°'\"]*")
 # Closed catalog of the reasons a doctor gives when cancelling an appointment of an own agenda.
 MOTIVOS_CANCELACION_MEDICO = frozenset({"IMPREVISTO_MEDICO", "OTRO_MEDICO"})
 MOTIVO_TEXTO_MAX = 1500  # mirrors citas.motivo_cancelacion_texto nvarchar(1500)
@@ -49,6 +52,23 @@ def validate_page(limit: int, offset: int) -> None:
         raise ValidationFailed(f"'limit' must be between 1 and {MAX_PAGE_SIZE}")
     if not 0 <= offset <= MAX_PAGE_OFFSET:
         raise ValidationFailed(f"'offset' must be between 0 and {MAX_PAGE_OFFSET}")
+
+
+def normalize_clinical_note(field: str, text: object) -> str | None:
+    """Optional clinical note: None or blank means absent; otherwise letters, digits and clinical
+    punctuation only, up to CONSULTATION_TEXT_MAX characters. Returns the trimmed text."""
+    if text is None:
+        return None
+    if not isinstance(text, str):
+        raise ValidationFailed(f"'{field}' must be a string")
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > CONSULTATION_TEXT_MAX:
+        raise ValidationFailed(f"'{field}' cannot exceed {CONSULTATION_TEXT_MAX} characters")
+    if not _CLINICAL_TEXT.fullmatch(cleaned):
+        raise ValidationFailed(f"'{field}' contains characters that are not allowed")
+    return cleaned
 
 
 def validate_estado(estado: str) -> None:

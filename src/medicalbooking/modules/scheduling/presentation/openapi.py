@@ -275,6 +275,63 @@ def scheduling_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/appointments/{appointment_id}/consultation/close": {
+                "post": {
+                    "tags": ["Scheduling"],
+                    "operationId": "closeConsultation",
+                    "summary": "Register the attention and close the consultation",
+                    "description": (
+                        "Requires consultas.abrir (MEDICO) and an appointment of the caller's own "
+                        "agenda in CONFIRMADA or COMPLETADA. observaciones (the diagnosis) is "
+                        "required; plan_tratamiento is optional (up to 1000 characters each; "
+                        "letters, digits and clinical punctuation only). Sets the consultation to "
+                        "CERRADA with fin_atencion and the appointment to COMPLETADA. "
+                        "Final: a repeat answers 409. Missing and foreign appointments answer 403."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "appointment_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "requestBody": {
+                        "required": False,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "observaciones": {
+                                            "type": ["string", "null"],
+                                            "maxLength": 1000,
+                                        },
+                                        "plan_tratamiento": {
+                                            "type": ["string", "null"],
+                                            "maxLength": 1000,
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": _json_response("Consultation closed", "Consultation"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem(
+                            "Caller lacks consultas.abrir, or the appointment is missing or not "
+                            "of the caller's agenda"
+                        ),
+                        "409": _problem(
+                            "The appointment is not CONFIRMADA or COMPLETADA, or the consultation "
+                            "is already registered"
+                        ),
+                        "422": _problem("A note is too long or contains characters not allowed"),
+                    },
+                }
+            },
             "/api/v1/appointments/{appointment_id}/cancellation-approval": {
                 "post": {
                     "tags": ["Scheduling"],
