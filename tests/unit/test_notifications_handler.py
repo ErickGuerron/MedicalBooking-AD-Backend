@@ -17,17 +17,24 @@ EVENT_ID = UUID("11111111-1111-1111-1111-111111111111")
 APPOINTMENT_ID = UUID("22222222-2222-2222-2222-222222222222")
 ORDER_ID = UUID("33333333-3333-3333-3333-333333333333")
 PATIENT = PatientContact(user_id="44444444-4444-4444-4444-444444444444", email="ana@example.com")
+DOCTOR = PatientContact(user_id="66666666-6666-6666-6666-666666666666", email="luis@example.com")
 
 
 class _Repository:
-    def __init__(self, contact: PatientContact | None = PATIENT) -> None:
+    def __init__(
+        self, contact: PatientContact | None = PATIENT, doctor: PatientContact | None = DOCTOR
+    ) -> None:
         self._contact = contact
+        self._doctor = doctor
         self.rows: dict[str, object] = {}
 
     def find_patient_contact(
         self, aggregate_type: str, aggregate_id: UUID
     ) -> PatientContact | None:
         return self._contact
+
+    def find_doctor_contact(self, aggregate_type: str, aggregate_id: UUID) -> PatientContact | None:
+        return self._doctor
 
     def enqueue(self, notification, now) -> bool:
         if notification.key in self.rows:
@@ -69,12 +76,25 @@ def test_booked_appointment_creates_one_notification_for_the_patient() -> None:
     assert row.usuario_id == PATIENT.user_id
 
 
-def test_cancelled_appointment_creates_its_own_notification() -> None:
+def test_cancelled_appointment_notifies_the_patient_and_the_doctor_separately() -> None:
     repository = _Repository()
 
     _handler(repository).handle(_event("cita.cancelada", "cita"))
 
-    assert [row.tipo for row in repository.rows.values()] == ["CITA_CANCELADA"]
+    rows = {row.tipo: row for row in repository.rows.values()}
+    assert set(rows) == {"CITA_CANCELADA", "CITA_CANCELADA_MEDICO"}
+    assert rows["CITA_CANCELADA"].usuario_id == PATIENT.user_id
+    assert rows["CITA_CANCELADA"].destinatario == "ana@example.com"
+    assert rows["CITA_CANCELADA_MEDICO"].usuario_id == DOCTOR.user_id
+    assert rows["CITA_CANCELADA_MEDICO"].destinatario == "luis@example.com"
+    assert rows["CITA_CANCELADA_MEDICO"].key == f"{EVENT_ID}:CITA_CANCELADA_MEDICO"
+
+
+def test_missing_doctor_is_a_permanent_delivery_error_for_the_cancellation() -> None:
+    repository = _Repository(doctor=None)
+
+    with pytest.raises(PermanentDeliveryError):
+        _handler(repository).handle(_event("cita.cancelada", "cita"))
 
 
 def test_completed_lab_order_creates_a_results_notification_for_the_patient() -> None:

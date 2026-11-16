@@ -15,12 +15,14 @@ from string import Template
 from typing import Protocol
 
 from medicalbooking.modules.notifications.application.ports import (
+    CitaCancellation,
     DueNotification,
     EmailContent,
     NotificationError,
 )
 from medicalbooking.modules.notifications.domain.templates import (
     CITA_CANCELADA,
+    CITA_CANCELADA_MEDICO,
     CITA_RECORDATORIO,
     CITA_RESERVADA,
     PAGO_COMPLETADO,
@@ -35,6 +37,10 @@ _FALLBACK_NAME = "paciente"
 
 class EmailContext(Protocol):
     def patient_first_name(self, email: str) -> str | None: ...
+
+    def cita_patient_name(self, cita_id: str) -> str | None: ...
+
+    def cita_cancellation(self, cita_id: str) -> CitaCancellation | None: ...
 
     def cita_reminder(self, cita_id: str) -> tuple[str, datetime] | None: ...
 
@@ -85,26 +91,108 @@ def reminder_content(first_name: str, medico: str, hora: str, asset_base_url: st
     )
 
 
+MOTIVO_LABELS = {
+    "IMPREVISTO_MEDICO": "Imprevisto del médico",
+    "OTRO_MEDICO": "Otro motivo",
+}
+SIN_MOTIVO_PACIENTE = "El paciente no indicó un motivo."
+
+
+def motivo_text(cancellation: CitaCancellation) -> str | None:
+    """The stored reason as one line: the code's label, then the free text. None when absent."""
+    label = MOTIVO_LABELS.get(cancellation.motivo_codigo or "")
+    texto = (cancellation.motivo_texto or "").strip()
+    if label and texto:
+        return f"{label}: {texto}"
+    return label or texto or None
+
+
+def _motivo_html(motivo: str | None) -> str:
+    if motivo is None:
+        return ""
+    return (
+        '<div style="font-size:13.5px;color:#4A5280;margin-top:12px;">Motivo</div>'
+        '<div style="font-size:17px;font-weight:700;color:#16206B;">'
+        f"{html.escape(motivo)}</div>"
+    )
+
+
 def cancellation_content(
-    first_name: str, medico: str, fecha: str, hora: str, asset_base_url: str
+    first_name: str,
+    medico: str,
+    fecha: str,
+    hora: str,
+    asset_base_url: str,
+    *,
+    por_medico: bool = False,
+    motivo: str | None = None,
 ) -> EmailContent:
-    """Appointment cancelled: names the visit so the patient knows exactly which one."""
+    """Appointment cancelled. If the doctor cancelled it, the mail says so and gives the reason."""
+    if por_medico:
+        subject = "El médico canceló tu cita en Medilo"
+        titulo = "Tu médico canceló<br>tu cita."
+        preheader = f"{medico} canceló tu cita del {fecha} a las {hora}."
+        detalle = "Esta cita ya no está programada. Puedes agendar otra cuando quieras."
+        intro = "Tu médico canceló esta cita:"
+    else:
+        subject = TEMPLATES[CITA_CANCELADA].subject
+        titulo = "Tu cita fue<br>cancelada."
+        preheader = f"Tu cita con {medico} del {fecha} a las {hora} fue cancelada."
+        detalle = "Esta cita ya no está programada y no tienes que hacer nada más."
+        intro = "Te avisamos que esta cita fue cancelada:"
     html_body = _page("cita_cancelada.html").substitute(
         first_name=html.escape(first_name),
+        preheader=html.escape(preheader),
+        titulo=titulo,
+        detalle=html.escape(detalle),
         medico_nombre=html.escape(medico),
         fecha=html.escape(fecha),
         hora=html.escape(hora),
+        motivo_bloque=_motivo_html(motivo),
         asset_base_url=_base(asset_base_url),
     )
+    motivo_line = f"Motivo: {motivo}\n" if motivo else ""
     text_body = (
         f"Hola {first_name}.\n\n"
-        "Te avisamos que esta cita fue cancelada:\n"
+        f"{intro}\n"
         f"Médico: {medico}\n"
         f"Fecha: {fecha}\n"
-        f"Hora: {hora}\n\n"
+        f"Hora: {hora}\n"
+        f"{motivo_line}\n"
         "Si quieres agendar otra cita, entra a Medilo en cualquier momento.\n"
     )
-    return EmailContent(subject=TEMPLATES[CITA_CANCELADA].subject, text=text_body, html=html_body)
+    return EmailContent(subject=subject, text=text_body, html=html_body)
+
+
+def doctor_cancellation_content(
+    doctor_first_name: str,
+    paciente: str,
+    fecha: str,
+    hora: str,
+    *,
+    por_medico: bool = False,
+    motivo: str | None = None,
+) -> EmailContent:
+    """Appointment cancelled, addressed to the doctor: the patient, the slot, who cancelled, why."""
+    if por_medico:
+        subject = "Cancelaste una cita en Medilo"
+        intro = "Cancelaste esta cita:"
+        sin_motivo = "no indicado"
+    else:
+        subject = TEMPLATES[CITA_CANCELADA_MEDICO].subject
+        intro = "El paciente canceló esta cita:"
+        sin_motivo = SIN_MOTIVO_PACIENTE
+    text_body = (
+        f"Hola {doctor_first_name}.\n\n"
+        f"{intro}\n"
+        f"Paciente: {paciente}\n"
+        f"Fecha: {fecha}\n"
+        f"Hora: {hora}\n"
+        f"Motivo: {motivo or sin_motivo}\n\n"
+        "Entra a Medilo para ver los detalles de tu agenda.\n"
+    )
+    return EmailContent(subject=subject, text=text_body)
+    return EmailContent(subject=TEMPLATES[CITA_CANCELADA_MEDICO].subject, text=text_body)
 
 
 def reservation_content(
@@ -149,6 +237,14 @@ def payment_content(
     return EmailContent(subject=TEMPLATES[PAGO_COMPLETADO].subject, text=text_body, html=html_body)
 
 
+def _cancellation(store: EmailContext, aggregate_id: str | None) -> CitaCancellation:
+    """Who cancelled the appointment and the reason stored with it."""
+    cancellation = store.cita_cancellation(aggregate_id or "")
+    if cancellation is None:
+        raise NotificationError("APPOINTMENT_NOT_FOUND")
+    return cancellation
+
+
 def _visit(store: EmailContext, aggregate_id: str | None) -> tuple[str, str, str]:
     """Doctor, date and hour of the appointment, with the hour shown in Ecuador time."""
     details = store.cita_reminder(aggregate_id or "")
@@ -174,7 +270,30 @@ def content_for(
         return results_content(first_name, asset_base_url)
     if notification.tipo == CITA_CANCELADA:
         medico, fecha, hora = _visit(store, notification.aggregate_id)
-        return cancellation_content(first_name, medico, fecha, hora, asset_base_url)
+        cancellation = _cancellation(store, notification.aggregate_id)
+        return cancellation_content(
+            first_name,
+            medico,
+            fecha,
+            hora,
+            asset_base_url,
+            por_medico=cancellation.por_medico,
+            motivo=motivo_text(cancellation),
+        )
+    if notification.tipo == CITA_CANCELADA_MEDICO:
+        _, fecha, hora = _visit(store, notification.aggregate_id)
+        cancellation = _cancellation(store, notification.aggregate_id)
+        paciente = store.cita_patient_name(notification.aggregate_id or "")
+        if paciente is None:
+            raise NotificationError("APPOINTMENT_NOT_FOUND")
+        return doctor_cancellation_content(
+            first_name,
+            paciente,
+            fecha,
+            hora,
+            por_medico=cancellation.por_medico,
+            motivo=motivo_text(cancellation),
+        )
     if notification.tipo == CITA_RESERVADA:
         medico, fecha, hora = _visit(store, notification.aggregate_id)
         return reservation_content(first_name, medico, fecha, hora, asset_base_url)
