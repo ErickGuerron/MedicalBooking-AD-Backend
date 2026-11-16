@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "medicalbooking-backend"
 version = "1.2.6"
 description = "MedicalBooking clinical laboratory backend: modular monolith with hexagonal architecture"
