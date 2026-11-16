@@ -84,7 +84,9 @@ class _MongoTransaction:
         document key. A duplicate-key error means the stored document is newer: the update is
         ignored.
         """
-        if self._tombstoned(key if aggregate_id is None else aggregate_id):
+        key = canonical_id(key)
+        guard = canonical_id(key if aggregate_id is None else aggregate_id)
+        if self._tombstoned(guard):
             return
         clean = {name: _mongo_value(value) for name, value in fields.items() if value is not None}
         clean["_v"] = self._version
@@ -106,6 +108,8 @@ class _MongoTransaction:
 
     def _delete(self, collection: str, key: Any, aggregate_id: Any) -> None:
         """Record the delete as a tombstone, then remove the document."""
+        key = canonical_id(key)
+        aggregate_id = canonical_id(aggregate_id)
         self._db[TOMBSTONES].update_one(
             {"_id": aggregate_id}, {"$max": {"_v": self._version}}, upsert=True
         )
@@ -121,14 +125,14 @@ class _MongoTransaction:
         self._set(
             "pacientes",
             id,
-            {"usuario_id": usuario_id, "nombre": nombre, "apellido": apellido},
+            {"usuario_id": canonical_id(usuario_id), "nombre": nombre, "apellido": apellido},
             aggregate_id=usuario_id,
         )
 
     def delete_account(self, usuario_id: str) -> None:
         """The account, its roles (stored in the account) and its patient profile."""
         self._delete("usuarios", usuario_id, usuario_id)
-        self._db["pacientes"].delete_many({"usuario_id": usuario_id})
+        self._db["pacientes"].delete_many({"usuario_id": canonical_id(usuario_id)})
 
     def upsert_order(self, orden: dict[str, Any]) -> None:
         fields = {name: value for name, value in orden.items() if name not in ("id", "detalles")}
@@ -192,6 +196,14 @@ class _MongoTransaction:
     def upsert_seguimiento(self, seguimiento: dict[str, Any]) -> None:
         fields = {name: value for name, value in seguimiento.items() if name != "id"}
         self._set("tratamientos_seguimientos", seguimiento["id"], fields)
+
+
+def canonical_id(value: Any) -> Any:
+    """Aggregate ids are stored in lower case, the form the reconciliation compares against.
+
+    SQL Server returns uniqueidentifier text in upper case; the same id must not become two keys.
+    """
+    return value.lower() if isinstance(value, str) else value
 
 
 def _mongo_value(value: Any) -> Any:
