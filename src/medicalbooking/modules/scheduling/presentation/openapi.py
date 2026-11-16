@@ -194,8 +194,10 @@ def scheduling_fragment() -> dict[str, Any]:
                     "operationId": "cancelAppointment",
                     "summary": "Cancel an own appointment and release its slot",
                     "description": (
-                        "A patient cancels an own appointment; a body is optional and its reason "
-                        "fields are ignored. A doctor cancels an appointment of an own agenda and "
+                        "A patient cancels an own appointment; a body is optional, may carry an "
+                        "optional motivo_texto (up to 1500 characters, stored without a code) and "
+                        "ignores motivo_codigo. A doctor cancels an appointment of an own agenda "
+                        "and "
                         "must send motivo_codigo (IMPREVISTO_MEDICO or OTRO_MEDICO) and "
                         "motivo_texto (1 to 1500 characters). A paid appointment's refund is "
                         "requested for the patient after the cancellation."

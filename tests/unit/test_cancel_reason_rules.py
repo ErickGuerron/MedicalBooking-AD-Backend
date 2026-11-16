@@ -215,18 +215,33 @@ def test_a_patient_cancellation_needs_no_reason(store, patient) -> None:
     assert command.motivo_texto is None
 
 
-def test_a_patient_reason_fields_are_ignored_even_when_invalid(store, patient) -> None:
+def test_a_patient_code_is_ignored_and_the_optional_text_is_stored_without_one(
+    store, patient
+) -> None:
     cancelled = _service(store).cancel(
         patient,
         _appointment_id(store),
         motivo_codigo="BASURA",
-        motivo_texto="x" * 900,
+        motivo_texto="  Me surgió un viaje  ",
     )
 
     assert cancelled.estado == "CANCELADA"
     command = store.commands[-1]
     assert command.motivo_codigo is None
-    assert command.motivo_texto is None
+    assert command.motivo_texto == "Me surgió un viaje"
+
+
+def test_a_blank_patient_text_is_no_reason(store, patient) -> None:
+    _service(store).cancel(patient, _appointment_id(store), motivo_texto="   ")
+
+    assert store.commands[-1].motivo_texto is None
+
+
+def test_a_patient_text_over_the_limit_is_refused(store, patient) -> None:
+    with pytest.raises(ValidationFailed):
+        _service(store).cancel(patient, _appointment_id(store), motivo_texto="x" * 1501)
+
+    assert store.commands == []
 
 
 def test_a_doctor_command_carries_the_reason_to_the_store(store, doctor) -> None:
