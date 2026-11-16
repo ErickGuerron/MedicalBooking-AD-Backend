@@ -33,8 +33,9 @@ class BookAppointmentRequest(BaseModel):
 
 
 class CancelAppointmentRequest(BaseModel):
-    """Optional body. The reason is required for a doctor and ignored for a patient; its
-    values are checked by the use case, so a patient's body is only checked for shape."""
+    """Optional body. A doctor's reason (code and text) is required; a patient may send only
+    motivo_texto, optional, and any patient motivo_codigo is ignored. Values are checked by the
+    use case, so the body is only checked for shape here."""
 
     model_config = ConfigDict(extra="forbid")
 

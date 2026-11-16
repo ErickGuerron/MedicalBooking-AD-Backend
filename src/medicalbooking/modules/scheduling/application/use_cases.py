@@ -29,6 +29,7 @@ from medicalbooking.modules.scheduling.domain.policies import (
     PERM_REVIEW_CANCELLATIONS,
     ROLE_PATIENT,
     is_same_request,
+    normalize_patient_reason,
     validate_approval_reason,
     validate_cancellation_reason,
     validate_estado,
@@ -150,14 +151,15 @@ class SchedulingService:
     ) -> Appointment:
         """A patient cancels an own appointment; a doctor cancels one of an own agenda.
 
-        A doctor must give a reason. A patient's reason fields are ignored and never stored.
+        A doctor must give a coded reason. A patient may give an optional text, stored with no code.
         Both paths answer the same 403 for a missing or foreign appointment.
         """
         as_medico = _cancels_as_medico(actor)
         if as_medico:
             validate_cancellation_reason(motivo_codigo, motivo_texto)
         else:
-            motivo_codigo = motivo_texto = None
+            motivo_codigo = None
+            motivo_texto = normalize_patient_reason(motivo_texto)
         outcome = self._store.cancel(
             CancelCommand(
                 actor_user_id=actor.user_id,

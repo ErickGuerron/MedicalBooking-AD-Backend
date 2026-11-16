@@ -44,11 +44,14 @@ def read_directory(engine: Engine) -> DirectorySnapshot:
                 str(row.precio_base),
                 row.moneda.strip(),
                 bool(row.activo),
+                bool(row.requiere_orden_medica),
+                canonical_id(row.servicio_adicional_id) if row.servicio_adicional_id else None,
             )
             for row in conn.execute(
                 text(
                     "SELECT id, especialidad_id, nombre, duracion_min, precio_base, moneda, "
-                    "activo FROM servicios_medicos ORDER BY id"
+                    "activo, requiere_orden_medica, servicio_adicional_id "
+                    "FROM servicios_medicos ORDER BY id"
                 )
             ).all()
         )

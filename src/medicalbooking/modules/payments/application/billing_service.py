@@ -47,9 +47,28 @@ class AppointmentBilling:
     precio: Decimal
     moneda: str
     factura_id: str | None
+    servicio_id: str = ""
+    # The service charged as a second invoice line with this one (a blood sample for an exam).
+    servicio_adicional_id: str | None = None
 
     def with_factura(self, factura_id: str) -> AppointmentBilling:
         return replace(self, factura_id=factura_id)
+
+
+@dataclass(frozen=True)
+class ServiceCharge:
+    """A catalog service and its base price, charged as one invoice line."""
+
+    servicio_id: str
+    nombre: str
+    precio: Decimal
+
+
+@dataclass(frozen=True)
+class NewInvoiceLine:
+    servicio_id: str
+    descripcion: str
+    precio: Decimal
 
 
 @dataclass(frozen=True)
@@ -64,6 +83,9 @@ class NewInvoice:
     total: Decimal
     moneda: str
     creada_en: datetime
+    # The invoice lines when the appointment is billed line by line (the exam and its blood
+    # sample). Empty: one line from the appointment's service, as before.
+    lineas: tuple[NewInvoiceLine, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -168,6 +190,8 @@ class CheckoutStart:
 class BillingStore(Protocol):
     def find_appointment_billing(self, cita_id: str) -> AppointmentBilling | None: ...
 
+    def find_service_charge(self, servicio_id: str) -> ServiceCharge | None: ...
+
     def create_invoice(self, invoice: NewInvoice) -> InvoiceRecord: ...
 
     def find_invoice(self, factura_id: str) -> InvoiceRecord | None: ...
@@ -233,7 +257,17 @@ class BillingService:
             raise Conflict("The appointment cannot be invoiced in its current state")
         if appointment.factura_id is not None:
             raise Conflict("The appointment already has an invoice")
-        price = appointment.precio
+        lines = [
+            NewInvoiceLine(
+                servicio_id=appointment.servicio_id,
+                descripcion=appointment.servicio_nombre,
+                precio=appointment.precio,
+            )
+        ]
+        if appointment.servicio_adicional_id is not None:
+            # Fails closed: a service that depends on another is not invoiced without its line.
+            lines.append(self._additional_service_line(appointment.servicio_adicional_id))
+        total = sum((line.precio for line in lines), Decimal("0"))
         return self._store.create_invoice(
             NewInvoice(
                 id=str(uuid.uuid4()),
@@ -241,12 +275,21 @@ class BillingService:
                 cita_id=appointment.cita_id,
                 paciente_user_id=appointment.paciente_user_id,
                 descripcion=appointment.servicio_nombre,
-                subtotal=price,
+                subtotal=total,
                 impuestos=Decimal("0"),
-                total=price,
+                total=total,
                 moneda=appointment.moneda,
                 creada_en=self._clock(),
+                lineas=tuple(lines),
             )
+        )
+
+    def _additional_service_line(self, servicio_id: str) -> NewInvoiceLine:
+        charge = self._store.find_service_charge(servicio_id)
+        if charge is None:
+            raise ServiceUnavailable("The additional service is not available")
+        return NewInvoiceLine(
+            servicio_id=charge.servicio_id, descripcion=charge.nombre, precio=charge.precio
         )
 
     def start_checkout(

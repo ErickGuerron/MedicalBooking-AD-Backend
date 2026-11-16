@@ -22,6 +22,7 @@ from medicalbooking.modules.payments.application.billing_service import (
     PaymentRecord,
     PaymentReservation,
     ProviderUnavailable,
+    ServiceCharge,
 )
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, ServiceUnavailable
 
@@ -55,6 +56,10 @@ class FakeBillingStore:
     rejected: set[str] = field(default_factory=set)
     confirmed: list[str] = field(default_factory=list)
     cancelled: list[str] = field(default_factory=list)
+    services: dict[str, ServiceCharge] = field(default_factory=dict)
+
+    def find_service_charge(self, servicio_id):
+        return self.services.get(servicio_id)
 
     def confirm_payment(self, pago_id, factura_id, now):
         self.confirmed.append(pago_id)
@@ -283,6 +288,75 @@ def test_invoice_price_comes_from_the_medical_service_with_one_line():
     assert created.moneda == "USD"
     assert created.descripcion == "Consulta general"
     assert created.numero_factura.startswith("FAC-")
+
+
+SAMPLE_ID = "aaaaaaaa-0000-4000-8000-00000000005a"
+
+
+def _exam_with_sample(owner: str) -> tuple[FakeBillingStore, AppointmentBilling]:
+    store = FakeBillingStore()
+    exam = AppointmentBilling(
+        cita_id=_id(),
+        paciente_user_id=owner,
+        estado="PENDIENTE_PAGO",
+        servicio_nombre="Hemograma completo",
+        precio=Decimal("15.00"),
+        moneda="USD",
+        factura_id=None,
+        servicio_id=_id(),
+        servicio_adicional_id=SAMPLE_ID,
+    )
+    store.appointments[exam.cita_id] = exam
+    store.services[SAMPLE_ID] = ServiceCharge(
+        servicio_id=SAMPLE_ID, nombre="Toma de muestra de sangre", precio=Decimal("8.00")
+    )
+    return store, exam
+
+
+def test_an_exam_with_a_dependent_service_is_invoiced_with_it_as_its_own_line():
+    owner = _id()
+    store, exam = _exam_with_sample(owner)
+    service = BillingService(
+        store=store, gateway=FakeGateway(), clock=lambda: NOW, customers=FakeCustomers()
+    )
+
+    invoice = service.create_invoice(_patient(owner), cita_id=exam.cita_id)
+
+    created = store.created_invoices[0]
+    assert [(line.descripcion, line.precio) for line in created.lineas] == [
+        ("Hemograma completo", Decimal("15.00")),
+        ("Toma de muestra de sangre", Decimal("8.00")),
+    ]
+    assert created.lineas[0].servicio_id == exam.servicio_id
+    assert created.lineas[1].servicio_id == SAMPLE_ID
+    assert created.subtotal == Decimal("23.00")
+    assert invoice.total == Decimal("23.00")
+
+
+def test_a_service_without_a_dependency_is_invoiced_with_one_line():
+    owner = _id()
+    store, exam = _exam_with_sample(owner)
+    store.appointments[exam.cita_id] = replace(exam, servicio_adicional_id=None)
+    service = BillingService(
+        store=store, gateway=FakeGateway(), clock=lambda: NOW, customers=FakeCustomers()
+    )
+
+    service.create_invoice(_patient(owner), cita_id=exam.cita_id)
+
+    assert len(store.created_invoices[0].lineas) == 1
+
+
+def test_an_inactive_or_missing_dependent_service_blocks_the_invoice():
+    owner = _id()
+    store, exam = _exam_with_sample(owner)
+    store.services.clear()
+    service = BillingService(
+        store=store, gateway=FakeGateway(), clock=lambda: NOW, customers=FakeCustomers()
+    )
+
+    with pytest.raises(ServiceUnavailable):
+        service.create_invoice(_patient(owner), cita_id=exam.cita_id)
+    assert store.created_invoices == []
 
 
 def test_invoice_requires_the_permission():

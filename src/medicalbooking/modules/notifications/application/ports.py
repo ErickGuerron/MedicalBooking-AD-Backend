@@ -20,6 +20,15 @@ class PatientContact:
 
 
 @dataclass(frozen=True)
+class CitaCancellation:
+    """Who cancelled an appointment and the reason stored with it (codes are a closed set)."""
+
+    por_medico: bool
+    motivo_codigo: str | None = None
+    motivo_texto: str | None = None
+
+
+@dataclass(frozen=True)
 class NewNotification:
     key: str
     event_id: UUID
@@ -71,6 +80,10 @@ class NotificationError(Exception):
 
 class NotificationRepository(Protocol):
     def find_patient_contact(
+        self, aggregate_type: str, aggregate_id: UUID
+    ) -> PatientContact | None: ...
+
+    def find_doctor_contact(
         self, aggregate_type: str, aggregate_id: UUID
     ) -> PatientContact | None: ...
 

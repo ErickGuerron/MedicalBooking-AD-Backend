@@ -13,6 +13,8 @@ from medicalbooking.modules.synchronization.domain.events import OutboxEvent
 
 CITA_RESERVADA = "CITA_RESERVADA"
 CITA_CANCELADA = "CITA_CANCELADA"
+# The doctor's copy of a cancelled appointment: addressed to the doctor, names the patient.
+CITA_CANCELADA_MEDICO = "CITA_CANCELADA_MEDICO"
 RESULTADO_LABORATORIO = "RESULTADO_LABORATORIO"
 CITA_RECORDATORIO = "CITA_RECORDATORIO"
 PAGO_COMPLETADO = "PAGO_COMPLETADO"
@@ -79,6 +81,10 @@ TEMPLATES: dict[str, Template] = {
             "Te avisamos que una de tus citas fue cancelada. Entra a Medilo para ver los detalles.\n"
         ),
     ),
+    CITA_CANCELADA_MEDICO: Template(
+        subject="Se canceló una cita en Medilo",
+        text=("Hola.\n\nSe canceló una de tus citas. Entra a Medilo para ver los detalles.\n"),
+    ),
     RESULTADO_LABORATORIO: Template(
         subject="Tus resultados de laboratorio están listos",
         text=(
@@ -103,15 +109,19 @@ TEMPLATES: dict[str, Template] = {
     ),
 }
 
-# Only these (aggregate type, event type) pairs reach the patient. Everything else is ignored.
-_TEMPLATE_BY_EVENT: dict[tuple[str, str], str] = {
-    ("cita", "cita.reservada"): CITA_RESERVADA,
-    ("cita", "cita.cancelada"): CITA_CANCELADA,
-    ("orden_laboratorio", "orden_laboratorio.confirmada"): RESULTADO_LABORATORIO,
-    ("cita", "cita.recordatorio"): CITA_RECORDATORIO,
-    ("pago", "pago.actualizado"): PAGO_COMPLETADO,
+# Only these (aggregate type, event type) pairs notify. Everything else is ignored. A cancelled
+# appointment notifies both its patient and its doctor, each with their own template.
+_TEMPLATES_BY_EVENT: dict[tuple[str, str], tuple[str, ...]] = {
+    ("cita", "cita.reservada"): (CITA_RESERVADA,),
+    ("cita", "cita.cancelada"): (CITA_CANCELADA, CITA_CANCELADA_MEDICO),
+    ("orden_laboratorio", "orden_laboratorio.confirmada"): (RESULTADO_LABORATORIO,),
+    ("cita", "cita.recordatorio"): (CITA_RECORDATORIO,),
+    ("pago", "pago.actualizado"): (PAGO_COMPLETADO,),
 }
 
+# Templates addressed to the doctor of the appointment. The rest go to the patient.
+DOCTOR_TEMPLATES = frozenset({CITA_CANCELADA_MEDICO})
 
-def template_for(event: OutboxEvent) -> str | None:
-    return _TEMPLATE_BY_EVENT.get((event.aggregate_type, event.event_type))
+
+def templates_for(event: OutboxEvent) -> tuple[str, ...]:
+    return _TEMPLATES_BY_EVENT.get((event.aggregate_type, event.event_type), ())
