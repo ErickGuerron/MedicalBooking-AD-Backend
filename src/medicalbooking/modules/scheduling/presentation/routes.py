@@ -216,6 +216,38 @@ def open_consultation(appointment_id: uuid.UUID) -> tuple[Response, int]:
     return jsonify(body), 201 if created else 200
 
 
+@scheduling_bp.post("/appointments/<uuid:appointment_id>/consultation/close")
+@authenticated
+def close_consultation(appointment_id: uuid.UUID) -> tuple[Response, int]:
+    """The doctor registers the attention: notes and plan close the consultation (final)."""
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValidationFailed("Request body must be a JSON object")
+    consultation = _service().close_consultation(
+        g.actor,
+        str(appointment_id),
+        observaciones=data.get("observaciones"),
+        plan_tratamiento=data.get("plan_tratamiento"),
+    )
+    body = {
+        "id": consultation.id,
+        "cita_id": consultation.cita_id,
+        "estado": consultation.estado,
+        "inicio_atencion": consultation.inicio_atencion.isoformat()
+        if consultation.inicio_atencion
+        else None,
+        "fin_atencion": consultation.fin_atencion.isoformat()
+        if consultation.fin_atencion
+        else None,
+        "motivo_consulta": consultation.motivo_consulta,
+        "observaciones": consultation.observaciones,
+        "plan_tratamiento": consultation.plan_tratamiento,
+    }
+    return jsonify(body), 200
+
+
 @scheduling_bp.post("/appointments/<uuid:appointment_id>/cancellation-approval")
 @authenticated
 def approve_cancellation(appointment_id: uuid.UUID) -> tuple[Response, int]:

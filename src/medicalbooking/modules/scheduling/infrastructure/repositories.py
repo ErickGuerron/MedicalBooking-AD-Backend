@@ -21,6 +21,7 @@ from medicalbooking.modules.scheduling.application.ports import (
     CancelCommand,
     CancelOutcome,
     CancelStatus,
+    CloseConsultationCommand,
     Consultation,
     ConsultationOutcome,
     ConsultationStatus,
@@ -408,6 +409,75 @@ class SqlSchedulingStore:
                 estado=row.estado,
                 inicio_atencion=_utc_aware(row.inicio_atencion),
                 motivo_consulta=row.motivo_consulta,
+            ),
+        )
+
+    def close_consultation(self, command: CloseConsultationCommand) -> ConsultationOutcome:
+        return retry_on_deadlock(lambda: self._close_consultation_once(command))
+
+    def _close_consultation_once(self, command: CloseConsultationCommand) -> ConsultationOutcome:
+        with self._engine.begin() as conn:
+            cita = lock_agenda_appointment(conn, command.appointment_id, command.actor_user_id)
+            if cita is None:
+                return ConsultationOutcome(ConsultationStatus.NOT_FOUND_OR_FORBIDDEN, None)
+            if cita.estado not in command.allowed_states:
+                return ConsultationOutcome(ConsultationStatus.STATE_NOT_ALLOWED, None)
+            consulta_id, _ = ensure_consultation(conn, str(cita.id), command.now)
+            estado = conn.execute(
+                text("SELECT estado FROM consultas_medicas WHERE id = :id"), {"id": consulta_id}
+            ).scalar()
+            if estado == "CERRADA":
+                return ConsultationOutcome(ConsultationStatus.ALREADY_CLOSED, None)
+            conn.execute(
+                text(
+                    "UPDATE consultas_medicas SET observaciones = :o, plan_tratamiento = :p, "
+                    "fin_atencion = :ahora, estado = 'CERRADA' WHERE id = :id"
+                ),
+                {
+                    "o": command.observaciones,
+                    "p": command.plan_tratamiento,
+                    "ahora": _utc_naive(command.now),
+                    "id": consulta_id,
+                },
+            )
+            # The attention is done: the appointment moves to COMPLETADA (the consultation
+            # states already accept it, so labs and a repeat open keep working).
+            conn.execute(
+                text("UPDATE citas SET estado = 'COMPLETADA' WHERE id = :c"),
+                {"c": str(cita.id)},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO auditoria_accesos (id, usuario_id, paciente_id, entidad, "
+                    "entidad_id, accion, fecha_evento, resultado) "
+                    "VALUES (:id, :u, :p, 'consulta_medica', :e, 'cerrar', :ahora, 'OK')"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "u": command.actor_user_id,
+                    "p": str(cita.paciente_id),
+                    "e": consulta_id,
+                    "ahora": _utc_naive(command.now),
+                },
+            )
+            row = conn.execute(
+                text(
+                    "SELECT id, cita_id, estado, inicio_atencion, motivo_consulta, observaciones, "
+                    "plan_tratamiento, fin_atencion FROM consultas_medicas WHERE id = :id"
+                ),
+                {"id": consulta_id},
+            ).one()
+        return ConsultationOutcome(
+            ConsultationStatus.CLOSED,
+            Consultation(
+                id=_canonical(row.id),
+                cita_id=_canonical(row.cita_id),
+                estado=row.estado,
+                inicio_atencion=_utc_aware(row.inicio_atencion),
+                motivo_consulta=row.motivo_consulta,
+                observaciones=row.observaciones,
+                plan_tratamiento=row.plan_tratamiento,
+                fin_atencion=_utc_aware(row.fin_atencion),
             ),
         )
 
