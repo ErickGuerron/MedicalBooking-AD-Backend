@@ -113,6 +113,9 @@ class FakeStore:
             self.taken.discard(expired.horario_id)
         return len(overdue)
 
+    def list_admin_appointments(self, estado, limit, offset, medico_registro=None):
+        return []
+
 
 @pytest.fixture
 def store() -> FakeStore:

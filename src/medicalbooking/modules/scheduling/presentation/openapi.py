@@ -95,13 +95,15 @@ def scheduling_fragment() -> dict[str, Any]:
                 "get": {
                     "tags": ["Scheduling"],
                     "operationId": "listAppointments",
-                    "summary": "List own appointments, or the doctor's agenda",
+                    "summary": "List own appointments, doctor's agenda, or admin review listing",
                     "description": (
                         "A patient sees own appointments; a doctor with a doctor profile sees "
-                        "appointments of his or her agenda; any other caller gets 403. Ordered "
-                        "by slot start, then id. A doctor's rows also carry 'paciente' "
-                        "({id, nombre}; id is the patient profile id used by lab orders); a "
-                        "patient's own rows never do."
+                        "appointments of his or her agenda; an actor with "
+                        "citas.revisar_cancelaciones sees appointments across agendas for "
+                        "cancellation review; any other caller gets 403. Ordered by slot start, "
+                        "then id. A doctor's rows also carry 'paciente' ({id, nombre}; id is the "
+                        "patient profile id used by lab orders); an admin's rows carry 'paciente' "
+                        "and 'medico' ({id, nombre}); a patient's own rows never do."
                     ),
                     "security": _BEARER,
                     "parameters": [
@@ -355,6 +357,19 @@ def scheduling_fragment() -> dict[str, Any]:
                                 "id": {"type": "string", "format": "uuid"},
                                 "nombre": {"type": "string"},
                             },
+                        },
+                        "medico": {
+                            "type": "object",
+                            "description": "Only on admin review listing rows (additive, optional)",
+                            "required": ["id", "nombre"],
+                            "properties": {
+                                "id": {"type": "string", "format": "uuid"},
+                                "nombre": {"type": "string"},
+                            },
+                        },
+                        "tiene_aprobacion": {
+                            "type": "boolean",
+                            "description": "True when cancellation approval is already registered",
                         },
                         "id": {"type": "string", "format": "uuid"},
                         "estado": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},

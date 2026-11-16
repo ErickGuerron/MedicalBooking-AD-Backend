@@ -53,6 +53,11 @@ class Row:
     doctor_user: str
     paciente_id: str | None = None
     paciente_nombre: str | None = None
+    medico_id: str | None = None
+    medico_nombre: str | None = None
+    medico_registro: str | None = None
+    medico_telefono: str | None = None
+    tiene_aprobacion: bool = False
 
 
 @dataclass
@@ -86,6 +91,22 @@ class ListingStore(FakeStore):
         ]
         return self._page(rows, estado, limit, offset)
 
+    def list_admin_appointments(self, estado, limit, offset, medico_registro=None):
+        self.list_calls.append(("admin", estado, limit, offset, medico_registro))
+        rows = [
+            replace(
+                row,
+                paciente_id=f"pid-{row.patient_user}",
+                paciente_nombre=f"Name {row.patient_user}",
+                medico_id=f"mid-{row.doctor_user}",
+                medico_nombre=f"Dr. {row.doctor_user}",
+                medico_registro=f"REG-{row.doctor_user}",
+            )
+            for row in self.rows
+            if medico_registro is None or medico_registro in f"REG-{row.doctor_user}"
+        ]
+        return self._page(rows, estado, limit, offset)
+
     @staticmethod
     def _page(rows, estado, limit, offset):
         matching = [row for row in rows if estado is None or row.estado == estado]
@@ -110,6 +131,9 @@ PROFILES = {
     "tok-doctor-2": _profile(OTHER_DOCTOR, {"MEDICO"}),
     "tok-lab": _profile(LAB, {"LABORATORISTA"}),
     "tok-medico-sin-perfil": _profile("doctor-without-profile", {"MEDICO"}),
+    "tok-admin": _profile(
+        "admin-user", {"ADMINISTRADOR"}, frozenset({"citas.revisar_cancelaciones"})
+    ),
 }
 
 
@@ -343,3 +367,47 @@ def test_cancel_route_still_lets_only_the_owner_cancel(store: ListingStore) -> N
     assert intruder.status_code == 403
     assert owner.status_code == 200
     assert owner.get_json()["estado"] == "CANCELADA"
+
+
+# ---------- admin listing for cancellation review ----------
+
+
+def test_admin_with_citas_revisar_cancelaciones_can_list_all_appointments(
+    client: FlaskClient, store: ListingStore
+) -> None:
+    row_1 = _row(PATIENT_A, DOCTOR)
+    row_2 = _row(PATIENT_B, OTHER_DOCTOR)
+    store.rows = [row_1, row_2]
+
+    response = client.get(PATH, headers=_auth("tok-admin"))
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data["items"]) == 2
+    ids = {item["id"] for item in data["items"]}
+    assert ids == {row_1.id, row_2.id}
+    # Carries patient and doctor details
+    first = data["items"][0]
+    assert "paciente" in first
+    assert "medico" in first
+    assert "registro_profesional" in first["medico"]
+
+
+def test_admin_can_filter_appointments_by_doctor_registration_number(
+    client: FlaskClient, store: ListingStore
+) -> None:
+    row_1 = _row(PATIENT_A, DOCTOR)
+    row_2 = _row(PATIENT_B, OTHER_DOCTOR)
+    store.rows = [row_1, row_2]
+
+    response = client.get(
+        PATH,
+        query_string={"medico_registro": f"REG-{DOCTOR}"},
+        headers=_auth("tok-admin"),
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == row_1.id
+    assert data["items"][0]["medico"]["registro_profesional"] == f"REG-{DOCTOR}"

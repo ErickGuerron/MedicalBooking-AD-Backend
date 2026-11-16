@@ -134,6 +134,13 @@ def list_services() -> tuple[Response, int]:
     return jsonify(items=[_catalog_service_json(item) for item in items]), 200
 
 
+@catalog_bp.get("/public/services")
+def list_public_services() -> tuple[Response, int]:
+    """The active services for the public landing: the same fields as GET /services, no session."""
+    items = _service().list_public_services()
+    return jsonify(items=[_catalog_service_json(item) for item in items]), 200
+
+
 @catalog_bp.post("/specialties")
 @authenticated
 def create_specialty() -> tuple[Response, int]:
