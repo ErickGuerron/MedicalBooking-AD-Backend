@@ -237,6 +237,14 @@ def test_service_listing_shape(client) -> None:
     }
 
 
+def test_public_service_listing_needs_no_session_and_matches_the_session_listing(client) -> None:
+    public = client.get("/api/v1/public/services")
+    session = client.get("/api/v1/services", headers=_auth("tok-patient"))
+
+    assert public.status_code == 200
+    assert public.get_json() == session.get_json()
+
+
 WRITES = [
     ("post", "/api/v1/specialties", {"nombre": "Cardiologia"}),
     ("patch", "/api/v1/specialties/1", {"nombre": "Otra"}),
