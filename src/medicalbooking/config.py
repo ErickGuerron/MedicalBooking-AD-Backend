@@ -52,8 +52,10 @@ class Settings(BaseSettings):
     loinc_password: SecretStr | None = None
     icd11_client_id: str | None = None
     icd11_client_secret: SecretStr | None = None
-    # Private PDF storage root (E3). Single-host only until shared storage exists (E7).
+    # Private PDF storage root (E3), used when DOCUMENT_STORAGE=local (single host only).
     lab_documents_dir: str = Field(default="storage/documents", min_length=1, max_length=260)
+    # Where PDFs are kept: "mongo" stores them in GridFS so every VM reads the same documents.
+    document_storage: Literal["local", "mongo"] = "local"
 
     # Transactional email for account verification (Brevo HTTP API). Secrets stay in
     # environment variables or the git-ignored .env file.
@@ -107,6 +109,16 @@ class Settings(BaseSettings):
         # HS256 needs at least 256 bits of entropy; shorter keys are brute-forceable.
         if self.jwt_signing_key is not None and len(self.jwt_signing_key.get_secret_value()) < 32:
             raise ValueError("JWT_SIGNING_KEY must be at least 32 characters")
+        return self
+
+    @model_validator(mode="after")
+    def _check_mongo_documents(self) -> Settings:
+        if self.document_storage == "mongo" and (
+            self.mongodb_projection_uri is None or not self.mongodb_database
+        ):
+            raise ValueError(
+                "DOCUMENT_STORAGE=mongo needs MONGODB_PROJECTION_URI and MONGODB_DATABASE"
+            )
         return self
 
     @model_validator(mode="after")

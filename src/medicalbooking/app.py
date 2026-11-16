@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, g, jsonify, request
@@ -40,8 +39,8 @@ from medicalbooking.modules.interoperability.application.laboratory_status impor
 )
 from medicalbooking.modules.interoperability.presentation.soap import soap_bp
 from medicalbooking.modules.laboratory.application.use_cases import LabService
+from medicalbooking.modules.laboratory.infrastructure.mongo_storage import document_storage_for
 from medicalbooking.modules.laboratory.infrastructure.repositories import SqlLabStore
-from medicalbooking.modules.laboratory.infrastructure.storage import LocalDocumentStorage
 from medicalbooking.modules.laboratory.presentation.openapi import laboratory_fragment
 from medicalbooking.modules.laboratory.presentation.routes import lab_bp
 from medicalbooking.modules.payments.application.billing_service import BillingService
@@ -187,7 +186,7 @@ def _build_laboratory(settings: Settings, engine: Any) -> LabService:
     """Composition root for laboratory: SQL store plus private local document storage."""
     return LabService(
         store=SqlLabStore(engine),
-        storage=LocalDocumentStorage(Path(settings.lab_documents_dir)),
+        storage=document_storage_for(settings),
         clock=lambda: datetime.now(UTC),
         correlation_id=lambda: g.get("correlation_id"),
     )
