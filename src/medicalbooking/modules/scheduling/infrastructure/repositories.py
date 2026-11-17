@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import IntegrityError
 
+from medicalbooking.modules.laboratory.application.ports import AuditEvent
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
     AppointmentSummary,
@@ -290,21 +291,24 @@ class SqlSchedulingStore:
         return found is not None
 
     def list_patient_appointments(self, patient_user_id, estado, limit, offset):
-        return self._list_summaries(_PATIENT_SOURCE, patient_user_id, estado, limit, offset)
+        return self._list_summaries(
+            _PATIENT_SOURCE, patient_user_id, estado, limit, offset, with_medico=True
+        )
 
     def list_agenda_appointments(self, doctor_user_id, estado, limit, offset):
         return self._list_summaries(
             _AGENDA_SOURCE, doctor_user_id, estado, limit, offset, with_patient=True
         )
 
-    def list_admin_appointments(
+    def list_cancellation_candidates(
         self,
         estado: str | None,
         limit: int,
         offset: int,
         medico_registro: str | None = None,
     ) -> list[AppointmentSummary]:
-        sql = _ADMIN_SUMMARY_SELECT + _ADMIN_SOURCE
+        """Doctor identity only: no patient and no doctor phone are selected."""
+        sql = _CANDIDATE_SELECT + _CANDIDATE_SOURCE
         params: dict[str, object] = {
             "saltar": offset,
             "cantidad": limit,
@@ -313,8 +317,8 @@ class SqlSchedulingStore:
             sql += "AND c.estado = :estado "
             params["estado"] = estado
         if medico_registro:
-            sql += "AND (m.registro_profesional LIKE :reg OR mu.telefono LIKE :reg) "
-            params["reg"] = f"%{medico_registro}%"
+            sql += "AND m.registro_profesional = :reg "
+            params["reg"] = medico_registro
         sql += "ORDER BY h.inicio_utc, c.id OFFSET :saltar ROWS FETCH NEXT :cantidad ROWS ONLY"
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql), params).all()
@@ -324,20 +328,46 @@ class SqlSchedulingStore:
                 estado=row.estado,
                 inicio_utc=_utc_aware(row.inicio_utc),
                 fin_utc=_utc_aware(row.fin_utc),
-                paciente_id=_canonical(row.paciente_id),
-                paciente_nombre=f"{row.paciente_nombre} {row.paciente_apellido}".strip(),
                 medico_id=_canonical(row.medico_id),
                 medico_nombre=f"{row.medico_nombre} {row.medico_apellido}".strip(),
                 medico_registro=row.medico_registro,
-                medico_telefono=row.medico_telefono,
                 tiene_aprobacion=bool(row.tiene_aprobacion),
             )
             for row in rows
         ]
 
-    def _list_summaries(self, source: str, user_id, estado, limit, offset, with_patient=False):
-        """A patient's listing selects no patient columns; the doctor's agenda adds the patient."""
-        sql = (_AGENDA_SUMMARY_SELECT if with_patient else _SUMMARY_SELECT) + source
+    def record_audit(self, event: AuditEvent) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO auditoria_accesos (id, usuario_id, paciente_id, entidad, "
+                    "entidad_id, accion, fecha_evento, resultado) "
+                    "VALUES (:id, :u, :p, :entidad, :entidad_id, :accion, :ahora, :resultado)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "u": event.actor_user_id,
+                    "p": event.paciente_id,
+                    "entidad": event.entidad,
+                    "entidad_id": event.entidad_id,
+                    "accion": event.accion,
+                    "ahora": _utc_naive(event.occurred_at),
+                    "resultado": event.resultado,
+                },
+            )
+
+    def _list_summaries(
+        self, source: str, user_id, estado, limit, offset, with_patient=False, with_medico=False
+    ):
+        """A patient's listing carries the doctor of each row (contact data); the doctor's agenda
+        adds the patient. Nothing else is selected."""
+        if with_patient:
+            select = _AGENDA_SUMMARY_SELECT
+        elif with_medico:
+            select = _PATIENT_SUMMARY_SELECT
+        else:
+            select = _SUMMARY_SELECT
+        sql = select + source
         params: dict[str, object] = {
             "usuario": str(user_id),
             "saltar": offset,
@@ -361,6 +391,16 @@ class SqlSchedulingStore:
                         "paciente_nombre": f"{row.paciente_nombre} {row.paciente_apellido}".strip(),
                     }
                     if with_patient
+                    else {}
+                ),
+                **(
+                    {
+                        "medico_id": _canonical(row.medico_id),
+                        "medico_nombre": f"{row.medico_nombre} {row.medico_apellido}".strip(),
+                        "medico_registro": row.medico_registro,
+                        "medico_telefono": row.medico_telefono,
+                    }
+                    if with_medico
                     else {}
                 ),
             )
@@ -728,17 +768,18 @@ _AGENDA_SUMMARY_SELECT = (
     "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc, c.paciente_id, "
     "pu.nombre AS paciente_nombre, pu.apellido AS paciente_apellido "
 )
-_ADMIN_SUMMARY_SELECT = (
-    "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc, c.paciente_id, "
-    "pu.nombre AS paciente_nombre, pu.apellido AS paciente_apellido, "
-    "m.id AS medico_id, mu.nombre AS medico_nombre, mu.apellido AS medico_apellido, "
-    "m.registro_profesional AS medico_registro, mu.telefono AS medico_telefono, "
-    "CASE WHEN acm.id IS NOT NULL THEN 1 ELSE 0 END AS tiene_aprobacion "
+# Patient listing: the doctor of each row, for contact. Ownership: citas.paciente_id -> pacientes.
+_PATIENT_SUMMARY_SELECT = (
+    "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc, m.id AS medico_id, "
+    "mu.nombre AS medico_nombre, mu.apellido AS medico_apellido, "
+    "m.registro_profesional AS medico_registro, mu.telefono AS medico_telefono "
 )
-# Patient ownership: citas.paciente_id -> pacientes.usuario_id.
 _PATIENT_SOURCE = (
     "FROM citas c JOIN pacientes p ON p.id = c.paciente_id "
-    "JOIN horarios_disponibles h ON h.id = c.horario_id WHERE p.usuario_id = :usuario "
+    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+    "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
+    "JOIN usuarios mu ON mu.id = m.usuario_id "
+    "WHERE p.usuario_id = :usuario "
 )
 # Agenda ownership: slot -> agenda -> medico -> usuario.
 _AGENDA_SOURCE = (
@@ -747,12 +788,17 @@ _AGENDA_SOURCE = (
     "JOIN pacientes pa ON pa.id = c.paciente_id JOIN usuarios pu ON pu.id = pa.usuario_id "
     "WHERE m.usuario_id = :usuario "
 )
-# Admin listing: all appointments across doctors and patients with approval status.
-_ADMIN_SOURCE = (
+# Cancellation review: the doctor's identity and approval status only. No patient, no phone.
+_CANDIDATE_SELECT = (
+    "SELECT c.id, c.estado, h.inicio_utc, h.fin_utc, m.id AS medico_id, "
+    "mu.nombre AS medico_nombre, mu.apellido AS medico_apellido, "
+    "m.registro_profesional AS medico_registro, "
+    "CASE WHEN acm.id IS NOT NULL THEN 1 ELSE 0 END AS tiene_aprobacion "
+)
+_CANDIDATE_SOURCE = (
     "FROM citas c JOIN horarios_disponibles h ON h.id = c.horario_id "
     "JOIN agendas a ON a.id = h.agenda_id JOIN medicos m ON m.id = a.medico_id "
     "JOIN usuarios mu ON mu.id = m.usuario_id "
-    "JOIN pacientes pa ON pa.id = c.paciente_id JOIN usuarios pu ON pu.id = pa.usuario_id "
     "LEFT JOIN aprobaciones_cancelacion_medico acm ON acm.cita_id = c.id "
     "WHERE 1=1 "
 )

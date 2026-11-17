@@ -29,6 +29,7 @@ EXPECTED_PATHS = {
     "/api/v1/services",
     "/api/v1/services/{servicio_id}",
     "/api/v1/appointments",
+    "/api/v1/appointments/cancellation-approvals",
     "/api/v1/appointments/{appointment_id}/cancel",
     "/api/v1/appointments/{appointment_id}/consultation",
     "/api/v1/appointments/{appointment_id}/consultation/close",

@@ -268,8 +268,36 @@ def list_appointments() -> tuple[Response, int]:
     items = _service().list_appointments(
         g.actor,
         estado=request.args.get("estado"),
-        medico_registro=request.args.get("medico_registro"),
         limit=_int_query("limit", DEFAULT_PAGE_SIZE),
         offset=_int_query("offset", 0),
     )
     return jsonify(items=[_summary_json(item) for item in items]), 200
+
+
+@scheduling_bp.get("/appointments/cancellation-approvals")
+@authenticated
+def list_cancellation_candidates() -> tuple[Response, int]:
+    """Cancellation review (administrator): doctor identity only, no patient, no phone."""
+    items = _service().list_cancellation_candidates(
+        g.actor,
+        estado=request.args.get("estado"),
+        medico_registro=request.args.get("medico_registro"),
+        limit=_int_query("limit", DEFAULT_PAGE_SIZE),
+        offset=_int_query("offset", 0),
+    )
+    return jsonify(items=[_candidate_json(item) for item in items]), 200
+
+
+def _candidate_json(appointment: AppointmentSummary) -> dict[str, Any]:
+    return {
+        "id": appointment.id,
+        "estado": appointment.estado,
+        "inicio": appointment.inicio_utc.isoformat(),
+        "fin": appointment.fin_utc.isoformat(),
+        "tiene_aprobacion": appointment.tiene_aprobacion,
+        "medico": {
+            "id": appointment.medico_id,
+            "nombre": appointment.medico_nombre,
+            "registro_profesional": appointment.medico_registro,
+        },
+    }
