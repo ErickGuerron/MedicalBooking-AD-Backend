@@ -1,1 +1,3 @@
 analito_id,pmid,unidad,minimo,maximo,sexo,edad_min_dias,edad_max_dias,metodo,tipo_muestra,contexto,fecha_inicio,fecha_fin
+a0000000-0000-4000-8000-00000000b003,11368702,mg/dL,,199.99,,6570,,,suero,,2026-11-17,
+a0000000-0000-4000-8000-00000000b004,11368702,mg/dL,,149.99,,6570,,,suero,AYUNO,2026-11-17,
