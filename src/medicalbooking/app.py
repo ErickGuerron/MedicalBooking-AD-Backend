@@ -63,6 +63,10 @@ from medicalbooking.modules.replica.infrastructure.factory import (
     build_fallback_read_service,
 )
 from medicalbooking.modules.replica.presentation.routes import replica_bp
+from medicalbooking.modules.reporting.application.use_cases import ReportingService
+from medicalbooking.modules.reporting.infrastructure.repositories import SqlReportingStore
+from medicalbooking.modules.reporting.presentation.openapi import reporting_fragment
+from medicalbooking.modules.reporting.presentation.routes import reporting_bp
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
@@ -97,6 +101,9 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.catalog"] = CatalogService(SqlCatalogStore(engine))
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
     app.extensions["medicalbooking.treatments"] = _build_treatments(engine)
+    app.extensions["medicalbooking.reporting"] = ReportingService(
+        SqlReportingStore(engine), clock=_utc_now
+    )
     app.extensions["medicalbooking.laboratory_status"] = LaboratoryStatusService(
         orders=app.extensions["medicalbooking.laboratory"], clock=_utc_now
     )
@@ -129,6 +136,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(clinical_bp)
     app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
     app.register_blueprint(replica_bp)
+    app.register_blueprint(reporting_bp)
     if settings.docs_enabled:
         register_api_docs(
             app,
@@ -140,6 +148,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 treatments_fragment(),
                 clinical_fragment(),
                 payments_fragment(),
+                reporting_fragment(),
             ],
         )
     _register_error_handlers(app)
