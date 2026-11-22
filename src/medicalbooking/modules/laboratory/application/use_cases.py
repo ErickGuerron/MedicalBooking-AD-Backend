@@ -31,6 +31,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     PatientSummary,
     ReportParties,
     ResultEntry,
+    ResultReview,
     StoredDocument,
 )
 from medicalbooking.modules.laboratory.domain.policies import (
@@ -70,6 +71,9 @@ _NO_DOCTOR_PROFILE = "A doctor profile is required for this action"
 PATIENT_NOT_AVAILABLE = "PATIENT_NOT_AVAILABLE"
 PATIENT_ACCOUNT_INACTIVE = "PATIENT_ACCOUNT_INACTIVE"
 DOCTOR_PROFILE_REQUIRED = "DOCTOR_PROFILE_REQUIRED"
+
+
+READINGS = frozenset({"BAJO", "DENTRO_REFERENCIA", "ALTO", "NO_EVALUABLE"})
 
 
 class DocumentIntegrityError(AppError):
@@ -250,6 +254,8 @@ class LabService:
             raise Conflict("Every test needs its results before the order can be confirmed")
         if status == "ALREADY_CONFIRMED":
             raise Conflict("This order is already confirmed")
+        if status == "PENDING_REVIEW":
+            raise Conflict("Read the interpretation of every result before confirming the order")
         self._audit(actor, None, "orden_laboratorio", order_id, "confirmar")
         self._store_generated_report(actor, order_id)
 
@@ -396,6 +402,48 @@ class LabService:
             )
         return classified
 
+    def review_results(
+        self, actor: AccessProfile, order_id: str, reviews: list[ResultReview]
+    ) -> None:
+        """The laboratory reads each result before confirming: it confirms the system's reading
+        or sets another one with a reason. Every reading is kept; the latest one is effective.
+        """
+        _require(actor, PERM_RESULT_REGISTER)
+        order = self._store.get_order(order_id)
+        if order is None:
+            raise NotFound("Order not found")
+        if not reviews:
+            raise ValidationFailed("At least one result reading is required")
+        ids = [review.resultado_id for review in reviews]
+        if len(set(ids)) != len(ids):
+            raise ValidationFailed("Each result is read once per request")
+        current = {result.id: result for result in self._store.list_results(order_id)}
+        corrected_ids: set[str] = set()
+        for review in reviews:
+            result = current.get(review.resultado_id)
+            if result is None:
+                raise NotFound("Result not found in this order")
+            if review.interpretacion_final not in READINGS:
+                raise ValidationFailed("Unknown interpretation")
+            system_reading = result.interpretacion_sistema or "NO_EVALUABLE"
+            if review.interpretacion_final != system_reading:
+                if not (review.motivo or "").strip():
+                    raise ValidationFailed("A corrected interpretation needs a reason")
+                corrected_ids.add(review.resultado_id)
+
+        status = self._store.review_results(order_id, reviews, self._clock(), actor.user_id)
+        if status == "NOT_FOUND":
+            raise NotFound("Order not found")
+        if status == "ALREADY_CONFIRMED":
+            raise Conflict("This order is confirmed and can no longer change")
+        if status == "RESULT_NOT_FOUND":
+            raise NotFound("Result not found in this order")
+        for review in reviews:
+            action = "corregir" if review.resultado_id in corrected_ids else "revisar"
+            self._audit(
+                actor, order.paciente_id, "resultado_laboratorio", review.resultado_id, action
+            )
+
     def report_parties(self, actor: AccessProfile, order_id: str) -> ReportParties:
         """Who the report is about, for the readers allowed to see the order."""
         order = self._readable_order(actor, order_id)
@@ -414,7 +462,13 @@ class LabService:
         return parties
 
     def list_results(self, actor: AccessProfile, order_id: str) -> list[LabResult]:
-        order = self._readable_order(actor, order_id)
+        # The laboratory reads the results it registers and reviews, but not the rest of the order.
+        if PERM_RESULT_REGISTER in actor.permissions:
+            order = self._store.get_order(order_id)
+            if order is None:
+                raise Forbidden(_FORBIDDEN)
+        else:
+            order = self._readable_order(actor, order_id)
         results = self._store.list_results(order.id)
         self._audit(actor, order.paciente_id, "resultado_laboratorio", order.id, "consultar")
         return results

@@ -148,6 +148,13 @@ class _Transaction:
                 ),
             )
 
+    def update_result_reading(self, resultado_id: str, interpretacion: str) -> None:
+        self._cur.execute(
+            "UPDATE replica.resultados_laboratorio SET interpretacion = %s, actualizado_en = now() "
+            "WHERE id = %s",
+            (interpretacion, resultado_id),
+        )
+
     def upsert_proposal(self, propuesta: dict[str, Any], hallazgos: list[dict[str, Any]]) -> None:
         self._cur.execute(
             "INSERT INTO replica.propuestas_clinicas (id, orden_id, estado, resumen_propuesto, "

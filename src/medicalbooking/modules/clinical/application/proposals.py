@@ -41,6 +41,9 @@ class ProposalService:
             raise Forbidden(_FORBIDDEN)
         if order.estado != "COMPLETADA":
             raise Conflict("The order results must be complete before evaluation")
+        # Confirming the order requires every result to be read, so this covers the reviews too.
+        if not order.confirmada:
+            raise Conflict("The laboratory must confirm the order before the proposal is evaluated")
 
         now = self._clock()
         evaluation = evaluate(list(order.results), self._store.validated_rules(now))

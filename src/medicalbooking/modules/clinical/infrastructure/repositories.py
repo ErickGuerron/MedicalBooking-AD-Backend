@@ -422,7 +422,13 @@ class SqlClinicalStore:
             header = conn.execute(
                 text(
                     "SELECT o.id, o.estado, o.paciente_id, pa.usuario_id AS paciente_user_id, "
-                    "me.usuario_id AS medico_user_id FROM ordenes_laboratorio o "
+                    "me.usuario_id AS medico_user_id, o.confirmada_en, "
+                    "(SELECT COUNT(*) FROM resultados_laboratorio rp "
+                    "JOIN ordenes_laboratorio_detalle dp ON dp.id = rp.detalle_orden_id "
+                    "WHERE dp.orden_id = o.id AND NOT EXISTS ("
+                    "SELECT 1 FROM resultados_laboratorio_revisiones vp "
+                    "WHERE vp.resultado_id = rp.id)) AS revisiones_pendientes "
+                    "FROM ordenes_laboratorio o "
                     "JOIN pacientes pa ON pa.id = o.paciente_id "
                     "JOIN medicos me ON me.id = o.medico_id WHERE o.id = :o"
                 ),
@@ -432,10 +438,14 @@ class SqlClinicalStore:
                 return None
             rows = conn.execute(
                 text(
-                    "SELECT r.id, r.analito_id, r.valor_numerico, r.unidad, r.interpretacion, "
+                    "SELECT r.id, r.analito_id, r.valor_numerico, r.unidad, "
+                    "COALESCE(rv.interpretacion_final, r.interpretacion) AS interpretacion, "
                     "r.contexto_muestra "
                     "FROM resultados_laboratorio r "
                     "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                    "OUTER APPLY (SELECT TOP 1 v.interpretacion_final FROM "
+                    "resultados_laboratorio_revisiones v WHERE v.resultado_id = r.id "
+                    "ORDER BY v.revisado_en DESC) rv "
                     "WHERE d.orden_id = :o ORDER BY r.id"
                 ),
                 {"o": guid},
@@ -446,6 +456,8 @@ class SqlClinicalStore:
             paciente_id=_canonical(header.paciente_id),
             paciente_user_id=_canonical(header.paciente_user_id),
             medico_user_id=_canonical(header.medico_user_id),
+            revisiones_pendientes=header.revisiones_pendientes,
+            confirmada=header.confirmada_en is not None,
             results=tuple(
                 ResultInput(
                     resultado_id=_canonical(row.id),

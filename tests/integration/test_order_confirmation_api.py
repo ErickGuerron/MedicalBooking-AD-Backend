@@ -49,9 +49,33 @@ def _confirm(app: Flask, order_id: str, headers):
     return app.test_client().post(f"/api/v1/lab/orders/{order_id}/confirm", headers=headers)
 
 
+def _read_all(app: Flask, engine: Engine, order_id: str) -> None:
+    """The laboratory reads every result and confirms the system's reading (required to confirm)."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT r.id, r.interpretacion FROM resultados_laboratorio r "
+                "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                "WHERE d.orden_id = :o"
+            ),
+            {"o": order_id},
+        ).all()
+    reviews = [
+        {"resultado_id": str(row.id), "interpretacion_final": row.interpretacion or "NO_EVALUABLE"}
+        for row in rows
+    ]
+    response = app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/results/review",
+        json={"revisiones": reviews},
+        headers=_lab_headers(app, engine),
+    )
+    assert response.status_code == 200, response.get_json()
+
+
 def _completed_order(app: Flask, engine: Engine) -> str:
     order_id, _ = _patient_request(app, engine)
     _complete(app, order_id, _lab_headers(app, engine))
+    _read_all(app, engine, order_id)
     return order_id
 
 
@@ -129,6 +153,7 @@ def test_only_the_laboratory_confirms(app, engine, role) -> None:
 def test_the_patient_still_reads_the_results_after_confirmation(app, engine) -> None:
     order_id, patient_headers = _patient_request(app, engine)
     _complete(app, order_id, _lab_headers(app, engine))
+    _read_all(app, engine, order_id)
     _confirm(app, order_id, _lab_headers(app, engine))
 
     results = app.test_client().get(
