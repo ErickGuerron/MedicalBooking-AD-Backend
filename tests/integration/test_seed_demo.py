@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import Engine, text
 from sqlalchemy.engine import URL
 
@@ -45,9 +46,31 @@ EXPECTED_ROLES = {
 }
 
 
+_SQLSERVER_FIELDS = (
+    "host",
+    "port",
+    "username",
+    "password",
+    "driver",
+    "encrypt",
+    "trust_server_certificate",
+)
+
+
 def _set_environment(mp: pytest.MonkeyPatch, settings: Settings) -> None:
-    """Point the seed at the test database: the same name in the guard and in Settings."""
-    mp.delenv("APP_ENV", raising=False)
+    """Point the seed at the test database: the same name in the guard and in Settings.
+
+    The seed builds its Settings from the environment and from the application .env, which may
+    name a cloud server. Every SQLSERVER_* value is therefore set from the suite's own settings,
+    so the .env cannot redirect the seed to another server.
+    """
+    # The .env may set APP_ENV=production; the environment wins over it, so the suite pins it.
+    mp.setenv("APP_ENV", "local")
+    for field in _SQLSERVER_FIELDS:
+        value = getattr(settings, f"sqlserver_{field}")
+        if isinstance(value, SecretStr):
+            value = value.get_secret_value()
+        mp.setenv(f"SQLSERVER_{field.upper()}", str(value))
     mp.setenv("SQLSERVER_DATABASE", TEST_DATABASE)
     url = URL.create(
         "mssql+pyodbc",
