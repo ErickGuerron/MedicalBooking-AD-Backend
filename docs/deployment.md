@@ -77,7 +77,8 @@ dependency lives in the database and replicates to Supabase and Mongo, so no `.e
 the dependent service is missing or inactive, the invoice is refused (503).
 
 Lab PDFs are stored in MongoDB GridFS when `DOCUMENT_STORAGE=mongo`, so both VMs read the same documents.
-Set it in each VM's `.env` (the Mongo user of `MONGODB_PROJECTION_URI` needs `readWrite` on the database).
+Set it in each VM's `.env`, together with `MONGODB_DATABASE` and `MONGODB_DOCUMENTS_URI`: a Mongo user with `readWrite` on `fs.files` and `fs.chunks`. When `MONGODB_DOCUMENTS_URI` is unset, `MONGODB_PROJECTION_URI` is used and must hold those privileges (the projection role of this project does not).
+PDFs uploaded while the storage was `local` are not copied: their keys are file names, not GridFS ids.
 With `DOCUMENT_STORAGE=local` (the default), PDFs go to `LAB_DOCUMENTS_DIR`, which the image sets to
 `/app/data/documents`. Mount a persistent volume there on each VM (`docker run -v <name>:/app/data/documents ...`),
 or the files are lost when the container is recreated, and each VM keeps its own files.

@@ -38,7 +38,9 @@ Defaults target the local development instance.
 | `STRIPE_WEBHOOK_SECRET` | none | Signing secret of the webhook endpoint. Without it the webhook answers 503 |
 | `STRIPE_PUBLISHABLE_KEY` | none | Publishable key `pk_test_...` (public). Returned with every checkout so the browser can mount the embedded session. Checkout answers 503 without it |
 | `FLUTTER_FRONT_URL` | `http://localhost:8081` | Base of the checkout return pages `/pago/exito` and `/pago/cancelado` |
-| `LAB_DOCUMENTS_DIR` | `storage/documents` | Private folder for uploaded lab PDFs. Single host only until shared storage exists (E7). Never versioned |
+| `LAB_DOCUMENTS_DIR` | `storage/documents` | Private folder for uploaded lab PDFs when `DOCUMENT_STORAGE=local`. Single host only. Never versioned |
+| `DOCUMENT_STORAGE` | `local` | `mongo` stores lab PDFs in MongoDB GridFS so every VM reads the same files. Needs `MONGODB_DATABASE` and `MONGODB_DOCUMENTS_URI` |
+| `MONGODB_DOCUMENTS_URI` | unset | Mongo user with `readWrite` on `fs.files` and `fs.chunks`. Falls back to `MONGODB_PROJECTION_URI` when unset |
 | `API_DOCS_ENABLED` | unset | Unset: on outside `production`, off in `production`. Set `true` or `false` to override |
 
 ## Database migrations
