@@ -76,6 +76,9 @@ WHERE NOT EXISTS (SELECT 1 FROM [conocimiento_fuentes] WHERE [id] = N'F0000000-0
 INSERT INTO [conocimiento_fuentes] ([id], [codigo], [nombre], [organizacion], [url], [identificador_publicacion], [version_publicacion], [fecha_publicacion], [fecha_consulta], [licencia], [vigente])
 SELECT N'9824CE2F-37A9-43CA-B027-599A91EF67F8', N'MEDLINEPLUS', N'MedlinePlus Connect', N'U.S. National Library of Medicine', N'https://medlineplus.gov/', N'MedlinePlus Connect', NULL, NULL, CAST('2026-11-02 21:34:46.157962' AS datetime2), NULL, 1
 WHERE NOT EXISTS (SELECT 1 FROM [conocimiento_fuentes] WHERE [id] = N'9824CE2F-37A9-43CA-B027-599A91EF67F8');
+INSERT INTO [conocimiento_fuentes] ([id], [codigo], [nombre], [organizacion], [url], [identificador_publicacion], [version_publicacion], [fecha_publicacion], [fecha_consulta], [licencia], [vigente])
+SELECT N'F0000000-0000-4000-8000-00000000000B', N'MEDLINEPLUS-CSC-2024', N'Conteo sanguineo completo (CSC) prueba de sangre', N'U.S. National Library of Medicine, MedlinePlus (version en espanol)', N'https://medlineplus.gov/spanish/ency/article/003642.htm', NULL, N'Revision 2024-10-14', CAST('2024-10-14' AS date), CAST('2026-11-09 00:00:00' AS datetime2), NULL, 1
+WHERE NOT EXISTS (SELECT 1 FROM [conocimiento_fuentes] WHERE [id] = N'F0000000-0000-4000-8000-00000000000B');
 
 -- conocimiento_analitos
 INSERT INTO [conocimiento_analitos] ([id], [codigo_loinc], [nombre], [descripcion], [unidad_canonica], [tipo_valor], [activo], [creado_en], [actualizado_en])
