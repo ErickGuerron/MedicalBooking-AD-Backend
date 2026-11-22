@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from medicalbooking.modules.identity.application.ports import AccessProfile
+from medicalbooking.modules.laboratory.application.ports import AuditEvent
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
     AppointmentSummary,
@@ -264,29 +265,60 @@ class SchedulingService:
         estado: str | None,
         limit: int,
         offset: int,
-        medico_registro: str | None = None,
     ) -> list[AppointmentSummary]:
         """Appointments the actor owns: a patient's own, or those of the doctor's agenda.
 
         Patients are checked first, so a user with both roles sees only their own
         appointments as a patient. Any other actor is refused before paging is checked.
+        Administrators review cancellations through list_cancellation_candidates instead.
         """
         if ROLE_PATIENT in actor.roles:
             query = self._store.list_patient_appointments
         elif self._store.has_doctor_profile(actor.user_id):
             query = self._store.list_agenda_appointments
-        elif PERM_REVIEW_CANCELLATIONS in actor.permissions:
-
-            def query(_uid: str, est: str | None, lim: int, off: int) -> list[AppointmentSummary]:
-                return self._store.list_admin_appointments(
-                    est, lim, off, medico_registro=medico_registro
-                )
         else:
             raise Forbidden("Access to this resource is not allowed")
         validate_page(limit, offset)
         if estado is not None:
             validate_estado(estado)
         return query(actor.user_id, estado, limit, offset)
+
+    def list_cancellation_candidates(
+        self,
+        actor: AccessProfile,
+        *,
+        estado: str | None,
+        medico_registro: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[AppointmentSummary]:
+        """Appointments for the administrator's cancellation review: doctor identity only.
+
+        Every read and every denial is audited. A blank registration means no filter.
+        """
+        if PERM_REVIEW_CANCELLATIONS not in actor.permissions:
+            self._audit(actor, "DENEGADO")
+            raise Forbidden("Access to this resource is not allowed")
+        validate_page(limit, offset)
+        if estado is not None:
+            validate_estado(estado)
+        registration = (medico_registro or "").strip() or None
+        items = self._store.list_cancellation_candidates(estado, limit, offset, registration)
+        self._audit(actor, "OK")
+        return items
+
+    def _audit(self, actor: AccessProfile, resultado: str) -> None:
+        self._store.record_audit(
+            AuditEvent(
+                actor_user_id=actor.user_id,
+                paciente_id=None,
+                entidad="cita",
+                entidad_id=None,
+                accion="listar_revision_cancelacion",
+                resultado=resultado,
+                occurred_at=self._clock(),
+            )
+        )
 
     @staticmethod
     def _replay_or_conflict(

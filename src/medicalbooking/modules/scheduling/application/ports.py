@@ -7,6 +7,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Protocol
 
+from medicalbooking.modules.laboratory.application.ports import AuditEvent
+
 
 @dataclass(frozen=True)
 class AvailableSlot:
@@ -182,15 +184,18 @@ class SchedulingStore(Protocol):
         """One page of appointments booked on the doctor's own agendas."""
         ...
 
-    def list_admin_appointments(
+    def list_cancellation_candidates(
         self,
         estado: str | None,
         limit: int,
         offset: int,
         medico_registro: str | None = None,
     ) -> list[AppointmentSummary]:
-        """One page of appointments for administrative cancellation reviews."""
+        """One page of appointments for cancellation review. Doctor identity only: no patient
+        and no doctor phone are returned."""
         ...
+
+    def record_audit(self, event: AuditEvent) -> None: ...
 
     def reserve(self, command: ReserveCommand) -> ReserveOutcome: ...
 

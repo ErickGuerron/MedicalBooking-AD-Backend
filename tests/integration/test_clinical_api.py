@@ -53,8 +53,38 @@ def _lab_result(detail: str, *, value: float, analito: str | None = HB_SEEDED) -
     return {"detalle_id": detail, "resultados": [item]}
 
 
+def _read_results(app, engine, order_id: str) -> None:
+    """The laboratory reads every result and confirms the system's reading of each one."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT r.id, r.interpretacion FROM resultados_laboratorio r "
+                "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                "WHERE d.orden_id = :o"
+            ),
+            {"o": order_id},
+        ).all()
+    reviews = [
+        {"resultado_id": str(row.id), "interpretacion_final": row.interpretacion or "NO_EVALUABLE"}
+        for row in rows
+    ]
+    lab = _token(app, _user(engine, "LABORATORISTA"))
+    response = app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/results/review",
+        json={"revisiones": reviews},
+        headers=lab,
+    )
+    assert response.status_code == 200, response.get_json()
+
+
+def _confirm(app, engine, order_id: str) -> None:
+    lab = _token(app, _user(engine, "LABORATORISTA"))
+    response = app.test_client().post(f"/api/v1/lab/orders/{order_id}/confirm", headers=lab)
+    assert response.status_code == 200, response.get_json()
+
+
 def _complete(app, engine, *, value: float, analito: str | None = HB_SEEDED):
-    """Order -> results entered by the lab. Returns (order_id, patient, doctor_headers)."""
+    """Order -> results entered, read and confirmed by the lab (the proposal needs it)."""
     order_id, patient, _, doctor_headers = _order_for(app, engine)
     detail = _detail(app, order_id, doctor_headers)
     app.test_client().post(
@@ -62,7 +92,27 @@ def _complete(app, engine, *, value: float, analito: str | None = HB_SEEDED):
         json=_lab_result(detail, value=value, analito=analito),
         headers=_token(app, _user(engine, "LABORATORISTA")),
     )
+    _read_results(app, engine, order_id)
+    _confirm(app, engine, order_id)
     return order_id, patient, doctor_headers
+
+
+def test_a_read_but_unconfirmed_order_cannot_be_evaluated(app, engine) -> None:
+    order_id, _, _, doctor_headers = _order_for(app, engine)
+    detail = _detail(app, order_id, doctor_headers)
+    app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/results",
+        json=_lab_result(detail, value=11.0, analito=HB_SEEDED),
+        headers=_token(app, _user(engine, "LABORATORISTA")),
+    )
+    _read_results(app, engine, order_id)  # every result read, order not confirmed
+
+    response = app.test_client().post(
+        f"/api/v1/lab/orders/{order_id}/evaluate", headers=doctor_headers
+    )
+
+    assert response.status_code == 409
+    assert "confirm the order" in response.get_json()["detail"]
 
 
 def _proposal(app, order_id: str, headers):
@@ -293,6 +343,8 @@ def test_a_value_without_a_reference_for_its_unit_gives_sin_evidencia(app, engin
         },
         headers=_token(app, _user(engine, "LABORATORISTA")),
     )
+    _read_results(app, engine, order_id)
+    _confirm(app, engine, order_id)
 
     body = (
         app.test_client()
@@ -563,6 +615,8 @@ def test_glucose_outside_the_range_fires_the_seeded_fuera_rule(app, engine) -> N
         },
         headers=_token(app, _user(engine, "LABORATORISTA")),
     )
+    _read_results(app, engine, order_id)
+    _confirm(app, engine, order_id)
 
     body = (
         app.test_client()
@@ -591,6 +645,8 @@ def test_glucose_without_known_fasting_context_does_not_fire_the_fasting_rule(ap
         },
         headers=_token(app, _user(engine, "LABORATORISTA")),
     )
+    _read_results(app, engine, order_id)
+    _confirm(app, engine, order_id)
 
     body = (
         app.test_client()

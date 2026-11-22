@@ -73,6 +73,12 @@ def _resultado_registrado(envelope: dict[str, Any], tx: Any) -> None:
     tx.upsert_results(detalle["id"], payload.get("resultados", []))
 
 
+def _resultado_revisado(envelope: dict[str, Any], tx: Any) -> None:
+    # The laboratory's final reading of a result replaces the system's in the replica.
+    payload = envelope["payload"]
+    tx.update_result_reading(payload["resultado_id"], payload["interpretacion_final"])
+
+
 def _propuesta_revisada(envelope: dict[str, Any], tx: Any) -> None:
     payload = envelope["payload"]
     propuesta = payload["propuesta"]
@@ -196,6 +202,7 @@ _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
     "usuario.eliminado": _usuario_eliminado,
     "orden_laboratorio.creada": _orden_creada,
     "resultado_laboratorio.registrado": _resultado_registrado,
+    "resultado_laboratorio.revisado": _resultado_revisado,
     "propuesta.revisada": _propuesta_revisada,
     "factura.creada": _factura_creada,
     "pago.actualizado": _pago_actualizado,

@@ -7,9 +7,7 @@ Spanish accents render). Pure functions: the caller passes order, results and ti
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-
-from medicalbooking.modules.laboratory.application.ports import LabOrder, LabResult, ReportParties
+from datetime import timedelta, timezone
 
 # Ecuador has no daylight saving: a fixed UTC-5 offset is the local time of the clinic.
 ECUADOR = timezone(timedelta(hours=-5))
@@ -42,27 +40,6 @@ SEX = {"F": "Femenino", "M": "Masculino"}
 ORDER_LABEL = "Orden"
 
 
-def _birth(born, generated_at: datetime) -> str:
-    if born is None:
-        return "—"
-    years = (
-        generated_at.year
-        - born.year
-        - ((generated_at.month, generated_at.day) < (born.month, born.day))
-    )
-    return f"{born:%d/%m/%Y} ({years} años)"
-
-
-def _masked_document(value: str | None) -> str:
-    """Document type and the last four digits only: the PDF never prints the full cédula."""
-    if not value:
-        return "—"
-    kind, _, number = value.rpartition(" ")
-    visible = number[-4:] if len(number) > 4 else ""
-    hidden = "*" * max(len(number) - len(visible), 4)
-    return f"{kind} {hidden}{visible}".strip()
-
-
 ORDER_STATUS = {
     "SOLICITADA": "Solicitada",
     "EN_PROCESO": "En proceso",
@@ -76,32 +53,10 @@ def _number(value: float) -> str:
     return text.replace(".", ",")
 
 
-def _value(result: LabResult) -> str:
-    if result.valor_numerico is not None:
-        text = _number(result.valor_numerico)
-        return f"{text} {result.unidad}".strip() if result.unidad else text
-    return result.valor_texto or "—"
-
-
-def _reference(result: LabResult) -> str:
-    low, high = result.referencia_min, result.referencia_max
-    if low is None and high is None:
-        return "—"
-    unit = f" {result.unidad}" if result.unidad else ""
-    if low is not None and high is not None:
-        return f"{_number(low)} – {_number(high)}{unit}"
-    if low is not None:
-        return f"≥ {_number(low)}{unit}"
-    return f"≤ {_number(high)}{unit}"
-
-
 def _escape(text: str) -> str:
     """A PDF literal string: WinAnsi bytes, delimiters escaped, unknown glyphs as '?'."""
     raw = text.encode("cp1252", errors="replace").decode("cp1252")
     return raw.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
-OBSERVATION_CHARS = 98
 
 
 def _wrap(text: str, width: int) -> list[str]:
@@ -252,118 +207,3 @@ def _serialize(pages: list[_Page]) -> bytes:
         f"trailer\n<< /Size {len(objects) + 1} /Root {catalog} 0 R >>\nstartxref\n{xref}\n%%EOF\n"
     ).encode("latin-1")
     return bytes(out)
-
-
-def build_results_report(
-    order: LabOrder,
-    results: list[LabResult],
-    *,
-    parties: ReportParties,
-    generated_at: datetime,
-    status_label: str | None = None,
-) -> bytes:
-    """One PDF for the order: a branded header, then one table per test with its results."""
-    document = _Document()
-    page = document.page
-
-    local = generated_at.astimezone(ECUADOR)
-    # Header band.
-    page.rect(0, PAGE_H - 132, PAGE_W, 132, ORANGE)
-    page.rect(0, PAGE_H - 140, PAGE_W, 8, ORANGE_DEEP)
-    page.text(MARGIN, PAGE_H - 52, "MEDILO", 11, bold=True, color=WHITE)
-    page.text(MARGIN, PAGE_H - 86, "Resultados de laboratorio", 24, bold=True, color=WHITE)
-    page.text(
-        MARGIN,
-        PAGE_H - 108,
-        f"Orden {order.id[:8].upper()} · generado el {local:%d/%m/%Y %H:%M} (hora de Ecuador)",
-        10,
-        color=WHITE,
-    )
-
-    # Patient and requesting doctor, as on a real lab report.
-    y = PAGE_H - 170
-    card_h = 122
-    page.rect(MARGIN, y - card_h + 12, PAGE_W - 2 * MARGIN, card_h, TINT)
-    left, right = MARGIN + 16, MARGIN + 300
-    page.text(left, y - 4, "PACIENTE", 8, bold=True, color=MUTED)
-    page.text(left, y - 22, _clip(parties.patient_name, 40), 13, bold=True, color=SLATE)
-    rows = [
-        ("Documento", _masked_document(parties.patient_document)),
-        ("Fecha de nacimiento", _birth(parties.patient_birth_date, generated_at)),
-        ("Sexo", SEX.get(parties.patient_sex or "", "—")),
-        ("Correo", parties.patient_email or "—"),
-        ("Teléfono", parties.patient_phone or "—"),
-    ]
-    row_y = y - 40
-    for label, value in rows:
-        page.text(left, row_y, label, 8, bold=True, color=MUTED)
-        page.text(left + 110, row_y, _clip(value, 30), 9, color=SLATE)
-        row_y -= 15
-
-    page.text(right, y - 4, "MÉDICO SOLICITANTE", 8, bold=True, color=MUTED)
-    page.text(right, y - 22, _clip(parties.doctor_name or "—", 30), 13, bold=True, color=SLATE)
-    if parties.doctor_registration:
-        page.text(
-            right, y - 40, f"Registro profesional {parties.doctor_registration}", 9, color=MUTED
-        )
-
-    page.text(right, y - 74, "ORDEN", 8, bold=True, color=MUTED)
-    status = status_label or ORDER_STATUS.get(order.estado, order.estado)
-    page.text(right, y - 90, f"{ORDER_LABEL} {order.id[:8].upper()} · {status}", 9, color=SLATE)
-    prioridad = "Urgente" if order.prioridad == "URGENTE" else "Normal"
-    page.text(right, y - 104, f"Prioridad {prioridad.lower()}", 9, color=MUTED)
-    y -= card_h + 22
-
-    # Observations wrap over as many lines as they need, never cut short.
-    if order.observaciones:
-        page.text(MARGIN, y, "OBSERVACIONES", 8, bold=True, color=MUTED)
-        y -= 14
-        for line in _wrap(order.observaciones, OBSERVATION_CHARS):
-            if y < BOTTOM:
-                document.new_page()
-                page = document.page
-                y = PAGE_H - 60
-            page.text(MARGIN, y, line, 9.5, color=SLATE)
-            y -= 13
-        y -= 16
-
-    by_detail: dict[str, list[LabResult]] = {}
-    for result in results:
-        by_detail.setdefault(result.detalle_id, []).append(result)
-
-    columns = (MARGIN, 250.0, 362.0, 470.0)
-    if not results:
-        page.text(
-            MARGIN, y, "Todavía no hay resultados validados para esta orden.", 11, color=MUTED
-        )
-
-    for number, detail in enumerate(order.details, start=1):
-        rows = by_detail.get(detail.id, [])
-        if not rows:
-            continue
-        needed = 46 + 24 * len(rows)
-        if y - needed < BOTTOM:
-            document.new_page()
-            page = document.page
-            y = PAGE_H - 60
-        page.text(MARGIN, y, f"Prueba {number}", 13, bold=True, color=ORANGE)
-        y -= 16
-        page.hline(MARGIN, PAGE_W - MARGIN, y, ORANGE, 1.2)
-        y -= 14
-        for label, x in zip(("ANALITO", "RESULTADO", "REFERENCIA", "ESTADO"), columns, strict=True):
-            page.text(x, y, label, 8, bold=True, color=MUTED)
-        y -= 8
-        page.hline(MARGIN, PAGE_W - MARGIN, y, LINE)
-        y -= 16
-        for result in rows:
-            page.text(columns[0], y, _clip(result.nombre_analito, 34), 10, color=SLATE)
-            page.text(columns[1], y, _clip(_value(result), 22), 10, bold=True, color=SLATE)
-            page.text(columns[2], y, _clip(_reference(result), 20), 10, color=MUTED)
-            label, tone = INTERPRETATION.get(result.interpretacion or "", ("—", MUTED))
-            page.text(columns[3], y, label, 10, bold=True, color=tone)
-            y -= 8
-            page.hline(MARGIN, PAGE_W - MARGIN, y, LINE, 0.4)
-            y -= 16
-        y -= 14
-
-    return document.render()

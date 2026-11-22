@@ -95,15 +95,16 @@ def scheduling_fragment() -> dict[str, Any]:
                 "get": {
                     "tags": ["Scheduling"],
                     "operationId": "listAppointments",
-                    "summary": "List own appointments, doctor's agenda, or admin review listing",
+                    "summary": "List own appointments or the doctor's agenda",
                     "description": (
-                        "A patient sees own appointments; a doctor with a doctor profile sees "
-                        "appointments of his or her agenda; an actor with "
-                        "citas.revisar_cancelaciones sees appointments across agendas for "
-                        "cancellation review; any other caller gets 403. Ordered by slot start, "
-                        "then id. A doctor's rows also carry 'paciente' ({id, nombre}; id is the "
-                        "patient profile id used by lab orders); an admin's rows carry 'paciente' "
-                        "and 'medico' ({id, nombre}); a patient's own rows never do."
+                        "A patient sees own appointments; each row names its doctor in 'medico' "
+                        "({id, nombre, registro_profesional, telefono}) so the patient can contact "
+                        "them. A doctor with a doctor profile sees appointments of his or her "
+                        "agenda; each row names the patient in 'paciente' ({id, nombre}; id is the "
+                        "patient profile id used by lab orders). Any other caller gets 403, "
+                        "administrators included: cancellation review uses "
+                        "GET /api/v1/appointments/cancellation-approvals. Ordered by slot start, "
+                        "then id."
                     ),
                     "security": _BEARER,
                     "parameters": [
@@ -332,6 +333,64 @@ def scheduling_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/appointments/cancellation-approvals": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "listCancellationCandidates",
+                    "summary": "List appointments for cancellation review (administrator)",
+                    "description": (
+                        "Requires citas.revisar_cancelaciones. Each row carries the doctor's "
+                        "identity only: no patient and no doctor phone. Filter by the exact doctor "
+                        "registration number with medico_registro (blank means no filter). Every "
+                        "read and denial is audited."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "estado",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
+                        },
+                        {
+                            "name": "medico_registro",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "maxLength": 80},
+                        },
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                                "default": 50,
+                            },
+                        },
+                        {
+                            "name": "offset",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "default": 0,
+                            },
+                        },
+                    ],
+                    "responses": {
+                        "200": _json_response(
+                            "Appointments for cancellation review", "CancellationCandidateList"
+                        ),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks citas.revisar_cancelaciones"),
+                        "422": _problem("Invalid estado, medico_registro, limit or offset"),
+                    },
+                },
+            },
             "/api/v1/appointments/{appointment_id}/cancellation-approval": {
                 "post": {
                     "tags": ["Scheduling"],
@@ -417,11 +476,16 @@ def scheduling_fragment() -> dict[str, Any]:
                         },
                         "medico": {
                             "type": "object",
-                            "description": "Only on admin review listing rows (additive, optional)",
-                            "required": ["id", "nombre"],
+                            "description": (
+                                "The row's doctor, on a patient's own rows only (additive, "
+                                "optional). telefono is present when the doctor has one."
+                            ),
+                            "required": ["id", "nombre", "registro_profesional"],
                             "properties": {
                                 "id": {"type": "string", "format": "uuid"},
                                 "nombre": {"type": "string"},
+                                "registro_profesional": {"type": "string"},
+                                "telefono": {"type": "string"},
                             },
                         },
                         "tiene_aprobacion": {
@@ -441,6 +505,40 @@ def scheduling_fragment() -> dict[str, Any]:
                         "items": {
                             "type": "array",
                             "items": {"$ref": "#/components/schemas/AppointmentSummary"},
+                        }
+                    },
+                },
+                "CancellationCandidate": {
+                    "type": "object",
+                    "description": "Doctor identity only; no patient and no doctor phone.",
+                    "required": ["id", "estado", "inicio", "fin", "tiene_aprobacion", "medico"],
+                    "properties": {
+                        "id": {"type": "string", "format": "uuid"},
+                        "estado": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
+                        "inicio": {"type": "string", "format": "date-time"},
+                        "fin": {"type": "string", "format": "date-time"},
+                        "tiene_aprobacion": {
+                            "type": "boolean",
+                            "description": "True when cancellation approval is already registered",
+                        },
+                        "medico": {
+                            "type": "object",
+                            "required": ["id", "nombre", "registro_profesional"],
+                            "properties": {
+                                "id": {"type": "string", "format": "uuid"},
+                                "nombre": {"type": "string"},
+                                "registro_profesional": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+                "CancellationCandidateList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/CancellationCandidate"},
                         }
                     },
                 },

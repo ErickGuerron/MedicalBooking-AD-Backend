@@ -28,6 +28,15 @@ if not re.fullmatch(r"[A-Za-z0-9_]{1,100}", TEST_DATABASE):
     raise RuntimeError("MEDICALBOOKING_TEST_DATABASE must be a plain identifier")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _pin_app_env() -> Iterator[None]:
+    # Some migrations read Settings() (for example the shared test accounts, 0007), which takes
+    # APP_ENV from the application .env. A production .env would silently skip them.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("APP_ENV", "local")
+        yield
+
+
 @pytest.fixture(scope="session")
 def test_settings() -> Settings:
     # Never read the application .env here: it may point at a shared or cloud server. The suite

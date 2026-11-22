@@ -7,6 +7,7 @@ Authorization is per resource. A missing resource and a foreign one answer the s
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -15,6 +16,7 @@ from decimal import Decimal
 
 from medicalbooking.modules.clinical.domain.references import PatientContext, classify
 from medicalbooking.modules.identity.application.ports import AccessProfile
+from medicalbooking.modules.laboratory.application.order_report import render_order_report
 from medicalbooking.modules.laboratory.application.ports import (
     AuditEvent,
     DocumentStorage,
@@ -29,6 +31,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     PatientSummary,
     ReportParties,
     ResultEntry,
+    ResultReview,
     StoredDocument,
 )
 from medicalbooking.modules.laboratory.domain.policies import (
@@ -57,6 +60,7 @@ from medicalbooking.shared.domain.errors import (
     ValidationFailed,
 )
 
+_LOG = logging.getLogger(__name__)
 _FORBIDDEN = "Access to this resource is not allowed"
 # Unknown and unrelated patients share one refusal, so patient ids do not leak. A related
 # patient with an inactive account and an actor with the permission but no doctor profile
@@ -67,6 +71,9 @@ _NO_DOCTOR_PROFILE = "A doctor profile is required for this action"
 PATIENT_NOT_AVAILABLE = "PATIENT_NOT_AVAILABLE"
 PATIENT_ACCOUNT_INACTIVE = "PATIENT_ACCOUNT_INACTIVE"
 DOCTOR_PROFILE_REQUIRED = "DOCTOR_PROFILE_REQUIRED"
+
+
+READINGS = frozenset({"BAJO", "DENTRO_REFERENCIA", "ALTO", "NO_EVALUABLE"})
 
 
 class DocumentIntegrityError(AppError):
@@ -247,7 +254,48 @@ class LabService:
             raise Conflict("Every test needs its results before the order can be confirmed")
         if status == "ALREADY_CONFIRMED":
             raise Conflict("This order is already confirmed")
+        if status == "PENDING_REVIEW":
+            raise Conflict("Read the interpretation of every result before confirming the order")
         self._audit(actor, None, "orden_laboratorio", order_id, "confirmar")
+        self._store_generated_report(actor, order_id)
+
+    def _store_generated_report(self, actor: AccessProfile, order_id: str) -> None:
+        """Keep the final results PDF of a confirmed order next to its other documents.
+
+        The order is final once confirmed, so the report can no longer change. A failure here
+        (for example the document storage is down) never undoes the confirmation: the same PDF
+        is still served on demand by ``report.pdf``.
+        """
+        key: str | None = None
+        try:
+            content = render_order_report(self._store, order_id, self._clock())
+            order = self._store.get_order(order_id)
+            if content is None or order is None:
+                return
+            key = self._storage.save(content)
+            document = self._store.create_document(
+                NewDocument(
+                    document_id=str(uuid.uuid4()),
+                    paciente_id=order.paciente_id,
+                    orden_id=order.id,
+                    subido_por_user_id=actor.user_id,
+                    nombre_archivo=f"resultados-{order.id[:8]}.pdf",
+                    ruta_storage=key,
+                    hash_sha256=hashlib.sha256(content).hexdigest(),
+                    tipo_mime="application/pdf",
+                    tamano_bytes=len(content),
+                    tipo_documento="INFORME_LABORATORIO",
+                )
+            )
+        except Exception:
+            _LOG.exception("Results PDF of confirmed order %s was not stored", order_id)
+            if key is not None:
+                try:
+                    self._storage.delete(key)
+                except Exception:
+                    _LOG.exception("Orphan results PDF %s could not be removed", key)
+            return
+        self._audit(actor, order.paciente_id, "documento_clinico", document.id, "generar")
 
     def list_test_analytes(self, actor: AccessProfile, test_id: str) -> list[LabTestAnalyte]:
         """The analytes a test asks for, for the laboratory entering its results."""
@@ -354,6 +402,48 @@ class LabService:
             )
         return classified
 
+    def review_results(
+        self, actor: AccessProfile, order_id: str, reviews: list[ResultReview]
+    ) -> None:
+        """The laboratory reads each result before confirming: it confirms the system's reading
+        or sets another one with a reason. Every reading is kept; the latest one is effective.
+        """
+        _require(actor, PERM_RESULT_REGISTER)
+        order = self._store.get_order(order_id)
+        if order is None:
+            raise NotFound("Order not found")
+        if not reviews:
+            raise ValidationFailed("At least one result reading is required")
+        ids = [review.resultado_id for review in reviews]
+        if len(set(ids)) != len(ids):
+            raise ValidationFailed("Each result is read once per request")
+        current = {result.id: result for result in self._store.list_results(order_id)}
+        corrected_ids: set[str] = set()
+        for review in reviews:
+            result = current.get(review.resultado_id)
+            if result is None:
+                raise NotFound("Result not found in this order")
+            if review.interpretacion_final not in READINGS:
+                raise ValidationFailed("Unknown interpretation")
+            system_reading = result.interpretacion_sistema or "NO_EVALUABLE"
+            if review.interpretacion_final != system_reading:
+                if not (review.motivo or "").strip():
+                    raise ValidationFailed("A corrected interpretation needs a reason")
+                corrected_ids.add(review.resultado_id)
+
+        status = self._store.review_results(order_id, reviews, self._clock(), actor.user_id)
+        if status == "NOT_FOUND":
+            raise NotFound("Order not found")
+        if status == "ALREADY_CONFIRMED":
+            raise Conflict("This order is confirmed and can no longer change")
+        if status == "RESULT_NOT_FOUND":
+            raise NotFound("Result not found in this order")
+        for review in reviews:
+            action = "corregir" if review.resultado_id in corrected_ids else "revisar"
+            self._audit(
+                actor, order.paciente_id, "resultado_laboratorio", review.resultado_id, action
+            )
+
     def report_parties(self, actor: AccessProfile, order_id: str) -> ReportParties:
         """Who the report is about, for the readers allowed to see the order."""
         order = self._readable_order(actor, order_id)
@@ -372,7 +462,13 @@ class LabService:
         return parties
 
     def list_results(self, actor: AccessProfile, order_id: str) -> list[LabResult]:
-        order = self._readable_order(actor, order_id)
+        # The laboratory reads the results it registers and reviews, but not the rest of the order.
+        if PERM_RESULT_REGISTER in actor.permissions:
+            order = self._store.get_order(order_id)
+            if order is None:
+                raise Forbidden(_FORBIDDEN)
+        else:
+            order = self._readable_order(actor, order_id)
         results = self._store.list_results(order.id)
         self._audit(actor, order.paciente_id, "resultado_laboratorio", order.id, "consultar")
         return results

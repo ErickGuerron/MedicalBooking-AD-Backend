@@ -1,0 +1,31 @@
+"""Laboratory review of result interpretations: append-only readings and the corrections view.
+
+Revision ID: 0038_result_review
+Revises: 0037_lipid_profile_analytes
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from alembic import op
+
+from medicalbooking.shared.infrastructure.tsql import split_batches
+
+revision = "0038_result_review"
+down_revision = "0037_lipid_profile_analytes"
+branch_labels = None
+depends_on = None
+
+_SQL_FILE = Path(__file__).resolve().parents[1] / "sql" / "0038_result_review.sql"
+
+
+def upgrade() -> None:
+    connection = op.get_bind()
+    for batch in split_batches(_SQL_FILE.read_text(encoding="utf-8")):
+        connection.exec_driver_sql(batch)
+
+
+def downgrade() -> None:
+    # shortcut: the review history is clinical record; it is kept on downgrade.
+    pass

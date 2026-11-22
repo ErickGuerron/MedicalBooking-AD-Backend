@@ -17,9 +17,10 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabTestType,
     PatientSummary,
     ResultEntry,
+    ResultReview,
     StoredDocument,
 )
-from medicalbooking.modules.laboratory.application.results_report import build_results_report
+from medicalbooking.modules.laboratory.application.results_pdf import build_results_report
 from medicalbooking.modules.laboratory.application.use_cases import LabService
 from medicalbooking.modules.laboratory.domain.policies import MAX_PDF_BYTES, MAX_TESTS_PER_ORDER
 from medicalbooking.shared.domain.errors import ValidationFailed
@@ -74,6 +75,21 @@ class RecordResultsRequest(BaseModel):
 
     detalle_id: uuid.UUID
     resultados: list[ResultItem] = Field(min_length=1, max_length=50)
+
+
+class ResultReviewItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resultado_id: uuid.UUID
+    interpretacion_final: Literal["BAJO", "DENTRO_REFERENCIA", "ALTO", "NO_EVALUABLE"]
+    # Required when the reading differs from the system's.
+    motivo: str | None = Field(default=None, max_length=1000)
+
+
+class ReviewResultsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revisiones: list[ResultReviewItem] = Field(min_length=1, max_length=200)
 
 
 class ReviewRequest(BaseModel):
@@ -191,6 +207,10 @@ def _result_json(result: LabResult) -> dict[str, Any]:
         "referencia_min": result.referencia_min,
         "referencia_max": result.referencia_max,
         "interpretacion": result.interpretacion,
+        "interpretacion_sistema": result.interpretacion_sistema,
+        "revisado": result.revisado,
+        "corregido": result.corregido,
+        "motivo_correccion": result.motivo_correccion,
     }
 
 
@@ -338,6 +358,23 @@ def results_report(order_id: uuid.UUID) -> Response:
 def list_results(order_id: uuid.UUID) -> tuple[Response, int]:
     results = _service().list_results(g.actor, str(order_id))
     return jsonify(items=[_result_json(item) for item in results]), 200
+
+
+@lab_bp.post("/lab/orders/<uuid:order_id>/results/review")
+@authenticated
+def review_results(order_id: uuid.UUID) -> tuple[Response, int]:
+    """The laboratory reads each result before confirming: confirms or corrects with a reason."""
+    body = _parse(ReviewResultsRequest)
+    reviews = [
+        ResultReview(
+            resultado_id=str(item.resultado_id),
+            interpretacion_final=item.interpretacion_final,
+            motivo=item.motivo,
+        )
+        for item in body.revisiones
+    ]
+    _service().review_results(g.actor, str(order_id), reviews)
+    return jsonify(orden_id=str(order_id), revisados=len(reviews)), 200
 
 
 @lab_bp.post("/lab/orders/<uuid:order_id>/review")

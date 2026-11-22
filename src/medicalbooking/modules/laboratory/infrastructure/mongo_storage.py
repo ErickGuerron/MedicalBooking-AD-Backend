@@ -4,8 +4,9 @@ The local directory store (``storage.py``) keeps each PDF on the disk of the hos
 it, so a second VM cannot serve it. GridFS keeps the bytes in the database, which both VMs read.
 The SQL row keeps the GridFS file id as its storage key, never a client-supplied path.
 
-Deployment note: the Mongo user behind ``MONGODB_PROJECTION_URI`` needs ``readWrite`` on the
-database, because GridFS writes the ``fs.files`` and ``fs.chunks`` collections.
+Deployment note: the Mongo user behind ``MONGODB_DOCUMENTS_URI`` (or, when unset,
+``MONGODB_PROJECTION_URI``) needs ``readWrite`` on the database, because GridFS writes the
+``fs.files`` and ``fs.chunks`` collections.
 """
 
 from __future__ import annotations
@@ -76,11 +77,8 @@ def build_document_storage(
 
 def document_storage_for(settings: Settings) -> LocalDocumentStorage | MongoDocumentStorage:
     """The storage the composition roots (API and workers) use for PDFs."""
-    uri = (
-        settings.mongodb_projection_uri.get_secret_value()
-        if settings.mongodb_projection_uri
-        else None
-    )
+    secret = settings.mongodb_documents_uri or settings.mongodb_projection_uri
+    uri = secret.get_secret_value() if secret else None
     return build_document_storage(
         settings.document_storage,
         root=Path(settings.lab_documents_dir),
