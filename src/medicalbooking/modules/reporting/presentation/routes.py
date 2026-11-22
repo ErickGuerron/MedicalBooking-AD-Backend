@@ -15,6 +15,7 @@ from medicalbooking.modules.reporting.application.ports import (
     ReportSummary,
 )
 from medicalbooking.modules.reporting.application.use_cases import ReportingService
+from medicalbooking.modules.reporting.domain.policies import PERM_REPORTS_READ, require_permission
 from medicalbooking.shared.domain.errors import ValidationFailed
 
 reporting_bp = Blueprint("reporting", __name__, url_prefix="/api/v1/admin")
@@ -81,6 +82,8 @@ def _monitoring_json(report: MonitoringReport) -> dict[str, object]:
 @reporting_bp.get("/reportes/resumen")
 @authenticated
 def reports_summary() -> tuple[Response, int]:
+    # Permission first: a caller without reportes.leer gets 403 whatever the query string holds.
+    require_permission(g.actor.permissions, PERM_REPORTS_READ)
     summary = _service().summary(g.actor, desde=_date_query("desde"), hasta=_date_query("hasta"))
     return jsonify(_summary_json(summary)), 200
 

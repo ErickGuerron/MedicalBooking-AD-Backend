@@ -72,6 +72,14 @@ def test_patient_is_refused_both_reports(app: Flask, engine: Engine) -> None:
     assert monitoring.status_code == 403
 
 
+def test_patient_without_the_permission_gets_403_even_without_dates(
+    app: Flask, engine: Engine
+) -> None:
+    headers = _token(app, _user(engine, "PACIENTE"))
+    response = app.test_client().get(SUMMARY, headers=headers)
+    assert response.status_code == 403
+
+
 def test_summary_refuses_a_period_that_ends_before_it_starts(app: Flask, engine: Engine) -> None:
     headers = _token(app, _user(engine, "ADMINISTRADOR"))
     response = app.test_client().get(
