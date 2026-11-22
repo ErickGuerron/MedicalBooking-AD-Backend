@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from medicalbooking.modules.laboratory.application.ports import LabStore, ReportParties
-from medicalbooking.modules.laboratory.application.results_report import build_results_report
+from medicalbooking.modules.laboratory.application.results_pdf import build_results_report
 
 
 def render_order_report(store: LabStore, order_id: str, generated_at: datetime) -> bytes | None:

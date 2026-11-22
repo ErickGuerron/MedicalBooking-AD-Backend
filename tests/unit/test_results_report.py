@@ -11,7 +11,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabResult,
     ReportParties,
 )
-from medicalbooking.modules.laboratory.application.results_report import build_results_report
+from medicalbooking.modules.laboratory.application.results_pdf import build_results_report
 
 ORDER_ID = "11111111-2222-3333-4444-555555555555"
 NOW = datetime(2026, 11, 14, 12, 0, tzinfo=UTC)
@@ -110,8 +110,9 @@ def test_report_shows_the_order_results_references_and_classification() -> None:
         "Resultados de laboratorio",
         "Prueba 1",
         "Hemoglobina",
-        "10,4 g/dL",
-        "12 – 16 g/dL",
+        "10,4",
+        "g/dL",
+        "12 \u2013 16",
         "Bajo",
         "Ferritina",
         "normal",
@@ -126,8 +127,9 @@ def test_results_are_grouped_by_test_and_pages_are_counted() -> None:
     text = _text(build_results_report(_order(3), results, parties=_parties(), generated_at=NOW))
 
     assert "Prueba 1" in text and "Prueba 3" in text
-    assert "/Count 2" in text  # 36 rows do not fit one page
-    assert "Página 1 de 2" in text
+    pages = int(re.search(r"/Count (\d+)", text).group(1))
+    assert pages >= 2  # 36 rows do not fit one page
+    assert f"gina 1 de {pages}" in text
 
 
 def test_order_without_results_still_gives_a_readable_report() -> None:
@@ -171,3 +173,79 @@ def test_report_time_is_ecuador_local_time_not_utc() -> None:
     assert _in_pdf(pdf, "generado el 14/11/2026 07:00 ")
     assert _in_pdf(pdf, "hora de Ecuador")
     assert not _in_pdf(pdf, "12:00")
+
+
+def _named_order() -> LabOrder:
+    return LabOrder(
+        id=ORDER_ID,
+        paciente_id="p",
+        paciente_user_id="u",
+        medico_id="m",
+        medico_user_id="mu",
+        prioridad="URGENTE",
+        estado="COMPLETADA",
+        observaciones=None,
+        details=(
+            LabDetail(
+                id="d0", tipo_prueba_id="t", estado="COMPLETADO", nombre="Hemograma completo"
+            ),
+            LabDetail(id="d1", tipo_prueba_id="t", estado="COMPLETADO", nombre="Glucosa en ayunas"),
+        ),
+    )
+
+
+def test_each_test_section_carries_the_name_of_the_test() -> None:
+    pdf = build_results_report(
+        _named_order(),
+        [_result("d0", "Hemoglobina"), _result("d1", "Glucosa", unidad="mg/dL")],
+        parties=_parties(),
+        generated_at=NOW,
+    )
+
+    assert _in_pdf(pdf, "Prueba 1")
+    assert _in_pdf(pdf, "Hemograma completo")
+    assert _in_pdf(pdf, "Prueba 2")
+    assert _in_pdf(pdf, "Glucosa en ayunas")
+
+
+def test_the_table_has_the_columns_of_a_clinical_report() -> None:
+    pdf = build_results_report(
+        _order(1), [_result("d0", "Hemoglobina")], parties=_parties(), generated_at=NOW
+    )
+
+    for column in ("EXAMEN", "RESULTADO", "UNIDAD", "VALORES DE REFERENCIA", "INTERPRETACI"):
+        assert _in_pdf(pdf, column), column
+
+
+def test_the_report_closes_with_a_clinical_note_and_signature_lines() -> None:
+    pdf = build_results_report(
+        _order(1), [_result("d0", "Hemoglobina")], parties=_parties(), generated_at=NOW
+    )
+
+    assert _in_pdf(pdf, "no constituye un diagn")
+    assert _in_pdf(pdf, "Responsable del laboratorio")
+    assert _in_pdf(pdf, "M\u00e9dico solicitante")
+
+
+def test_continuation_pages_repeat_the_patient_and_order() -> None:
+    results = [_result(f"d{i}", f"Analito {i}-{n}") for i in range(3) for n in range(12)]
+
+    pdf = build_results_report(_order(3), results, parties=_parties(), generated_at=NOW)
+
+    name = _parties().patient_name.encode("cp1252").decode("latin-1")
+    assert _text(pdf).count(name) >= 2
+    assert _text(pdf).count("11111111") >= 2
+
+
+def test_contact_data_stays_out_of_the_document() -> None:
+    pdf = build_results_report(_order(1), [], parties=_parties(), generated_at=NOW)
+
+    assert not _in_pdf(pdf, "maria@test.test")
+    assert not _in_pdf(pdf, "0999999999")
+
+
+def test_the_brand_and_the_issuer_appear_in_the_document() -> None:
+    pdf = build_results_report(_order(1), [], parties=_parties(), generated_at=NOW)
+
+    assert _in_pdf(pdf, "Medilo")
+    assert _in_pdf(pdf, "Medilo Inc.")

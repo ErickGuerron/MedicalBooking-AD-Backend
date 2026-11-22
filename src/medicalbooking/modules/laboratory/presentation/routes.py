@@ -19,7 +19,7 @@ from medicalbooking.modules.laboratory.application.ports import (
     ResultEntry,
     StoredDocument,
 )
-from medicalbooking.modules.laboratory.application.results_report import build_results_report
+from medicalbooking.modules.laboratory.application.results_pdf import build_results_report
 from medicalbooking.modules.laboratory.application.use_cases import LabService
 from medicalbooking.modules.laboratory.domain.policies import MAX_PDF_BYTES, MAX_TESTS_PER_ORDER
 from medicalbooking.shared.domain.errors import ValidationFailed
