@@ -107,8 +107,8 @@ def test_report_shows_the_order_results_references_and_classification() -> None:
     )
 
     for expected in (
-        "Resultados de laboratorio",
-        "Prueba 1",
+        "Informe de resultados de laboratorio",
+        "Examen 1",
         "Hemoglobina",
         "10,4",
         "g/dL",
@@ -126,7 +126,7 @@ def test_results_are_grouped_by_test_and_pages_are_counted() -> None:
 
     text = _text(build_results_report(_order(3), results, parties=_parties(), generated_at=NOW))
 
-    assert "Prueba 1" in text and "Prueba 3" in text
+    assert "Examen 1" in text and "Examen 3" in text
     pages = int(re.search(r"/Count (\d+)", text).group(1))
     assert pages >= 2  # 36 rows do not fit one page
     assert f"gina 1 de {pages}" in text
@@ -202,10 +202,9 @@ def test_each_test_section_carries_the_name_of_the_test() -> None:
         generated_at=NOW,
     )
 
-    assert _in_pdf(pdf, "Prueba 1")
     assert _in_pdf(pdf, "Hemograma completo")
-    assert _in_pdf(pdf, "Prueba 2")
     assert _in_pdf(pdf, "Glucosa en ayunas")
+    assert not _in_pdf(pdf, "Examen 1")
 
 
 def test_the_table_has_the_columns_of_a_clinical_report() -> None:
@@ -225,6 +224,25 @@ def test_the_report_closes_with_a_clinical_note_and_signature_lines() -> None:
     assert _in_pdf(pdf, "no constituye un diagn")
     assert _in_pdf(pdf, "Responsable del laboratorio")
     assert _in_pdf(pdf, "M\u00e9dico solicitante")
+
+
+def test_the_report_states_that_it_holds_health_data() -> None:
+    pdf = build_results_report(_order(1), [], parties=_parties(), generated_at=NOW)
+
+    assert _in_pdf(pdf, "datos de salud")
+    assert _in_pdf(pdf, "Protecci\u00f3n de Datos Personales")
+
+
+def test_only_the_minimum_patient_data_is_printed() -> None:
+    pdf = build_results_report(_order(1), [], parties=_parties(), generated_at=NOW)
+
+    # Age and sex stay (the reference values depend on them); birth date and registration do not.
+    assert _in_pdf(pdf, "34 a\u00f1os")
+    assert _in_pdf(pdf, "Femenino")
+    assert not _in_pdf(pdf, "14/05/1992")
+    assert not _in_pdf(pdf, "MSP-1234")
+    assert not _in_pdf(pdf, "Registro profesional")
+    assert not _in_pdf(pdf, "Fecha de nacimiento")
 
 
 def test_continuation_pages_repeat_the_patient_and_order() -> None:

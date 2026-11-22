@@ -1,12 +1,13 @@
-"""The laboratory results report, laid out like a clinical lab report in the Medilo style.
+"""The laboratory results report: a formal clinical document that gives the space to the results.
 
-Structure of a common lab report: who the result is about and who requested it, then one table
-per test (exam, result, unit, reference values, interpretation), a clinical note and the lines
-for the signatures. The look is the app's: the orange wave with the brand mark, navy outlines
-with the offset shadow, and tinted table headers (the same pieces as the invoice PDF).
+Only the data needed to identify the report and read the results is printed: the patient's name,
+the document number masked to its last four digits, age and sex (which the reference values depend
+on), the requesting doctor's name, the observations of the order, and the results themselves.
+Contact details, birth date, registration numbers and the order status are not printed (data
+minimisation under the Ley Orgánica de Protección de Datos Personales).
 
-No external PDF library; drawing operators and the standard Helvetica fonts (see
-``results_report`` for the primitives). Pure functions: the caller passes order, results and time.
+No external PDF library; drawing operators and the standard Helvetica fonts (see ``results_report``
+for the primitives). Pure functions: the caller passes order, results and time.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from medicalbooking.modules.laboratory.application.ports import (
 )
 from medicalbooking.modules.laboratory.application.results_report import (
     ECUADOR,
-    ORDER_STATUS,
     PAGE_H,
     PAGE_W,
     SEX,
@@ -31,69 +31,67 @@ from medicalbooking.modules.laboratory.application.results_report import (
     _wrap,
 )
 from medicalbooking.modules.payments.application.invoice_report import (
-    HEADER_EDGE,
     INK,
-    ISSUER_LINES,
     ISSUER_NAME,
-    MARGIN,
     MUTED,
     NAVY,
-    ORANGE,
     RULE,
-    SHADOW,
-    TINT,
-    WAVE,
-    WHITE,
     Sheet,
-    brand_mark,
     masked_document,
 )
 
+MARGIN = 44.0
 CONTENT_W = PAGE_W - 2 * MARGIN
 FOOTER_TOP = 58.0
 # Lowest baseline of the body; the footer sits below it.
 BOTTOM = 76.0
-ROW_H = 24.0
+ROW_H = 30.0
+HEAD_FILL = (0xF1, 0xF3, 0xF8)
 
-ZEBRA = (0xF8, 0xFA, 0xFC)
-HEAD_FILL = (0xEE, 0xF1, 0xF7)
-SUCCESS = (0x15, 0x80, 0x3D)
-WARNING = (0x92, 0x40, 0x0E)
-DANGER = (0xB9, 0x1C, 0x1C)
-
-# Interpretation label, text colour and the soft fill of its tag.
-INTERPRETATION = {
-    "BAJO": ("Bajo", WARNING, (0xFE, 0xF3, 0xC7)),
-    "ALTO": ("Alto", DANGER, (0xFE, 0xE2, 0xE2)),
-    "DENTRO_REFERENCIA": ("Dentro de rango", SUCCESS, (0xDC, 0xFC, 0xE7)),
-    "NO_EVALUABLE": ("No evaluable", MUTED, (0xEE, 0xF1, 0xF7)),
-}
-OUT_OF_RANGE = frozenset({"BAJO", "ALTO"})
 NOTE = (
     "Los valores de referencia dependen de la edad, el sexo y el método del laboratorio. "
-    "Este informe apoya la consulta con su médico y no constituye un diagnóstico por sí mismo."
+    "Este informe apoya la consulta con su médico y no constituye un diagnóstico por sí mismo. "
+    "Los datos personales y de salud se tratan conforme a la Ley Orgánica de Protección de Datos "
+    "Personales."
 )
-OBSERVATION_CHARS = 98
-NOTE_CHARS = 112
-EM_DASH = "\u2014"
+CONFIDENTIAL = (
+    "Documento confidencial con datos de salud. Uso limitado al paciente y personal autorizado."
+)
+OBSERVATION_CHARS = 110
+NOTE_CHARS = 120
+EM_DASH = "—"
 
-# Table columns: exam, result, unit, reference values, interpretation tag.
-COL_EXAM = MARGIN + 12
-COL_RESULT = 238.0
-COL_UNIT = 300.0
-COL_REFERENCE = 350.0
-COL_TAG = 458.0
+INTERPRETATION = {
+    "BAJO": "Bajo",
+    "ALTO": "Alto",
+    "DENTRO_REFERENCIA": "Dentro de rango",
+    "NO_EVALUABLE": "No evaluable",
+}
+OUT_OF_RANGE = frozenset({"BAJO", "ALTO"})
+
+# Result table columns, measured from the left margin.
+COL_EXAM = 6.0
+COL_RESULT = 186.0
+COL_UNIT = 262.0
+COL_REFERENCE = 320.0
+COL_TAG = 430.0
 
 
-def _birth(born, generated_at: datetime) -> str:
+def _age(born, generated_at: datetime) -> int | None:
     if born is None:
-        return EM_DASH
-    years = (
+        return None
+    return (
         generated_at.year
         - born.year
         - ((generated_at.month, generated_at.day) < (born.month, born.day))
     )
-    return f"{born:%d/%m/%Y} ({years} años)"
+
+
+def _age_and_sex(parties: ReportParties, generated_at: datetime) -> str:
+    age = _age(parties.patient_birth_date, generated_at)
+    sex = SEX.get(parties.patient_sex or "", "")
+    parts = [f"{age} años" if age is not None else "", sex]
+    return " · ".join(part for part in parts if part) or EM_DASH
 
 
 def _result_text(result: LabResult) -> str:
@@ -107,7 +105,7 @@ def _reference_text(result: LabResult) -> str:
     if low is None and high is None:
         return EM_DASH
     if low is not None and high is not None:
-        return f"{_number(low)} \u2013 {_number(high)}"
+        return f"{_number(low)} – {_number(high)}"
     if low is not None:
         return f">= {_number(low)}"
     return f"<= {_number(high)}"
@@ -124,113 +122,123 @@ class _Report:
         return self.pages[-1]
 
     def new_page(self) -> float:
-        """A continuation page: the slim brand band and who the report is about. Returns y."""
+        """A continuation page: a running header with who the report is about. Returns y."""
         self.pages.append(Sheet())
         page = self.page
-        page.box(0, PAGE_H - 14, PAGE_W, 14, fill=ORANGE)
-        page.text(MARGIN, PAGE_H - 38, "Medilo", 11, bold=True, color=NAVY)
+        page.text(MARGIN, PAGE_H - 40, "Medilo", 10, bold=True, color=NAVY)
         page.text(
-            MARGIN + 52,
-            PAGE_H - 38,
-            f"Resultados de laboratorio \u00b7 {_clip(self.parties.patient_name, 36)}"
-            f" \u00b7 Orden {self.order_code}",
-            9,
+            MARGIN + 44,
+            PAGE_H - 40,
+            f"Resultados de laboratorio · {_clip(self.parties.patient_name, 36)}"
+            f" · Orden {self.order_code}",
+            8.5,
             color=MUTED,
         )
         page.path(
-            (("m", MARGIN, PAGE_H - 48), ("l", PAGE_W - MARGIN, PAGE_H - 48)),
-            stroke=RULE,
-            width=0.6,
+            (("m", MARGIN, PAGE_H - 50), ("l", PAGE_W - MARGIN, PAGE_H - 50)),
+            stroke=NAVY,
+            width=0.8,
         )
         return PAGE_H - 72
 
     def render(self) -> bytes:
         total = len(self.pages)
         for number, page in enumerate(self.pages, start=1):
-            _footer(page, number, total)
+            _footer(page, number, total, self.order_code)
         return _serialize(self.pages)
 
 
-def _footer(page: Sheet, number: int, total: int) -> None:
+def _footer(page: Sheet, number: int, total: int, order_code: str) -> None:
     page.path((("m", MARGIN, FOOTER_TOP), ("l", PAGE_W - MARGIN, FOOTER_TOP)), stroke=RULE)
+    page.text(MARGIN, 44, CONFIDENTIAL, 7.5, color=MUTED)
     page.text(
-        MARGIN,
-        44,
-        f"{ISSUER_NAME} \u00b7 {ISSUER_LINES[0]} \u00b7 {ISSUER_LINES[1].split(' \u00b7 ')[0]}",
-        8,
-        color=MUTED,
+        MARGIN, 32, f"{ISSUER_NAME} · Laboratorio clínico · Orden {order_code}", 7.5, color=MUTED
     )
-    page.text(MARGIN, 32, "Documento generado por Medilo. Conserva este informe.", 8, color=MUTED)
-    page.text(PAGE_W - MARGIN - 70, 44, f"Página {number} de {total}", 8, color=MUTED)
+    page.text(PAGE_W - MARGIN - 60, 32, f"Página {number} de {total}", 7.5, color=MUTED)
 
 
 def _masthead(page: Sheet, order: LabOrder, generated_at: datetime) -> None:
-    """The orange wave with the brand mark, the title and when the report was generated."""
+    """A plain formal heading: the issuer, the report title and when it was generated."""
+    page.text(MARGIN, PAGE_H - 46, f"{ISSUER_NAME} · Laboratorio clínico", 9, bold=True, color=NAVY)
     page.path(
-        (("m", PAGE_W, PAGE_H), ("l", PAGE_W, HEADER_EDGE), *WAVE, ("l", 0, PAGE_H)),
-        fill=ORANGE,
+        (("m", MARGIN, PAGE_H - 56), ("l", PAGE_W - MARGIN, PAGE_H - 56)),
+        stroke=NAVY,
+        width=1.2,
     )
-    page.path((("m", PAGE_W, HEADER_EDGE), *WAVE), stroke=NAVY, width=1.2)
-    brand_mark(page, MARGIN, 748, 26)
-    page.text(MARGIN + 38, 752, "Medilo", 24, bold=True, color=NAVY)
-    page.text(MARGIN + 114, 752, ".", 24, bold=True, color=WHITE)
-    page.text(MARGIN + 38, 734, "Laboratorio clínico", 9, color=NAVY)
-
+    page.text(
+        MARGIN, PAGE_H - 84, "Informe de resultados de laboratorio", 17, bold=True, color=NAVY
+    )
     local = generated_at.astimezone(ECUADOR)
-    page.text(MARGIN, 656, "Resultados de laboratorio", 26, bold=True, color=NAVY)
     page.text(
         MARGIN,
-        634,
-        f"Orden {order.id[:8].upper()} \u00b7 generado el {local:%d/%m/%Y %H:%M} (hora de Ecuador)",
-        10,
+        PAGE_H - 102,
+        f"Orden {order.id[:8].upper()} · generado el {local:%d/%m/%Y %H:%M} (hora de Ecuador)",
+        9,
         color=INK,
     )
 
 
-def _label(page: Sheet, x: float, y: float, text: str) -> None:
-    page.text(x, y, text, 8.5, color=MUTED)
+def _pair(page: Sheet, x: float, y: float, label: str, value: str, *, bold: bool = False) -> None:
+    page.text(x, y, label, 7.5, color=MUTED)
+    page.text(x, y - 14, value, 10.5 if bold else 9.5, bold=bold, color=NAVY if bold else INK)
 
 
-def _patient_card(
+def _patient_block(
     page: Sheet, order: LabOrder, parties: ReportParties, generated_at: datetime, top: float
 ) -> float:
-    """Patient and requesting doctor in a navy-outlined card with the offset shadow."""
-    left, middle, right = MARGIN + 16, MARGIN + 186, MARGIN + 346
-    height = 138.0
+    """Who the report is about, as a plain two-by-two grid with thin rules."""
+    height = 80.0
     bottom = top - height
-    page.box(MARGIN + SHADOW, bottom - SHADOW, CONTENT_W, height, fill=NAVY)
-    page.box(MARGIN, bottom, CONTENT_W, height, fill=WHITE, stroke=NAVY)
+    page.box(MARGIN, bottom, CONTENT_W, height, stroke=RULE)
+    page.path(
+        (("m", MARGIN + CONTENT_W / 2, bottom), ("l", MARGIN + CONTENT_W / 2, top)),
+        stroke=RULE,
+        width=0.5,
+    )
+    page.path(
+        (("m", MARGIN, top - height / 2), ("l", PAGE_W - MARGIN, top - height / 2)),
+        stroke=RULE,
+        width=0.5,
+    )
 
-    _label(page, left, top - 22, "Paciente")
-    page.text(left, top - 40, _clip(parties.patient_name, 40), 13, bold=True, color=NAVY)
-    _label(page, right, top - 22, "Estado de la orden")
-    status = ORDER_STATUS.get(order.estado, order.estado)
-    page.text(right, top - 40, status, 10, bold=True, color=NAVY)
-
-    _label(page, left, top - 64, "Documento")
-    page.text(left, top - 78, masked_document(parties.patient_document), 10, color=INK)
-    _label(page, middle, top - 64, "Fecha de nacimiento")
-    page.text(middle, top - 78, _birth(parties.patient_birth_date, generated_at), 10, color=INK)
-    _label(page, right, top - 64, "Sexo")
-    page.text(right, top - 78, SEX.get(parties.patient_sex or "", EM_DASH), 10, color=INK)
-
-    _label(page, left, top - 102, "Médico solicitante")
-    page.text(left, top - 116, _clip(parties.doctor_name or EM_DASH, 32), 10, color=INK)
-    _label(page, middle, top - 102, "Registro profesional")
-    page.text(middle, top - 116, parties.doctor_registration or EM_DASH, 10, color=INK)
-    _label(page, right, top - 102, "Prioridad")
-    page.text(
-        right, top - 116, "Urgente" if order.prioridad == "URGENTE" else "Normal", 10, color=INK
+    left = MARGIN + 10
+    right = MARGIN + CONTENT_W / 2 + 10
+    _pair(page, left, top - 14, "Paciente", _clip(parties.patient_name, 42), bold=True)
+    _pair(
+        page, right, top - 14, "Documento de identidad", masked_document(parties.patient_document)
+    )
+    _pair(page, left, top - 14 - height / 2, "Edad y sexo", _age_and_sex(parties, generated_at))
+    _pair(
+        page,
+        right,
+        top - 14 - height / 2,
+        "Médico solicitante",
+        _clip(parties.doctor_name or EM_DASH, 36),
     )
     return bottom
 
 
-def _section_bar(page: Sheet, y: float, title: str) -> float:
-    """The test heading: a tinted bar with an orange stripe. Returns the y below it."""
-    page.box(MARGIN, y - ROW_H, CONTENT_W, ROW_H, fill=TINT)
-    page.box(MARGIN, y - ROW_H, 4, ROW_H, fill=ORANGE)
-    page.text(MARGIN + 14, y - 16, _clip(title, 70), 11, bold=True, color=NAVY)
-    return y - ROW_H
+def _observations(report: _Report, order: LabOrder, y: float) -> float:
+    """Observations wrap over as many lines as they need, never cut short."""
+    if not order.observaciones:
+        return y
+    page = report.page
+    page.text(MARGIN, y, "Observaciones", 7.5, color=MUTED)
+    y -= 13
+    for line in _wrap(order.observaciones, OBSERVATION_CHARS):
+        if y < BOTTOM:
+            y = report.new_page()
+            page = report.page
+        page.text(MARGIN, y, line, 9.5, color=INK)
+        y -= 13
+    return y - 10
+
+
+def _section_title(page: Sheet, y: float, title: str) -> float:
+    """The name of the test, bold, over a navy rule. Returns the y below it."""
+    page.text(MARGIN, y - 13, _clip(title, 80), 11, bold=True, color=NAVY)
+    page.path((("m", MARGIN, y - 19), ("l", PAGE_W - MARGIN, y - 19)), stroke=NAVY, width=0.8)
+    return y - 19
 
 
 def _table_head(page: Sheet, y: float) -> float:
@@ -242,74 +250,62 @@ def _table_head(page: Sheet, y: float) -> float:
         ("VALORES DE REFERENCIA", COL_REFERENCE),
         ("INTERPRETACIÓN", COL_TAG),
     ):
-        page.text(x, y - 14, text, 7.5, bold=True, color=NAVY)
+        page.text(MARGIN + x, y - 13, text, 7, bold=True, color=NAVY)
     return y - 20
 
 
-def _row(page: Sheet, y: float, result: LabResult, *, shaded: bool) -> float:
-    if shaded:
-        page.box(MARGIN, y - ROW_H, CONTENT_W, ROW_H, fill=ZEBRA)
-    label, tone, fill = INTERPRETATION.get(result.interpretacion or "", (EM_DASH, MUTED, None))
+def _row(page: Sheet, y: float, result: LabResult) -> float:
     flagged = result.interpretacion in OUT_OF_RANGE
-    page.text(COL_EXAM, y - 16, _clip(result.nombre_analito, 34), 10, color=INK)
+    label = INTERPRETATION.get(result.interpretacion or "", EM_DASH)
+    page.text(MARGIN + COL_EXAM, y - 19, _clip(result.nombre_analito, 34), 10.5, color=INK)
     page.text(
-        COL_RESULT,
-        y - 16,
+        MARGIN + COL_RESULT,
+        y - 19,
         _clip(_result_text(result), 14),
-        10.5,
+        10,
         bold=True,
-        color=tone if flagged else NAVY,
+        color=NAVY,
     )
-    page.text(COL_UNIT, y - 16, _clip(result.unidad or "", 9), 9, color=MUTED)
-    page.text(COL_REFERENCE, y - 16, _clip(_reference_text(result), 15), 10, color=INK)
-    if fill is not None:
-        page.box(COL_TAG, y - 19, PAGE_W - MARGIN - COL_TAG, 15, fill=fill)
-        page.text(COL_TAG + 5, y - 15, _clip(label, 17), 8, bold=True, color=tone)
-    else:
-        page.text(COL_TAG + 5, y - 15, label, 8, color=MUTED)
-    page.path((("m", MARGIN, y - ROW_H), ("l", PAGE_W - MARGIN, y - ROW_H)), stroke=RULE, width=0.4)
+    page.text(MARGIN + COL_UNIT, y - 19, _clip(result.unidad or "", 10), 9, color=MUTED)
+    page.text(MARGIN + COL_REFERENCE, y - 19, _clip(_reference_text(result), 16), 10, color=INK)
+    page.text(MARGIN + COL_TAG, y - 19, label, 9, bold=flagged, color=NAVY if flagged else MUTED)
+    page.path(
+        (("m", MARGIN, y - ROW_H), ("l", PAGE_W - MARGIN, y - ROW_H)),
+        stroke=RULE,
+        width=0.4,
+    )
     return y - ROW_H
 
 
 def _heading(detail: LabDetail, number: int) -> str:
-    return f"Prueba {number} \u00b7 {detail.nombre}" if detail.nombre else f"Prueba {number}"
+    return detail.nombre or f"Examen {number}"
 
 
-def _observations(report: _Report, order: LabOrder, y: float) -> float:
-    """Observations wrap over as many lines as they need, never cut short."""
-    if not order.observaciones:
-        return y
-    page = report.page
-    page.text(MARGIN, y, "Observaciones", 10, bold=True, color=NAVY)
-    y -= 15
-    for line in _wrap(order.observaciones, OBSERVATION_CHARS):
-        if y < BOTTOM:
-            y = report.new_page()
-            page = report.page
-        page.text(MARGIN, y, line, 9.5, color=INK)
-        y -= 13
-    return y - 14
-
-
-def _closing(report: _Report, y: float) -> None:
-    """The clinical note and the two signature lines, on a new page when they do not fit."""
+def _closing(report: _Report, y: float, corrected: int) -> None:
+    """The clinical note, the laboratory's corrections if any, and the signature lines."""
     note = _wrap(NOTE, NOTE_CHARS)
-    needed = 24 + 12 * len(note) + 70
+    if corrected:
+        note = note + _wrap(
+            f"El laboratorio revis? la interpretaci?n de {corrected} resultado(s) "
+            "y registr? el motivo de cada correcci?n.",
+            NOTE_CHARS,
+        )
+    needed = 24 + 12 * len(note) + 80
     if y - needed < BOTTOM:
         y = report.new_page()
     page = report.page
-    y -= 8
-    page.text(MARGIN, y, "Nota", 9, bold=True, color=NAVY)
-    y -= 14
+    y -= 10
+    page.text(MARGIN, y, "Nota", 8.5, bold=True, color=NAVY)
+    y -= 13
     for line in note:
         page.text(MARGIN, y, line, 8.5, color=MUTED)
         y -= 12
-    y -= 42
+    y -= 40
     half = (CONTENT_W - 40) / 2
     for index, caption in enumerate(("Responsable del laboratorio", "Médico solicitante")):
         x = MARGIN + index * (half + 40)
         page.path((("m", x, y), ("l", x + half, y)), stroke=NAVY, width=0.8)
-        page.text(x, y - 13, caption, 8.5, color=MUTED)
+        page.text(x, y - 13, caption, 8, color=MUTED)
 
 
 def build_results_report(
@@ -320,11 +316,11 @@ def build_results_report(
     generated_at: datetime,
     status_label: str | None = None,
 ) -> bytes:
-    """One PDF for the order: the branded masthead, the patient card, then a table per test."""
+    """One PDF for the order: the heading, the patient grid, then a table of results per test."""
     report = _Report(parties, order)
     page = report.page
     _masthead(page, order, generated_at)
-    y = _patient_card(page, order, parties, generated_at, 604) - 30
+    y = _patient_block(page, order, parties, generated_at, PAGE_H - 122) - 22
     y = _observations(report, order, y)
 
     by_detail: dict[str, list[LabResult]] = {}
@@ -333,7 +329,7 @@ def build_results_report(
 
     if not results:
         report.page.text(
-            MARGIN, y, "Todavía no hay resultados validados para esta orden.", 11, color=MUTED
+            MARGIN, y, "Todavía no hay resultados validados para esta orden.", 10.5, color=MUTED
         )
         y -= 20
 
@@ -341,18 +337,19 @@ def build_results_report(
         rows = by_detail.get(detail.id, [])
         if not rows:
             continue
-        # The heading, the column titles and the first row stay together.
-        if y - (ROW_H + 20 + ROW_H) < BOTTOM:
+        # The title, the column titles and the first row stay together.
+        if y - (19 + 20 + ROW_H) < BOTTOM:
             y = report.new_page()
         page = report.page
-        y = _table_head(page, _section_bar(page, y, _heading(detail, number)))
-        for index, result in enumerate(rows):
+        y = _table_head(page, _section_title(page, y, _heading(detail, number)))
+        for result in rows:
             if y - ROW_H < BOTTOM:
                 y = report.new_page()
                 page = report.page
                 y = _table_head(page, y)
-            y = _row(page, y, result, shaded=index % 2 == 1)
-        y -= 20
+            y = _row(page, y, result)
+        y -= 22
 
-    _closing(report, y)
+    corrected = sum(1 for result in results if result.corregido)
+    _closing(report, y, corrected)
     return report.render()
