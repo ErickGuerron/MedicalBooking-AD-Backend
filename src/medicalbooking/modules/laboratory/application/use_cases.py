@@ -7,6 +7,7 @@ Authorization is per resource. A missing resource and a foreign one answer the s
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -15,6 +16,7 @@ from decimal import Decimal
 
 from medicalbooking.modules.clinical.domain.references import PatientContext, classify
 from medicalbooking.modules.identity.application.ports import AccessProfile
+from medicalbooking.modules.laboratory.application.order_report import render_order_report
 from medicalbooking.modules.laboratory.application.ports import (
     AuditEvent,
     DocumentStorage,
@@ -57,6 +59,7 @@ from medicalbooking.shared.domain.errors import (
     ValidationFailed,
 )
 
+_LOG = logging.getLogger(__name__)
 _FORBIDDEN = "Access to this resource is not allowed"
 # Unknown and unrelated patients share one refusal, so patient ids do not leak. A related
 # patient with an inactive account and an actor with the permission but no doctor profile
@@ -248,6 +251,45 @@ class LabService:
         if status == "ALREADY_CONFIRMED":
             raise Conflict("This order is already confirmed")
         self._audit(actor, None, "orden_laboratorio", order_id, "confirmar")
+        self._store_generated_report(actor, order_id)
+
+    def _store_generated_report(self, actor: AccessProfile, order_id: str) -> None:
+        """Keep the final results PDF of a confirmed order next to its other documents.
+
+        The order is final once confirmed, so the report can no longer change. A failure here
+        (for example the document storage is down) never undoes the confirmation: the same PDF
+        is still served on demand by ``report.pdf``.
+        """
+        key: str | None = None
+        try:
+            content = render_order_report(self._store, order_id, self._clock())
+            order = self._store.get_order(order_id)
+            if content is None or order is None:
+                return
+            key = self._storage.save(content)
+            document = self._store.create_document(
+                NewDocument(
+                    document_id=str(uuid.uuid4()),
+                    paciente_id=order.paciente_id,
+                    orden_id=order.id,
+                    subido_por_user_id=actor.user_id,
+                    nombre_archivo=f"resultados-{order.id[:8]}.pdf",
+                    ruta_storage=key,
+                    hash_sha256=hashlib.sha256(content).hexdigest(),
+                    tipo_mime="application/pdf",
+                    tamano_bytes=len(content),
+                    tipo_documento="INFORME_LABORATORIO",
+                )
+            )
+        except Exception:
+            _LOG.exception("Results PDF of confirmed order %s was not stored", order_id)
+            if key is not None:
+                try:
+                    self._storage.delete(key)
+                except Exception:
+                    _LOG.exception("Orphan results PDF %s could not be removed", key)
+            return
+        self._audit(actor, order.paciente_id, "documento_clinico", document.id, "generar")
 
     def list_test_analytes(self, actor: AccessProfile, test_id: str) -> list[LabTestAnalyte]:
         """The analytes a test asks for, for the laboratory entering its results."""
