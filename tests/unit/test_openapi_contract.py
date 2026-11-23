@@ -42,6 +42,7 @@ EXPECTED_PATHS = {
     "/api/v1/lab/orders/{order_id}/results",
     "/api/v1/lab/orders/{order_id}/report.pdf",
     "/api/v1/lab/orders/{order_id}/review",
+    "/api/v1/lab/orders/{order_id}/results/review",
     "/api/v1/lab/orders/{order_id}/documents",
     "/api/v1/documents/{document_id}/download",
     "/api/v1/patients",
@@ -311,3 +312,22 @@ def test_scalar_reference_page_loads_the_document(client) -> None:
     assert response.mimetype == "text/html"
     assert "Scalar.createApiReference" in body
     assert "/api/v1/openapi.json" in body
+
+
+def test_result_review_is_documented_with_its_strict_request_schema(spec) -> None:
+    operation = spec["paths"]["/api/v1/lab/orders/{order_id}/results/review"]["post"]
+    schemas = spec["components"]["schemas"]
+
+    assert operation["operationId"] == "reviewLabResults"
+    assert {"200", "401", "403", "404", "422"} <= set(operation["responses"])
+    assert schemas["ReviewResultsRequest"]["required"] == ["revisiones"]
+    assert schemas["ReviewResultsRequest"]["additionalProperties"] is False
+    assert schemas["ResultReviewItem"]["additionalProperties"] is False
+
+
+def test_lab_result_documents_the_review_fields(spec) -> None:
+    properties = spec["components"]["schemas"]["LabResult"]["properties"]
+
+    assert {"interpretacion_sistema", "revisado", "corregido", "motivo_correccion"} <= set(
+        properties
+    )
