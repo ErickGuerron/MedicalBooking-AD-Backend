@@ -24,6 +24,8 @@ MOTIVO_TEXTO_MAX = 1500  # mirrors citas.motivo_cancelacion_texto nvarchar(1500)
 REASON_REQUIRED = "MOTIVO_CANCELACION_REQUERIDO"
 REASON_INVALID = "MOTIVO_CANCELACION_INVALIDO"
 MAX_WINDOW = timedelta(days=31)
+# Patients and doctors may cancel until one hour after the start; an approval cannot reopen it.
+CANCELLATION_WINDOW = timedelta(hours=1)
 # Appointments that still hold a slot. Mirrors the filtered unique index UX_citas_horario_activa.
 ACTIVE_STATES = frozenset({"PENDIENTE_PAGO", "CONFIRMADA"})
 # Mirrors the CK_citas_estado check constraint.
@@ -81,6 +83,12 @@ def validate_idempotency_key(key: str) -> None:
         raise ValidationFailed(
             "Idempotency-Key must be 8-100 characters: letters, digits, '.', '_', ':' or '-'"
         )
+
+
+def cancellation_window_closed(start_utc: datetime, now: datetime) -> bool:
+    """True once the cancellation window of an appointment has passed. Both datetimes must be of
+    the same kind: aware, or naive UTC as the SQL adapter reads them."""
+    return now > start_utc + CANCELLATION_WINDOW
 
 
 def validate_cancellation_reason(codigo: str | None, texto: str | None) -> None:

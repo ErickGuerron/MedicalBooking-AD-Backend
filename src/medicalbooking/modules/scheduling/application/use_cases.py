@@ -178,6 +178,8 @@ class SchedulingService:
             raise Forbidden("Access to this resource is not allowed")
         if outcome.status is CancelStatus.NOT_CANCELLABLE:
             raise Conflict("The appointment can no longer be cancelled")
+        if outcome.status is CancelStatus.WINDOW_CLOSED:
+            raise Conflict("The cancellation window closed one hour after the start")
         if outcome.status is CancelStatus.REQUIRES_APPROVAL:
             # Stable codes: the client matches them, so they are not translated.
             raise Conflict(",".join(outcome.blockers))
@@ -255,6 +257,8 @@ class SchedulingService:
             raise NotFound("Appointment not found")
         if status is ApprovalStatus.NOT_CANCELLABLE:
             raise Conflict("The appointment can no longer be cancelled")
+        if status is ApprovalStatus.WINDOW_CLOSED:
+            raise Conflict("The cancellation window closed one hour after the start")
         if status is ApprovalStatus.ALREADY_APPROVED:
             raise Conflict("The appointment already has an approval")
 
