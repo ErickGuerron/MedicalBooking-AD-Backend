@@ -74,6 +74,8 @@ def validate_result_values(
     if valor_numerico is not None:
         if not math.isfinite(valor_numerico):
             raise ValidationFailed("Numeric value must be finite")
+        if valor_numerico < 0:
+            raise ValidationFailed("Numeric value cannot be negative")
         if abs(Decimal(str(valor_numerico))) > _NUMERIC_LIMIT:
             raise ValidationFailed("Numeric value is out of range")
     if unidad is not None and len(unidad) > MAX_UNIT:

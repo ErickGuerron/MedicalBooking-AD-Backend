@@ -81,6 +81,20 @@ class SqlLabStore:
 
     # ---------- lookups ----------
 
+    def detail_has_analyte_results(self, detalle_id: str) -> bool:
+        detail = _as_guid(detalle_id)
+        if detail is None:
+            return False
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text(
+                    "SELECT TOP 1 1 FROM resultados_laboratorio "
+                    "WHERE detalle_orden_id = :d AND analito_id IS NOT NULL"
+                ),
+                {"d": detail},
+            ).first()
+        return found is not None
+
     def analyte_linked_to_test(self, analito_id: str, tipo_prueba_id: str) -> bool:
         analito, prueba = _as_guid(analito_id), _as_guid(tipo_prueba_id)
         if analito is None or prueba is None:

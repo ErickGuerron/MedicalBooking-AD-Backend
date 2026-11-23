@@ -207,6 +207,10 @@ class LabStore(Protocol):
         """True when the analyte is a part of this test (conocimiento_pruebas_analitos)."""
         ...
 
+    def detail_has_analyte_results(self, detalle_id: str) -> bool:
+        """True when this test already holds results entered per analyte (analito_id set)."""
+        ...
+
     def patient_profile(self, paciente_id: str) -> tuple[str | None, date | None]:
         """Return (sexo_registrado, fecha_nacimiento); None means unknown."""
         ...
