@@ -11,6 +11,7 @@ import pytest
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
+    ApprovalStatus,
     AvailableSlot,
     CancelCommand,
     CancelOutcome,
@@ -20,6 +21,7 @@ from medicalbooking.modules.scheduling.application.ports import (
     ReserveStatus,
 )
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
+from medicalbooking.modules.scheduling.domain.policies import cancellation_window_closed
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
 
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
@@ -51,6 +53,7 @@ class FakeStore:
     reserve_calls: int = 0
     taken: set[str] = field(default_factory=set)
     slot_id: str = ""
+    window_closed: bool = False
 
     def list_available(self, start, end, medico_id, limit, especialidad_id=None):
         return [
@@ -96,6 +99,8 @@ class FakeStore:
             return CancelOutcome(CancelStatus.NOT_FOUND_OR_FORBIDDEN, None)
         if appointment.estado not in ("PENDIENTE_PAGO", "CONFIRMADA"):
             return CancelOutcome(CancelStatus.NOT_CANCELLABLE, None)
+        if self.window_closed:
+            return CancelOutcome(CancelStatus.WINDOW_CLOSED, None)
         cancelled = Appointment(**{**appointment.__dict__, "estado": "CANCELADA"})
         self.appointments[cancelled.id] = cancelled
         self.taken.discard(cancelled.horario_id)
@@ -282,6 +287,34 @@ def test_missing_and_forbidden_appointments_look_identical(store, patient) -> No
         _service(store).cancel(other, booked.id)
 
     assert missing.value.detail == forbidden.value.detail
+
+
+def test_the_cancellation_window_closes_one_hour_after_the_start() -> None:
+    start = datetime(2026, 11, 22, 14, 0, tzinfo=UTC)
+
+    assert not cancellation_window_closed(start, start + timedelta(minutes=60))
+    assert cancellation_window_closed(start, start + timedelta(minutes=61))
+
+
+def test_cancelling_after_the_window_conflicts(store, patient) -> None:
+    service = _service(store)
+    booked = _book(service, patient, store).appointment
+    store.window_closed = True
+
+    with pytest.raises(Conflict):
+        service.cancel(patient, booked.id)
+
+
+def test_an_approval_after_the_window_conflicts() -> None:
+    class ClosedWindowStore:
+        def approve_doctor_cancellation(self, *args):
+            return ApprovalStatus.WINDOW_CLOSED
+
+    service = SchedulingService(store=ClosedWindowStore(), clock=lambda: NOW, hold_minutes=15)
+    admin = _actor(permissions=frozenset({"citas.revisar_cancelaciones"}))
+
+    with pytest.raises(Conflict):
+        service.approve_doctor_cancellation(admin, _id(), motivo="Cubre la guardia")
 
 
 def test_cancelling_twice_conflicts(store, patient) -> None:

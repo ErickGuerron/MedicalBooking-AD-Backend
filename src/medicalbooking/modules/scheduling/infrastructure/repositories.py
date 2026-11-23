@@ -33,6 +33,7 @@ from medicalbooking.modules.scheduling.application.ports import (
 )
 from medicalbooking.modules.scheduling.domain.policies import (
     ACTIVE_STATES,
+    cancellation_window_closed,
     doctor_cancellation_blockers,
     month_bounds,
 )
@@ -610,9 +611,11 @@ class SqlSchedulingStore:
             row = conn.execute(
                 text(
                     "SELECT c.id, c.horario_id, c.servicio_id, c.estado, c.motivo, "
-                    "c.clave_idempotencia, c.expiracion_reserva, p.usuario_id AS patient_user_id "
+                    "c.clave_idempotencia, c.expiracion_reserva, p.usuario_id AS patient_user_id, "
+                    "h.inicio_utc "
                     "FROM citas c WITH (UPDLOCK, ROWLOCK) "
-                    "JOIN pacientes p ON p.id = c.paciente_id WHERE c.id = :id"
+                    "JOIN pacientes p ON p.id = c.paciente_id "
+                    "JOIN horarios_disponibles h ON h.id = c.horario_id WHERE c.id = :id"
                 ),
                 {"id": command.appointment_id},
             ).first()
@@ -620,6 +623,8 @@ class SqlSchedulingStore:
                 return CancelOutcome(CancelStatus.NOT_FOUND_OR_FORBIDDEN, None)
             if row.estado not in ACTIVE_STATES:
                 return CancelOutcome(CancelStatus.NOT_CANCELLABLE, None)
+            if cancellation_window_closed(row.inicio_utc, now):
+                return CancelOutcome(CancelStatus.WINDOW_CLOSED, None)
             if command.as_medico:
                 blockers = _doctor_blockers(conn, command, row.id)
                 if blockers:
@@ -685,13 +690,18 @@ class SqlSchedulingStore:
         try:
             with self._engine.begin() as conn:
                 row = conn.execute(
-                    text("SELECT estado FROM citas WITH (UPDLOCK, ROWLOCK) WHERE id = :id"),
+                    text(
+                        "SELECT c.estado, h.inicio_utc FROM citas c WITH (UPDLOCK, ROWLOCK) "
+                        "JOIN horarios_disponibles h ON h.id = c.horario_id WHERE c.id = :id"
+                    ),
                     {"id": appointment_id},
                 ).first()
                 if row is None:
                     return ApprovalStatus.NOT_FOUND
                 if row.estado not in ACTIVE_STATES:
                     return ApprovalStatus.NOT_CANCELLABLE
+                if cancellation_window_closed(row.inicio_utc, moment):
+                    return ApprovalStatus.WINDOW_CLOSED
                 conn.execute(
                     text(
                         "INSERT INTO aprobaciones_cancelacion_medico "

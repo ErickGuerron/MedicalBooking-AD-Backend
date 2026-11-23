@@ -89,6 +89,7 @@ class CancelStatus(Enum):
     CANCELLED = "cancelled"
     NOT_FOUND_OR_FORBIDDEN = "not_found_or_forbidden"
     NOT_CANCELLABLE = "not_cancellable"
+    WINDOW_CLOSED = "window_closed"
     REQUIRES_APPROVAL = "requires_approval"
 
 
@@ -149,6 +150,7 @@ class ApprovalStatus(Enum):
     APPROVED = "approved"
     NOT_FOUND = "not_found"
     NOT_CANCELLABLE = "not_cancellable"
+    WINDOW_CLOSED = "window_closed"
     ALREADY_APPROVED = "already_approved"
 
 
