@@ -28,6 +28,8 @@ FRANJAS: dict[str, tuple[time, time]] = {
 }
 
 WORK_STEP_MINUTES = 15
+# Every appointment is one hour: the clinic plans a week as one-hour slots.
+SLOT_MINUTES = 60
 MAX_BLOCKS_PER_DAY = 4
 
 

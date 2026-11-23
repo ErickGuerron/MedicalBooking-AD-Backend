@@ -1,7 +1,8 @@
-"""Doctor work hours and slot generation.
+"""Doctor work hours and weekly slot generation.
 
-The doctor declares when they work; the administrator proposes the slots those hours give and
-creates them. Business rules live here, not in routes or SQL.
+The doctor declares the hours they work each week. The administrator looks at those hours, proposes
+the one-hour appointment slots of a week, and creates them. Business rules live here, not in routes
+or SQL.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from medicalbooking.modules.scheduling.application.ports import (
 )
 from medicalbooking.modules.scheduling.domain.clinic_hours import (
     BRANCH_TZ,
+    SLOT_MINUTES,
     WorkBlock,
     franja_of_start,
     slot_starts,
@@ -29,7 +31,8 @@ from medicalbooking.modules.scheduling.domain.policies import (
 )
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
 
-MAX_RANGE_DAYS = 31
+# How far ahead the administrator can create a week of slots.
+MAX_WEEKS_AHEAD = 12
 
 
 def _require(actor: AccessProfile, permission: str) -> None:
@@ -41,6 +44,8 @@ class WorkHoursService:
     def __init__(self, store: SchedulingStore, clock: Callable[[], datetime]) -> None:
         self._store = store
         self._clock = clock
+
+    # ---------- the doctor ----------
 
     def get_my_work_hours(self, actor: AccessProfile) -> list[WorkBlock]:
         _require(actor, PERM_DECLARE_HOURS)
@@ -57,33 +62,40 @@ class WorkHoursService:
         self._audit(actor, "horario_trabajo", doctor.medico_id, "declarar_horario", now)
         return list(blocks)
 
-    def propose_slots(
-        self, actor: AccessProfile, medico_id: str, desde: date, hasta: date
-    ) -> list[ProposedSlot]:
-        """What the doctor's declared hours would create in the range. Writes nothing."""
-        _require(actor, PERM_GENERATE_SLOTS)
-        doctor, blocks = self._proposal_inputs(medico_id, desde, hasta)
-        return self._slots(doctor, blocks, desde, hasta)
+    # ---------- the administrator ----------
 
-    def generate_slots(
+    def doctor_work_hours(self, actor: AccessProfile, medico_id: str) -> list[WorkBlock]:
+        """What a doctor declared, for the administrator to plan from. Writes nothing."""
+        _require(actor, PERM_GENERATE_SLOTS)
+        doctor = self._active_doctor(medico_id)
+        return self._store.get_work_blocks(doctor.medico_id)
+
+    def propose_week(
+        self, actor: AccessProfile, medico_id: str, semana: date
+    ) -> list[ProposedSlot]:
+        """The one-hour slots of the week that starts on `semana`. Writes nothing."""
+        _require(actor, PERM_GENERATE_SLOTS)
+        doctor, blocks = self._week_inputs(medico_id, semana)
+        return self._slots(blocks, semana)
+
+    def generate_week(
         self,
         actor: AccessProfile,
         medico_id: str,
         consultorio_id: str,
-        desde: date,
-        hasta: date,
+        semana: date,
     ) -> tuple[int, int]:
-        """Create the proposed slots in one consultorio. Returns (created, already there)."""
+        """Create the week's slots in one consultorio. Returns (created, already there)."""
         _require(actor, PERM_GENERATE_SLOTS)
-        doctor, blocks = self._proposal_inputs(medico_id, desde, hasta)
+        doctor, blocks = self._week_inputs(medico_id, semana)
         if not self._store.consultorio_is_active(consultorio_id):
             raise NotFound("Consultorio not found")
-        slots = self._slots(doctor, blocks, desde, hasta)
+        slots = self._slots(blocks, semana)
         created, existing = self._store.insert_generated_slots(
             doctor.medico_id,
             consultorio_id,
-            desde,
-            hasta,
+            semana,
+            semana + timedelta(days=6),
             [(slot.inicio_utc, slot.fin_utc) for slot in slots],
         )
         self._audit(actor, "horario", doctor.medico_id, "generar_horarios", self._clock())
@@ -97,46 +109,46 @@ class WorkHoursService:
             raise Forbidden("Access to this resource is not allowed")
         return doctor
 
-    def _proposal_inputs(
-        self, medico_id: str, desde: date, hasta: date
-    ) -> tuple[DoctorProfile, list[WorkBlock]]:
-        self._validate_range(desde, hasta)
+    def _active_doctor(self, medico_id: str) -> DoctorProfile:
         doctor = self._store.doctor_profile_by_id(str(medico_id))
         if doctor is None or not doctor.activo:
             raise NotFound("Doctor not found")
+        return doctor
+
+    def _week_inputs(self, medico_id: str, semana: date) -> tuple[DoctorProfile, list[WorkBlock]]:
+        self._validate_week(semana)
+        doctor = self._active_doctor(medico_id)
         blocks = self._store.get_work_blocks(doctor.medico_id)
         if not blocks:
             raise Conflict("The doctor has not declared work hours")
         return doctor, blocks
 
-    def _validate_range(self, desde: date, hasta: date) -> None:
-        if desde > hasta:
-            raise ValidationFailed("'desde' must be on or before 'hasta'")
-        if (hasta - desde).days + 1 > MAX_RANGE_DAYS:
-            raise ValidationFailed(f"The range cannot be longer than {MAX_RANGE_DAYS} days")
+    def _validate_week(self, semana: date) -> None:
+        if semana.weekday() != 0:
+            raise ValidationFailed("'semana' must be a Monday")
         today = self._clock().astimezone(BRANCH_TZ).date()
-        if desde < today:
-            raise ValidationFailed("The range cannot start in the past")
+        if semana + timedelta(days=6) < today:
+            raise ValidationFailed("That week has already passed")
+        if semana > today + timedelta(weeks=MAX_WEEKS_AHEAD):
+            raise ValidationFailed(f"Weeks can be created at most {MAX_WEEKS_AHEAD} weeks ahead")
 
-    def _slots(
-        self, doctor: DoctorProfile, blocks: list[WorkBlock], desde: date, hasta: date
-    ) -> list[ProposedSlot]:
+    def _slots(self, blocks: list[WorkBlock], semana: date) -> list[ProposedSlot]:
+        """One-hour slots of the seven days from `semana`, skipping the ones already started."""
         now = self._clock()
         proposed: list[ProposedSlot] = []
-        day = desde
-        while day <= hasta:
+        for offset in range(7):
+            day = semana + timedelta(days=offset)
             for block in sorted(blocks, key=lambda b: b.inicio):
                 if block.dia_semana != day.weekday():
                     continue
-                for start in slot_starts(block, doctor.duracion_cita_min):
+                for start in slot_starts(block, SLOT_MINUTES):
                     begins = datetime.combine(day, start, BRANCH_TZ).astimezone(UTC)
                     if begins <= now:
                         continue
-                    ends = begins + timedelta(minutes=doctor.duracion_cita_min)
+                    ends = begins + timedelta(minutes=SLOT_MINUTES)
                     franja = franja_of_start(start)
                     assert franja is not None  # slot_starts only yields slots inside a window
                     proposed.append(ProposedSlot(inicio_utc=begins, fin_utc=ends, franja=franja))
-            day += timedelta(days=1)
         return proposed
 
     def _audit(

@@ -355,8 +355,8 @@ class GenerateSlotsRequest(BaseModel):
 
     medico_id: uuid.UUID
     consultorio_id: uuid.UUID
-    desde: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-    hasta: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+    # The Monday that starts the week to create.
+    semana: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
 
 def _work_hours() -> WorkHoursService:
@@ -405,15 +405,24 @@ def set_my_work_hours() -> tuple[Response, int]:
     return jsonify(items=[_block_json(block) for block in saved]), 200
 
 
+def _week_query() -> date:
+    return _parse_day(request.args.get("semana", ""))
+
+
+@scheduling_bp.get("/admin/medicos/<uuid:medico_id>/horario-trabajo")
+@authenticated
+def doctor_work_hours(medico_id: uuid.UUID) -> tuple[Response, int]:
+    blocks = _work_hours().doctor_work_hours(g.actor, str(medico_id))
+    return jsonify(items=[_block_json(block) for block in blocks]), 200
+
+
 @scheduling_bp.get("/admin/horarios/propuesta")
 @authenticated
 def propose_slots() -> tuple[Response, int]:
     medico = _optional_uuid("medico_id")
     if medico is None:
         raise ValidationFailed("'medico_id' is required")
-    proposal = _work_hours().propose_slots(
-        g.actor, medico, _day_query("desde"), _day_query("hasta")
-    )
+    proposal = _work_hours().propose_week(g.actor, medico, _week_query())
     items = [
         {
             "inicio_utc": slot.inicio_utc.isoformat(),
@@ -429,11 +438,10 @@ def propose_slots() -> tuple[Response, int]:
 @authenticated
 def generate_slots() -> tuple[Response, int]:
     body = _validate(GenerateSlotsRequest)
-    created, existing = _work_hours().generate_slots(
+    created, existing = _work_hours().generate_week(
         g.actor,
         str(body.medico_id),
         str(body.consultorio_id),
-        _parse_day(body.desde),
-        _parse_day(body.hasta),
+        _parse_day(body.semana),
     )
     return jsonify(creados=created, existentes=existing), 201

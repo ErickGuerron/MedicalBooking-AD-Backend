@@ -88,14 +88,36 @@ def scheduling_fragment() -> dict[str, Any]:
                     },
                 },
             },
+            "/api/v1/admin/medicos/{medico_id}/horario-trabajo": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "getDoctorWorkHours",
+                    "summary": "Read the weekly hours a doctor declared, to plan their week",
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "medico_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "responses": {
+                        "200": _json_response("Declared work blocks", "WorkHoursList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks horario.generar"),
+                        "404": _problem("Doctor not found or inactive"),
+                    },
+                },
+            },
             "/api/v1/admin/horarios/propuesta": {
                 "get": {
                     "tags": ["Scheduling"],
                     "operationId": "proposeDoctorSlots",
-                    "summary": "Propose the slots a doctor's declared hours give in a range",
+                    "summary": "Propose the one-hour slots of a week from a doctor's hours",
                     "description": (
-                        "Writes nothing. The range is at most 31 days, starts today or later, and "
-                        "needs the doctor to have declared hours."
+                        "Writes nothing. The week starts on a Monday, is not over yet, is at most "
+                        "12 weeks ahead, and needs the doctor to have declared hours."
                     ),
                     "security": _BEARER,
                     "parameters": [
@@ -106,14 +128,8 @@ def scheduling_fragment() -> dict[str, Any]:
                             schema={"type": "string", "format": "uuid"},
                         ),
                         _query(
-                            "desde",
-                            "First day, YYYY-MM-DD",
-                            required=True,
-                            schema={"type": "string", "format": "date"},
-                        ),
-                        _query(
-                            "hasta",
-                            "Last day, YYYY-MM-DD",
+                            "semana",
+                            "Monday that starts the week, YYYY-MM-DD",
                             required=True,
                             schema={"type": "string", "format": "date"},
                         ),
@@ -132,7 +148,7 @@ def scheduling_fragment() -> dict[str, Any]:
                 "post": {
                     "tags": ["Scheduling"],
                     "operationId": "generateDoctorSlots",
-                    "summary": "Create the slots the declared hours give, in one consultorio",
+                    "summary": "Create the one-hour slots of a week, in one consultorio",
                     "description": (
                         "Idempotent: a slot the doctor already has at the same start is counted as "
                         "existing and is not created again."

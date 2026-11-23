@@ -78,6 +78,11 @@ def _service_with_franja(engine: Engine, franja: str) -> str:
     return service_id
 
 
+def _next_monday() -> str:
+    today = _today_branch()
+    return (today + timedelta(days=(7 - today.weekday()) % 7 or 7)).isoformat()
+
+
 def _every_day(blocks: list[dict]) -> dict:
     return {"bloques": [{"dia_semana": day, **block} for day in range(7) for block in blocks]}
 
@@ -114,14 +119,13 @@ def test_the_administrator_proposes_and_generates_slots_once(app, engine) -> Non
         headers=_token(app, doctor_user),
     )
     admin = _token(app, _user(engine, "ADMINISTRADOR"))
-    desde = (_today_branch() + timedelta(days=1)).isoformat()
-    hasta = (_today_branch() + timedelta(days=2)).isoformat()
+    semana = _next_monday()
 
     proposal = client.get(
-        f"/api/v1/admin/horarios/propuesta?medico_id={medico}&desde={desde}&hasta={hasta}",
+        f"/api/v1/admin/horarios/propuesta?medico_id={medico}&semana={semana}",
         headers=admin,
     )
-    body = {"medico_id": medico, "consultorio_id": office, "desde": desde, "hasta": hasta}
+    body = {"medico_id": medico, "consultorio_id": office, "semana": semana}
     first = client.post("/api/v1/admin/horarios/generar", json=body, headers=admin)
     second = client.post("/api/v1/admin/horarios/generar", json=body, headers=admin)
 
@@ -136,15 +140,15 @@ def test_the_doctor_cannot_generate_slots_and_the_range_is_checked(app, engine) 
     doctor_user, medico, office = _doctor_with_office(engine)
     client = app.test_client()
     doctor = _token(app, doctor_user)
-    desde = (_today_branch() + timedelta(days=1)).isoformat()
+    semana = _next_monday()
 
     denied = client.post(
         "/api/v1/admin/horarios/generar",
-        json={"medico_id": medico, "consultorio_id": office, "desde": desde, "hasta": desde},
+        json={"medico_id": medico, "consultorio_id": office, "semana": semana},
         headers=doctor,
     )
     invalid = client.get(
-        f"/api/v1/admin/horarios/propuesta?medico_id={medico}&desde=2026-02-30&hasta=2026-03-01",
+        f"/api/v1/admin/horarios/propuesta?medico_id={medico}&semana=2026-02-30",
         headers=_token(app, _user(engine, "ADMINISTRADOR")),
     )
 
@@ -161,13 +165,13 @@ def test_a_service_books_only_into_its_own_window(app, engine) -> None:
         headers=_token(app, doctor_user),
     )
     admin = _token(app, _user(engine, "ADMINISTRADOR"))
-    desde = (_today_branch() + timedelta(days=1)).isoformat()
+    semana = _next_monday()
     client.post(
         "/api/v1/admin/horarios/generar",
-        json={"medico_id": medico, "consultorio_id": office, "desde": desde, "hasta": desde},
+        json={"medico_id": medico, "consultorio_id": office, "semana": semana},
         headers=admin,
     )
-    window = f"desde={desde}T00:00:00-05:00&hasta={desde}T23:59:00-05:00&medico_id={medico}"
+    window = f"desde={semana}T00:00:00-05:00&hasta={semana}T23:59:00-05:00&medico_id={medico}"
     patient = _token(app, _user(engine, "PACIENTE"))
     samples = _service_with_franja(engine, "MANANA")
     consultation = _service_with_franja(engine, "TARDE")
