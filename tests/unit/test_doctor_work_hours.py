@@ -28,7 +28,11 @@ CONSULTORIO = str(uuid.uuid4())
 class FakeHoursStore:
     doctors_by_user: dict[str, DoctorProfile] = field(default_factory=dict)
     doctors: dict[str, DoctorProfile] = field(default_factory=dict)
+    # Hours declared without dates: in force on any day.
     blocks: dict[str, list[WorkBlock]] = field(default_factory=dict)
+    # Dated versions of the hours: medico -> {effective day: blocks}.
+    versions: dict[str, dict[date, list[WorkBlock]]] = field(default_factory=dict)
+    last_effective: date | None = None
     consultorios: set[str] = field(default_factory=set)
     slots: set[tuple[str, datetime]] = field(default_factory=set)
     audit: list = field(default_factory=list)
@@ -39,11 +43,21 @@ class FakeHoursStore:
     def doctor_profile_by_id(self, medico_id):
         return self.doctors.get(medico_id)
 
-    def get_work_blocks(self, medico_id):
+    def get_work_blocks(self, medico_id, on):
+        if medico_id in self.versions:
+            effective = [day for day in self.versions[medico_id] if day <= on]
+            return list(self.versions[medico_id][max(effective)]) if effective else []
         return list(self.blocks.get(medico_id, []))
 
-    def replace_work_blocks(self, medico_id, blocks, now):
-        self.blocks[medico_id] = list(blocks)
+    def list_consultorios(self):
+        return []
+
+    def declared_hours_exist(self, medico_id):
+        return medico_id in self.blocks or medico_id in self.versions
+
+    def replace_work_blocks(self, medico_id, blocks, effective_from, now):
+        self.versions.setdefault(medico_id, {})[effective_from] = list(blocks)
+        self.last_effective = effective_from
 
     def consultorio_is_active(self, consultorio_id):
         return consultorio_id in self.consultorios
@@ -109,7 +123,7 @@ def test_a_doctor_declares_the_hours_they_work() -> None:
         doctor, [_block(0, "08:00", "10:00"), _block(0, "12:00", "17:00")]
     )
 
-    assert store.get_work_blocks(medico.medico_id) == [
+    assert store.get_work_blocks(medico.medico_id, date(2026, 11, 30)) == [
         _block(0, "08:00", "10:00"),
         _block(0, "12:00", "17:00"),
     ]
@@ -272,6 +286,34 @@ def test_the_administrator_reads_the_hours_a_doctor_declared() -> None:
     medico = _doctor(store)
     store.blocks[medico.medico_id] = [_block(0, "08:00", "10:00")]
 
-    assert _service(store).doctor_work_hours(_admin(), medico.medico_id) == [
-        _block(0, "08:00", "10:00")
-    ]
+    assert _service(store).doctor_work_hours(_admin(), medico.medico_id).actual == (
+        _block(0, "08:00", "10:00"),
+    )
+
+
+def test_a_change_applies_from_next_monday_and_never_reaches_the_week_in_progress() -> None:
+    store = FakeHoursStore()
+    medico = _doctor(store)
+    doctor = _doctor_user(store, medico)
+    # The clock is Monday 23 November 2026: the week in progress started on the 23rd.
+    store.versions[medico.medico_id] = {date(1900, 1, 1): [_block(0, "08:00", "10:00")]}
+
+    hours = _service(store).set_my_work_hours(doctor, [_block(0, "14:00", "16:00")])
+
+    assert store.last_effective == date(2026, 11, 30)
+    assert hours.vigente_desde == date(2026, 11, 30)
+    assert hours.actual == (_block(0, "08:00", "10:00"),)
+    assert hours.proximo == (_block(0, "14:00", "16:00"),)
+
+
+def test_the_planned_week_keeps_the_hours_it_was_planned_with() -> None:
+    store = FakeHoursStore()
+    medico = _doctor(store)
+    store.versions[medico.medico_id] = {date(1900, 1, 1): [_block(0, "08:00", "09:00")]}
+    store.versions[medico.medico_id][date(2026, 11, 30)] = [_block(0, "14:00", "15:00")]
+
+    current = _service(store).propose_week(_admin(), medico.medico_id, MONDAY)
+    following = _service(store).propose_week(_admin(), medico.medico_id, date(2026, 11, 30))
+
+    assert [item.inicio_utc.astimezone(UTC).hour for item in current] == [13]
+    assert [item.inicio_utc.astimezone(UTC).hour for item in following] == [19]

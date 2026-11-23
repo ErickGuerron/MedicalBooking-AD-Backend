@@ -8,11 +8,13 @@ or SQL.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
 from medicalbooking.modules.scheduling.application.ports import (
+    Consultorio,
     DoctorProfile,
     ProposedSlot,
     SchedulingStore,
@@ -35,6 +37,20 @@ from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, V
 MAX_WEEKS_AHEAD = 12
 
 
+def next_monday(today: date) -> date:
+    """The first Monday after `today`: where a change to the doctor's hours starts to apply."""
+    return today + timedelta(days=7 - today.weekday())
+
+
+@dataclass(frozen=True)
+class DoctorHours:
+    """The hours in force this week and the hours from next week on (the ones the doctor edits)."""
+
+    actual: tuple[WorkBlock, ...]
+    proximo: tuple[WorkBlock, ...]
+    vigente_desde: date
+
+
 def _require(actor: AccessProfile, permission: str) -> None:
     if permission not in actor.permissions:
         raise Forbidden("Access to this resource is not allowed")
@@ -47,28 +63,36 @@ class WorkHoursService:
 
     # ---------- the doctor ----------
 
-    def get_my_work_hours(self, actor: AccessProfile) -> list[WorkBlock]:
+    def get_my_work_hours(self, actor: AccessProfile) -> DoctorHours:
         _require(actor, PERM_DECLARE_HOURS)
         doctor = self._own_doctor(actor)
-        return self._store.get_work_blocks(doctor.medico_id)
+        return self._hours_of(doctor.medico_id)
 
-    def set_my_work_hours(self, actor: AccessProfile, blocks: list[WorkBlock]) -> list[WorkBlock]:
-        """The doctor's whole weekly schedule. An empty list means no hours are declared."""
+    def set_my_work_hours(self, actor: AccessProfile, blocks: list[WorkBlock]) -> DoctorHours:
+        """The doctor's weekly schedule from next week on. An empty list means no hours from then.
+
+        Weeks already in progress or planned keep the hours they had: a change never reaches back.
+        """
         _require(actor, PERM_DECLARE_HOURS)
         doctor = self._own_doctor(actor)
         validate_work_blocks(blocks)
         now = self._clock()
-        self._store.replace_work_blocks(doctor.medico_id, list(blocks), now)
+        effective = next_monday(now.astimezone(BRANCH_TZ).date())
+        self._store.replace_work_blocks(doctor.medico_id, list(blocks), effective, now)
         self._audit(actor, "horario_trabajo", doctor.medico_id, "declarar_horario", now)
-        return list(blocks)
+        return self._hours_of(doctor.medico_id)
 
     # ---------- the administrator ----------
 
-    def doctor_work_hours(self, actor: AccessProfile, medico_id: str) -> list[WorkBlock]:
+    def doctor_work_hours(self, actor: AccessProfile, medico_id: str) -> DoctorHours:
         """What a doctor declared, for the administrator to plan from. Writes nothing."""
         _require(actor, PERM_GENERATE_SLOTS)
         doctor = self._active_doctor(medico_id)
-        return self._store.get_work_blocks(doctor.medico_id)
+        return self._hours_of(doctor.medico_id)
+
+    def list_consultorios(self, actor: AccessProfile) -> list[Consultorio]:
+        _require(actor, PERM_GENERATE_SLOTS)
+        return self._store.list_consultorios()
 
     def propose_week(
         self, actor: AccessProfile, medico_id: str, semana: date
@@ -118,10 +142,18 @@ class WorkHoursService:
     def _week_inputs(self, medico_id: str, semana: date) -> tuple[DoctorProfile, list[WorkBlock]]:
         self._validate_week(semana)
         doctor = self._active_doctor(medico_id)
-        blocks = self._store.get_work_blocks(doctor.medico_id)
-        if not blocks:
+        if not self._store.declared_hours_exist(doctor.medico_id):
             raise Conflict("The doctor has not declared work hours")
-        return doctor, blocks
+        # The hours in force on that Monday: a later change never alters the week already planned.
+        return doctor, self._store.get_work_blocks(doctor.medico_id, semana)
+
+    def _hours_of(self, medico_id: str) -> DoctorHours:
+        today = self._clock().astimezone(BRANCH_TZ).date()
+        return DoctorHours(
+            actual=tuple(self._store.get_work_blocks(medico_id, today)),
+            proximo=tuple(self._store.get_work_blocks(medico_id, next_monday(today))),
+            vigente_desde=next_monday(today),
+        )
 
     def _validate_week(self, semana: date) -> None:
         if semana.weekday() != 0:

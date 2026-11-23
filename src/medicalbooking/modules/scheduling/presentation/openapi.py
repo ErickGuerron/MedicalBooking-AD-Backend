@@ -88,6 +88,19 @@ def scheduling_fragment() -> dict[str, Any]:
                     },
                 },
             },
+            "/api/v1/admin/consultorios": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "listConsultorios",
+                    "summary": "List the active consultorios where a week of slots can be created",
+                    "security": _BEARER,
+                    "responses": {
+                        "200": _json_response("Active consultorios", "ConsultorioList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks horario.generar"),
+                    },
+                },
+            },
             "/api/v1/admin/medicos/{medico_id}/horario-trabajo": {
                 "get": {
                     "tags": ["Scheduling"],
@@ -579,17 +592,45 @@ def scheduling_fragment() -> dict[str, Any]:
                 "GenerateSlotsRequest": GenerateSlotsRequest.model_json_schema(),
                 "WorkHoursList": {
                     "type": "object",
+                    "required": ["vigente_desde", "actual", "proximo"],
+                    "description": (
+                        "actual: hours in force this week. proximo: hours from next week on, "
+                        "the ones the doctor edits. Changes never reach the week in progress."
+                    ),
+                    "properties": {
+                        "vigente_desde": {"type": "string", "format": "date"},
+                        "actual": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/WorkBlock"},
+                        },
+                        "proximo": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/WorkBlock"},
+                        },
+                    },
+                },
+                "WorkBlock": {
+                    "type": "object",
+                    "required": ["dia_semana", "inicio", "fin"],
+                    "properties": {
+                        "dia_semana": {"type": "integer", "minimum": 0, "maximum": 6},
+                        "inicio": {"type": "string", "example": "08:00"},
+                        "fin": {"type": "string", "example": "10:00"},
+                    },
+                },
+                "ConsultorioList": {
+                    "type": "object",
                     "required": ["items"],
                     "properties": {
                         "items": {
                             "type": "array",
                             "items": {
                                 "type": "object",
-                                "required": ["dia_semana", "inicio", "fin"],
+                                "required": ["id", "nombre", "sede"],
                                 "properties": {
-                                    "dia_semana": {"type": "integer", "minimum": 0, "maximum": 6},
-                                    "inicio": {"type": "string", "example": "08:00"},
-                                    "fin": {"type": "string", "example": "10:00"},
+                                    "id": {"type": "string", "format": "uuid"},
+                                    "nombre": {"type": "string"},
+                                    "sede": {"type": "string"},
                                 },
                             },
                         }

@@ -156,6 +156,13 @@ class ApprovalStatus(Enum):
 
 
 @dataclass(frozen=True)
+class Consultorio:
+    id: str
+    nombre: str
+    sede: str
+
+
+@dataclass(frozen=True)
 class DoctorProfile:
     medico_id: str
     duracion_cita_min: int
@@ -174,11 +181,19 @@ class SchedulingStore(Protocol):
 
     def doctor_profile_by_id(self, medico_id: str) -> DoctorProfile | None: ...
 
-    def get_work_blocks(self, medico_id: str) -> list[WorkBlock]: ...
+    def get_work_blocks(self, medico_id: str, on: date) -> list[WorkBlock]:
+        """The hours in force on `on`: the latest version effective on or before that day."""
+        ...
+
+    def declared_hours_exist(self, medico_id: str) -> bool: ...
+
+    def list_consultorios(self) -> list[Consultorio]: ...
 
     def replace_work_blocks(
-        self, medico_id: str, blocks: list[WorkBlock], now: datetime
-    ) -> None: ...
+        self, medico_id: str, blocks: list[WorkBlock], effective_from: date, now: datetime
+    ) -> None:
+        """Set the hours from `effective_from` on. A later change for the same day replaces it."""
+        ...
 
     def consultorio_is_active(self, consultorio_id: str) -> bool: ...
 

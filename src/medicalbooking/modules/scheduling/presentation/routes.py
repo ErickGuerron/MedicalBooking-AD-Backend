@@ -389,8 +389,7 @@ def _day_query(name: str) -> date:
 @scheduling_bp.get("/me/horario-trabajo")
 @authenticated
 def my_work_hours() -> tuple[Response, int]:
-    blocks = _work_hours().get_my_work_hours(g.actor)
-    return jsonify(items=[_block_json(block) for block in blocks]), 200
+    return jsonify(_hours_json(_work_hours().get_my_work_hours(g.actor))), 200
 
 
 @scheduling_bp.put("/me/horario-trabajo")
@@ -401,8 +400,16 @@ def set_my_work_hours() -> tuple[Response, int]:
         WorkBlock(dia_semana=item.dia_semana, inicio=_hhmm(item.inicio), fin=_hhmm(item.fin))
         for item in body.bloques
     ]
-    saved = _work_hours().set_my_work_hours(g.actor, blocks)
-    return jsonify(items=[_block_json(block) for block in saved]), 200
+    return jsonify(_hours_json(_work_hours().set_my_work_hours(g.actor, blocks))), 200
+
+
+def _hours_json(hours: Any) -> dict[str, Any]:
+    """The hours in force this week, and from next week on (the ones the doctor edits)."""
+    return {
+        "vigente_desde": hours.vigente_desde.isoformat(),
+        "actual": [_block_json(block) for block in hours.actual],
+        "proximo": [_block_json(block) for block in hours.proximo],
+    }
 
 
 def _week_query() -> date:
@@ -412,8 +419,14 @@ def _week_query() -> date:
 @scheduling_bp.get("/admin/medicos/<uuid:medico_id>/horario-trabajo")
 @authenticated
 def doctor_work_hours(medico_id: uuid.UUID) -> tuple[Response, int]:
-    blocks = _work_hours().doctor_work_hours(g.actor, str(medico_id))
-    return jsonify(items=[_block_json(block) for block in blocks]), 200
+    return jsonify(_hours_json(_work_hours().doctor_work_hours(g.actor, str(medico_id)))), 200
+
+
+@scheduling_bp.get("/admin/consultorios")
+@authenticated
+def list_consultorios() -> tuple[Response, int]:
+    offices = _work_hours().list_consultorios(g.actor)
+    return jsonify(items=[{"id": o.id, "nombre": o.nombre, "sede": o.sede} for o in offices]), 200
 
 
 @scheduling_bp.get("/admin/horarios/propuesta")

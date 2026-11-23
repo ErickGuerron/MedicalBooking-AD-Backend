@@ -24,6 +24,7 @@ EXPECTED_PATHS = {
     "/api/v1/availability",
     "/api/v1/me/horario-trabajo",
     "/api/v1/admin/medicos/{medico_id}/horario-trabajo",
+    "/api/v1/admin/consultorios",
     "/api/v1/admin/horarios/propuesta",
     "/api/v1/admin/horarios/generar",
     "/api/v1/specialties",

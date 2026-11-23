@@ -103,7 +103,7 @@ def test_a_doctor_declares_the_hours_and_the_clinic_refuses_hours_outside_it(app
 
     assert refused.status_code == 422, refused.get_json()
     assert saved.status_code == 200, saved.get_json()
-    assert client.get("/api/v1/me/horario-trabajo", headers=headers).get_json()["items"][0] == {
+    assert client.get("/api/v1/me/horario-trabajo", headers=headers).get_json()["proximo"][0] == {
         "dia_semana": 0,
         "inicio": "08:00",
         "fin": "10:00",

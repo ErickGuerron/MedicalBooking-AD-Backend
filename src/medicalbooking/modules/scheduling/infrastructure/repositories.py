@@ -26,6 +26,7 @@ from medicalbooking.modules.scheduling.application.ports import (
     Consultation,
     ConsultationOutcome,
     ConsultationStatus,
+    Consultorio,
     DoctorProfile,
     OpenConsultationCommand,
     ReserveCommand,
@@ -257,35 +258,83 @@ class SqlSchedulingStore:
             activo=bool(row.activo),
         )
 
-    def get_work_blocks(self, medico_id: str) -> list[WorkBlock]:
+    def get_work_blocks(self, medico_id: str, on: date) -> list[WorkBlock]:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT dia_semana, inicio, fin FROM horarios_trabajo_medico "
-                    "WHERE medico_id = :m ORDER BY dia_semana, inicio"
+                    "SELECT b.dia_semana, b.inicio, b.fin "
+                    "FROM horarios_trabajo_medico b "
+                    "JOIN horarios_trabajo_version v ON v.id = b.version_id "
+                    "WHERE v.medico_id = :m AND v.vigente_desde = ("
+                    "SELECT MAX(v2.vigente_desde) FROM horarios_trabajo_version v2 "
+                    "WHERE v2.medico_id = :m AND v2.vigente_desde <= :d) "
+                    "ORDER BY b.dia_semana, b.inicio"
                 ),
-                {"m": medico_id},
+                {"m": medico_id, "d": on},
             ).all()
         return [
             WorkBlock(dia_semana=row.dia_semana, inicio=row.inicio, fin=row.fin) for row in rows
         ]
 
-    def replace_work_blocks(self, medico_id: str, blocks: list[WorkBlock], now: datetime) -> None:
+    def list_consultorios(self) -> list[Consultorio]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT c.id, c.nombre, s.nombre AS sede FROM consultorios c "
+                    "JOIN sedes s ON s.id = c.sede_id WHERE c.activo = 1 AND s.activo = 1 "
+                    "ORDER BY s.nombre, c.nombre"
+                )
+            ).all()
+        return [
+            Consultorio(id=_canonical(row.id), nombre=row.nombre, sede=row.sede) for row in rows
+        ]
+
+    def declared_hours_exist(self, medico_id: str) -> bool:
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text("SELECT 1 FROM horarios_trabajo_version WHERE medico_id = :m"),
+                {"m": medico_id},
+            ).first()
+        return found is not None
+
+    def replace_work_blocks(
+        self, medico_id: str, blocks: list[WorkBlock], effective_from: date, now: datetime
+    ) -> None:
         moment = _utc_naive(now)
         with self._engine.begin() as conn:
-            conn.execute(
-                text("DELETE FROM horarios_trabajo_medico WHERE medico_id = :m"), {"m": medico_id}
-            )
+            version = conn.execute(
+                text(
+                    "SELECT id FROM horarios_trabajo_version "
+                    "WHERE medico_id = :m AND vigente_desde = :d"
+                ),
+                {"m": medico_id, "d": effective_from},
+            ).first()
+            if version is None:
+                version_id = str(uuid.uuid4())
+                conn.execute(
+                    text(
+                        "INSERT INTO horarios_trabajo_version "
+                        "(id, medico_id, vigente_desde, creado_en) "
+                        "VALUES (:id, :m, :d, :ahora)"
+                    ),
+                    {"id": version_id, "m": medico_id, "d": effective_from, "ahora": moment},
+                )
+            else:
+                version_id = str(version.id)
+                conn.execute(
+                    text("DELETE FROM horarios_trabajo_medico WHERE version_id = :v"),
+                    {"v": version_id},
+                )
             for block in blocks:
                 conn.execute(
                     text(
                         "INSERT INTO horarios_trabajo_medico "
-                        "(id, medico_id, dia_semana, inicio, fin, actualizado_en) "
-                        "VALUES (:id, :m, :d, :i, :f, :ahora)"
+                        "(id, version_id, dia_semana, inicio, fin, actualizado_en) "
+                        "VALUES (:id, :v, :d, :i, :f, :ahora)"
                     ),
                     {
                         "id": str(uuid.uuid4()),
-                        "m": medico_id,
+                        "v": version_id,
                         "d": block.dia_semana,
                         "i": block.inicio,
                         "f": block.fin,
