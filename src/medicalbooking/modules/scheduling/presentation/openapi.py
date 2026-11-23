@@ -11,6 +11,8 @@ from medicalbooking.modules.scheduling.domain.policies import APPOINTMENT_STATES
 from medicalbooking.modules.scheduling.presentation.routes import (
     BookAppointmentRequest,
     CancelAppointmentRequest,
+    GenerateSlotsRequest,
+    WorkHoursRequest,
 )
 
 _PROBLEM_CONTENT = {
@@ -47,6 +49,115 @@ def _query(
 def scheduling_fragment() -> dict[str, Any]:
     return {
         "paths": {
+            "/api/v1/me/horario-trabajo": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "getMyWorkHours",
+                    "summary": "Read the weekly hours the signed-in doctor works",
+                    "security": _BEARER,
+                    "responses": {
+                        "200": _json_response("Declared work blocks", "WorkHoursList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller is not a doctor with a profile"),
+                    },
+                },
+                "put": {
+                    "tags": ["Scheduling"],
+                    "operationId": "setMyWorkHours",
+                    "summary": "Declare the weekly hours the signed-in doctor works",
+                    "description": (
+                        "Replaces the whole weekly schedule. Hours are inside the clinic's opening "
+                        "hours (08:00 to 17:00), start and end on a 15-minute step, do not overlap "
+                        "on the same day, and at most four blocks a day. An empty list "
+                        "removes them."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/WorkHoursRequest"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": _json_response("Saved work blocks", "WorkHoursList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller is not a doctor with a profile"),
+                        "422": _problem("Hours outside the clinic, overlapping or off the step"),
+                    },
+                },
+            },
+            "/api/v1/admin/horarios/propuesta": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "proposeDoctorSlots",
+                    "summary": "Propose the slots a doctor's declared hours give in a range",
+                    "description": (
+                        "Writes nothing. The range is at most 31 days, starts today or later, and "
+                        "needs the doctor to have declared hours."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        _query(
+                            "medico_id",
+                            "Doctor",
+                            required=True,
+                            schema={"type": "string", "format": "uuid"},
+                        ),
+                        _query(
+                            "desde",
+                            "First day, YYYY-MM-DD",
+                            required=True,
+                            schema={"type": "string", "format": "date"},
+                        ),
+                        _query(
+                            "hasta",
+                            "Last day, YYYY-MM-DD",
+                            required=True,
+                            schema={"type": "string", "format": "date"},
+                        ),
+                    ],
+                    "responses": {
+                        "200": _json_response("Proposed slots", "ProposedSlotList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks horario.generar"),
+                        "404": _problem("Doctor not found or inactive"),
+                        "409": _problem("The doctor has not declared work hours"),
+                        "422": _problem("Invalid range or dates"),
+                    },
+                },
+            },
+            "/api/v1/admin/horarios/generar": {
+                "post": {
+                    "tags": ["Scheduling"],
+                    "operationId": "generateDoctorSlots",
+                    "summary": "Create the slots the declared hours give, in one consultorio",
+                    "description": (
+                        "Idempotent: a slot the doctor already has at the same start is counted as "
+                        "existing and is not created again."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/GenerateSlotsRequest"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": _json_response(
+                            "Created and already existing slots", "GeneratedSlots"
+                        ),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks horario.generar"),
+                        "404": _problem("Doctor or consultorio not found"),
+                        "409": _problem("The doctor has not declared work hours"),
+                        "422": _problem("Invalid range or dates"),
+                    },
+                },
+            },
             "/api/v1/availability": {
                 "get": {
                     "tags": ["Scheduling"],
@@ -81,6 +192,13 @@ def scheduling_fragment() -> dict[str, Any]:
                             "Optional: only slots of clinicians with this specialty",
                             required=False,
                             schema={"type": "integer", "minimum": 1},
+                        ),
+                        _query(
+                            "servicio_id",
+                            "Optional: only the slots of the service's window (samples in the "
+                            "morning, consultations in the afternoon)",
+                            required=False,
+                            schema={"type": "string", "format": "uuid"},
                         ),
                     ],
                     "responses": {
@@ -441,6 +559,53 @@ def scheduling_fragment() -> dict[str, Any]:
         "components": {
             "schemas": {
                 "BookAppointmentRequest": BookAppointmentRequest.model_json_schema(),
+                "WorkHoursRequest": WorkHoursRequest.model_json_schema(),
+                "GenerateSlotsRequest": GenerateSlotsRequest.model_json_schema(),
+                "WorkHoursList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["dia_semana", "inicio", "fin"],
+                                "properties": {
+                                    "dia_semana": {"type": "integer", "minimum": 0, "maximum": 6},
+                                    "inicio": {"type": "string", "example": "08:00"},
+                                    "fin": {"type": "string", "example": "10:00"},
+                                },
+                            },
+                        }
+                    },
+                },
+                "ProposedSlotList": {
+                    "type": "object",
+                    "required": ["items", "total"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["inicio_utc", "fin_utc", "franja"],
+                                "properties": {
+                                    "inicio_utc": {"type": "string", "format": "date-time"},
+                                    "fin_utc": {"type": "string", "format": "date-time"},
+                                    "franja": {"type": "string", "enum": ["MANANA", "TARDE"]},
+                                },
+                            },
+                        },
+                        "total": {"type": "integer"},
+                    },
+                },
+                "GeneratedSlots": {
+                    "type": "object",
+                    "required": ["creados", "existentes"],
+                    "properties": {
+                        "creados": {"type": "integer"},
+                        "existentes": {"type": "integer"},
+                    },
+                },
                 "CancelAppointmentRequest": CancelAppointmentRequest.model_json_schema(),
                 "CancellationApproval": {
                     "type": "object",

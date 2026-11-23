@@ -54,8 +54,9 @@ class FakeStore:
     taken: set[str] = field(default_factory=set)
     slot_id: str = ""
     window_closed: bool = False
+    franjas: dict = field(default_factory=dict)  # servicio id -> MANANA or TARDE
 
-    def list_available(self, start, end, medico_id, limit, especialidad_id=None):
+    def list_available(self, start, end, medico_id, limit, especialidad_id=None, franja=None):
         return [
             AvailableSlot(horario_id=sid, medico_id="medico", inicio_utc=ini, fin_utc=ini)
             for sid, ini in sorted(self.slots.items(), key=lambda item: item[1])
@@ -69,6 +70,9 @@ class FakeStore:
 
     def service_is_active(self, servicio_id):
         return servicio_id in self.services
+
+    def service_franja(self, servicio_id):
+        return self.franjas.get(servicio_id)
 
     def find_appointment_by_key(self, key):
         return next((a for a in self.appointments.values() if a.key == key), None)
@@ -315,6 +319,55 @@ def test_an_approval_after_the_window_conflicts() -> None:
 
     with pytest.raises(Conflict):
         service.approve_doctor_cancellation(admin, _id(), motivo="Cubre la guardia")
+
+
+# ---------- franjas: sample collection in the morning, consultations in the afternoon ----------
+
+MORNING = datetime(2026, 11, 3, 13, 0, tzinfo=UTC)  # 08:00 branch time
+AFTERNOON = datetime(2026, 11, 3, 17, 0, tzinfo=UTC)  # 12:00 branch time
+
+
+def test_a_consultation_cannot_be_booked_into_the_morning_window(store, patient) -> None:
+    store.franjas["servicio-activo"] = "TARDE"
+    store.slots["manana"] = MORNING
+
+    with pytest.raises(ValidationFailed):
+        _service(store).book(
+            patient,
+            idempotency_key=KEY,
+            horario_id="manana",
+            servicio_id="servicio-activo",
+            motivo=None,
+        )
+
+
+def test_sample_collection_cannot_be_booked_in_the_afternoon(store, patient) -> None:
+    store.franjas["servicio-activo"] = "MANANA"
+    store.slots["tarde"] = AFTERNOON
+
+    with pytest.raises(ValidationFailed):
+        _service(store).book(
+            patient,
+            idempotency_key=KEY,
+            horario_id="tarde",
+            servicio_id="servicio-activo",
+            motivo=None,
+        )
+
+
+def test_a_consultation_books_into_the_afternoon_window(store, patient) -> None:
+    store.franjas["servicio-activo"] = "TARDE"
+    store.slots["tarde"] = AFTERNOON
+
+    result = _service(store).book(
+        patient,
+        idempotency_key=KEY,
+        horario_id="tarde",
+        servicio_id="servicio-activo",
+        motivo=None,
+    )
+
+    assert result.appointment.estado == "PENDIENTE_PAGO"
 
 
 def test_cancelling_twice_conflicts(store, patient) -> None:

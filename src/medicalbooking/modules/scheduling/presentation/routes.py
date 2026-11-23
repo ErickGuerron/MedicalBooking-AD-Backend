@@ -1,10 +1,10 @@
-"""HTTP adapter for scheduling: /api/v1/availability and /api/v1/appointments."""
+"""HTTP adapter for scheduling: availability, appointments, doctor hours and slot generation."""
 
 from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
@@ -17,6 +17,8 @@ from medicalbooking.modules.scheduling.application.ports import (
     AvailableSlot,
 )
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
+from medicalbooking.modules.scheduling.application.work_hours import WorkHoursService
+from medicalbooking.modules.scheduling.domain.clinic_hours import WorkBlock
 from medicalbooking.modules.scheduling.domain.policies import DEFAULT_PAGE_SIZE
 from medicalbooking.shared.domain.errors import ValidationFailed
 
@@ -60,6 +62,24 @@ def _instant(name: str) -> datetime:
     return moment
 
 
+def _validate(model: type[BaseModel]) -> Any:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        raise ValidationFailed("Request body must be a JSON object")
+    try:
+        return model.model_validate(data)
+    except ValidationError as error:
+        fields = sorted({".".join(str(part) for part in item["loc"]) for item in error.errors()})
+        raise ValidationFailed("Invalid fields: " + ", ".join(fields)) from None
+
+
+def _parse_day(text: str) -> date:
+    try:
+        return date.fromisoformat(text)
+    except ValueError as error:
+        raise ValidationFailed("Dates must be real calendar days in YYYY-MM-DD format") from error
+
+
 def _body() -> BookAppointmentRequest:
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -82,6 +102,16 @@ def _cancel_body() -> CancelAppointmentRequest:
     except ValidationError as error:
         fields = sorted({".".join(str(part) for part in item["loc"]) for item in error.errors()})
         raise ValidationFailed("Invalid fields: " + ", ".join(fields)) from None
+
+
+def _optional_uuid(name: str) -> str | None:
+    raw = request.args.get(name)
+    if not raw:
+        return None
+    try:
+        return str(uuid.UUID(raw))
+    except ValueError as error:
+        raise ValidationFailed(f"'{name}' must be a UUID") from error
 
 
 def _int_query(name: str, default: int) -> int:
@@ -156,13 +186,13 @@ def _appointment_json(appointment: Appointment) -> dict[str, Any]:
 @scheduling_bp.get("/availability")
 @authenticated
 def availability() -> tuple[Response, int]:
-    medico = request.args.get("medico_id")
     slots = _service().list_availability(
         g.actor,
         _instant("desde"),
         _instant("hasta"),
-        medico_id=str(uuid.UUID(medico)) if medico else None,
+        medico_id=_optional_uuid("medico_id"),
         especialidad_id=_positive_int_query("especialidad_id"),
+        servicio_id=_optional_uuid("servicio_id"),
     )
     return jsonify(items=[_slot_json(slot) for slot in slots]), 200
 
@@ -301,3 +331,109 @@ def _candidate_json(appointment: AppointmentSummary) -> dict[str, Any]:
             "registro_profesional": appointment.medico_registro,
         },
     }
+
+
+# ---------- doctor work hours and slot generation ----------
+
+
+class WorkBlockIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dia_semana: int = Field(ge=0, le=6)
+    inicio: str = Field(pattern=r"^[0-2][0-9]:[0-5][0-9]$")
+    fin: str = Field(pattern=r"^[0-2][0-9]:[0-5][0-9]$")
+
+
+class WorkHoursRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bloques: list[WorkBlockIn] = Field(max_length=28)
+
+
+class GenerateSlotsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    medico_id: uuid.UUID
+    consultorio_id: uuid.UUID
+    desde: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+    hasta: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+
+
+def _work_hours() -> WorkHoursService:
+    return current_app.extensions["medicalbooking.work_hours"]
+
+
+def _hhmm(text: str) -> time:
+    hours, minutes = map(int, text.split(":"))
+    if hours > 23:
+        raise ValidationFailed("Times must be between 00:00 and 23:59")
+    return time(hours, minutes)
+
+
+def _block_json(block: WorkBlock) -> dict[str, Any]:
+    return {
+        "dia_semana": block.dia_semana,
+        "inicio": block.inicio.strftime("%H:%M"),
+        "fin": block.fin.strftime("%H:%M"),
+    }
+
+
+def _day_query(name: str) -> date:
+    raw = request.args.get(name, "")
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as error:
+        raise ValidationFailed(f"'{name}' must be a real date in YYYY-MM-DD format") from error
+
+
+@scheduling_bp.get("/me/horario-trabajo")
+@authenticated
+def my_work_hours() -> tuple[Response, int]:
+    blocks = _work_hours().get_my_work_hours(g.actor)
+    return jsonify(items=[_block_json(block) for block in blocks]), 200
+
+
+@scheduling_bp.put("/me/horario-trabajo")
+@authenticated
+def set_my_work_hours() -> tuple[Response, int]:
+    body = _validate(WorkHoursRequest)
+    blocks = [
+        WorkBlock(dia_semana=item.dia_semana, inicio=_hhmm(item.inicio), fin=_hhmm(item.fin))
+        for item in body.bloques
+    ]
+    saved = _work_hours().set_my_work_hours(g.actor, blocks)
+    return jsonify(items=[_block_json(block) for block in saved]), 200
+
+
+@scheduling_bp.get("/admin/horarios/propuesta")
+@authenticated
+def propose_slots() -> tuple[Response, int]:
+    medico = _optional_uuid("medico_id")
+    if medico is None:
+        raise ValidationFailed("'medico_id' is required")
+    proposal = _work_hours().propose_slots(
+        g.actor, medico, _day_query("desde"), _day_query("hasta")
+    )
+    items = [
+        {
+            "inicio_utc": slot.inicio_utc.isoformat(),
+            "fin_utc": slot.fin_utc.isoformat(),
+            "franja": slot.franja,
+        }
+        for slot in proposal
+    ]
+    return jsonify(items=items, total=len(items)), 200
+
+
+@scheduling_bp.post("/admin/horarios/generar")
+@authenticated
+def generate_slots() -> tuple[Response, int]:
+    body = _validate(GenerateSlotsRequest)
+    created, existing = _work_hours().generate_slots(
+        g.actor,
+        str(body.medico_id),
+        str(body.consultorio_id),
+        _parse_day(body.desde),
+        _parse_day(body.hasta),
+    )
+    return jsonify(creados=created, existentes=existing), 201

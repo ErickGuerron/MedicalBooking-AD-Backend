@@ -68,6 +68,7 @@ from medicalbooking.modules.reporting.infrastructure.repositories import SqlRepo
 from medicalbooking.modules.reporting.presentation.openapi import reporting_fragment
 from medicalbooking.modules.reporting.presentation.routes import reporting_bp
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
+from medicalbooking.modules.scheduling.application.work_hours import WorkHoursService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
 from medicalbooking.modules.scheduling.presentation.routes import scheduling_bp
@@ -98,6 +99,9 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.engine"] = engine
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
+    app.extensions["medicalbooking.work_hours"] = WorkHoursService(
+        store=SqlSchedulingStore(engine), clock=lambda: datetime.now(UTC)
+    )
     app.extensions["medicalbooking.catalog"] = CatalogService(SqlCatalogStore(engine))
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
     app.extensions["medicalbooking.treatments"] = _build_treatments(engine)
