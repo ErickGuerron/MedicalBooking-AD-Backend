@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from medicalbooking.shared.domain.errors import ValidationFailed
 
 PERM_BOOK = "citas.reservar"
+PERM_DECLARE_HOURS = "horario.declarar"  # a doctor declares the hours they work
+PERM_GENERATE_SLOTS = "horario.generar"  # an administrator proposes and creates slots
 PERM_CANCEL_MEDICO = "citas.cancelar_medico"
 ROLE_PATIENT = "PACIENTE"
 PERM_OPEN_CONSULTATION = "consultas.abrir"

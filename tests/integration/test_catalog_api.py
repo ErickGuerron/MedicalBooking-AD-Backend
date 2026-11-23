@@ -16,6 +16,7 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
+from tests.integration.clinic_time import afternoon
 from tests.integration.test_scheduling_api import KEY, _user
 from tests.integration.test_scheduling_api import _token as _headers
 
@@ -36,7 +37,9 @@ def engine(app: Flask) -> Engine:
 def _doctor(engine: Engine) -> str:
     """A doctor with an open-ended agenda and one slot two days ahead; return the doctor id."""
     user = _user(engine, "MEDICO")
-    start = (datetime.now(UTC) + timedelta(days=2)).replace(second=0, microsecond=0, tzinfo=None)
+    start = afternoon(datetime.now(UTC) + timedelta(days=2)).replace(
+        second=0, microsecond=0, tzinfo=None
+    )
     with engine.begin() as conn:
         medico_id = conn.execute(
             text(

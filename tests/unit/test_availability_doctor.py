@@ -26,7 +26,7 @@ class NamedStore(FakeStore):
     calls: list[dict] = field(default_factory=list)
     named: bool = True
 
-    def list_available(self, start, end, medico_id, limit, especialidad_id=None):
+    def list_available(self, start, end, medico_id, limit, especialidad_id=None, franja=None):
         self.calls.append({"medico_id": medico_id, "especialidad_id": especialidad_id})
         begin = NOW + timedelta(days=1)
         return [

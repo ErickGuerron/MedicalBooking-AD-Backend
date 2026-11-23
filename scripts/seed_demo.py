@@ -79,6 +79,7 @@ from medicalbooking.config import Settings
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.identity.domain.policies import PERM_USERS_ADMIN
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
+from medicalbooking.modules.scheduling.domain.clinic_hours import TARDE, franja_of_start
 from medicalbooking.shared.domain.demographics import SEXES, validate_sex
 from medicalbooking.shared.domain.errors import AppError
 
@@ -86,6 +87,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEMO_DOMAIN = "demo.test"
 DEMO_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "medicalbooking-demo-seed")
 BRANCH_TZ = timezone(timedelta(hours=-5))  # fixed offset, same convention as seed_availability
+BRANCH_OFFSET = timedelta(hours=-5)
 OPENS = time(8, 0)
 CLOSES = time(17, 0)
 SLOT_MINUTES = 30
@@ -773,9 +775,15 @@ def _book_slots(
     slots: list[Slot],
     service_id: str,
 ) -> int:
-    """One booking per patient through SchedulingService.book, so each writes cita.reservada."""
-    if len(slots) < len(patients):
-        raise ValueError("not enough slots for the demo patients; increase --days")
+    """One booking per patient through SchedulingService.book, so each writes cita.reservada.
+
+    Consultations are booked in the afternoon window, so the demo books afternoon slots only.
+    """
+    afternoon = [
+        slot for slot in slots if franja_of_start((slot.start + BRANCH_OFFSET).time()) == TARDE
+    ]
+    if len(afternoon) < len(patients):
+        raise ValueError("not enough afternoon slots for the demo patients; increase --days")
     directory = SqlUserDirectory(engine)
     for index, patient in enumerate(patients):
         actor = directory.load_access(patient.user_id)
@@ -783,8 +791,8 @@ def _book_slots(
             raise ValueError(f"{patient.email} has no access profile")
         scheduling.book(
             actor,
-            idempotency_key=_booking_key(patient, slots[index]),
-            horario_id=slots[index].id,
+            idempotency_key=_booking_key(patient, afternoon[index]),
+            horario_id=afternoon[index].id,
             servicio_id=service_id,
             motivo=None,
         )

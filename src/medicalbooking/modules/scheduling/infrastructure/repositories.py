@@ -8,7 +8,7 @@ outbox rows commit with the appointment or not at all. Parameterized SQL only.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import IntegrityError
@@ -26,11 +26,14 @@ from medicalbooking.modules.scheduling.application.ports import (
     Consultation,
     ConsultationOutcome,
     ConsultationStatus,
+    Consultorio,
+    DoctorProfile,
     OpenConsultationCommand,
     ReserveCommand,
     ReserveOutcome,
     ReserveStatus,
 )
+from medicalbooking.modules.scheduling.domain.clinic_hours import FRANJAS, WorkBlock
 from medicalbooking.modules.scheduling.domain.policies import (
     ACTIVE_STATES,
     cancellation_window_closed,
@@ -42,6 +45,14 @@ from medicalbooking.shared.infrastructure.sql_errors import is_unique_violation,
 
 _BOOKED = "PENDIENTE_PAGO"
 _CANCELLED = "CANCELADA"
+
+
+def _as_guid(value: object) -> uuid.UUID | None:
+    """The value as a UUID, or None when it is not one (so no SQL is sent for a malformed id)."""
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
 
 
 def _canonical(value: object) -> str:
@@ -220,8 +231,186 @@ class SqlSchedulingStore:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
+    # ---------- doctor work hours and slot generation ----------
+
+    def doctor_profile_for_user(self, user_id: str) -> DoctorProfile | None:
+        return self._doctor_profile("usuario_id", user_id)
+
+    def doctor_profile_by_id(self, medico_id: str) -> DoctorProfile | None:
+        return self._doctor_profile("id", medico_id)
+
+    def _doctor_profile(self, column: str, value: str) -> DoctorProfile | None:
+        # `column` is a fixed name written in this module, never user input.
+        if column == "id" and _as_guid(value) is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    f"SELECT id, duracion_cita_min, activo FROM medicos WHERE {column} = :v"  # noqa: S608
+                ),
+                {"v": value},
+            ).first()
+        if row is None:
+            return None
+        return DoctorProfile(
+            medico_id=_canonical(row.id),
+            duracion_cita_min=row.duracion_cita_min,
+            activo=bool(row.activo),
+        )
+
+    def get_work_blocks(self, medico_id: str, on: date) -> list[WorkBlock]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT b.dia_semana, b.inicio, b.fin "
+                    "FROM horarios_trabajo_medico b "
+                    "JOIN horarios_trabajo_version v ON v.id = b.version_id "
+                    "WHERE v.medico_id = :m AND v.vigente_desde = ("
+                    "SELECT MAX(v2.vigente_desde) FROM horarios_trabajo_version v2 "
+                    "WHERE v2.medico_id = :m AND v2.vigente_desde <= :d) "
+                    "ORDER BY b.dia_semana, b.inicio"
+                ),
+                {"m": medico_id, "d": on},
+            ).all()
+        return [
+            WorkBlock(dia_semana=row.dia_semana, inicio=row.inicio, fin=row.fin) for row in rows
+        ]
+
+    def list_consultorios(self) -> list[Consultorio]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT c.id, c.nombre, s.nombre AS sede FROM consultorios c "
+                    "JOIN sedes s ON s.id = c.sede_id WHERE c.activo = 1 AND s.activo = 1 "
+                    "ORDER BY s.nombre, c.nombre"
+                )
+            ).all()
+        return [
+            Consultorio(id=_canonical(row.id), nombre=row.nombre, sede=row.sede) for row in rows
+        ]
+
+    def declared_hours_exist(self, medico_id: str) -> bool:
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text("SELECT 1 FROM horarios_trabajo_version WHERE medico_id = :m"),
+                {"m": medico_id},
+            ).first()
+        return found is not None
+
+    def replace_work_blocks(
+        self, medico_id: str, blocks: list[WorkBlock], effective_from: date, now: datetime
+    ) -> None:
+        moment = _utc_naive(now)
+        with self._engine.begin() as conn:
+            version = conn.execute(
+                text(
+                    "SELECT id FROM horarios_trabajo_version "
+                    "WHERE medico_id = :m AND vigente_desde = :d"
+                ),
+                {"m": medico_id, "d": effective_from},
+            ).first()
+            if version is None:
+                version_id = str(uuid.uuid4())
+                conn.execute(
+                    text(
+                        "INSERT INTO horarios_trabajo_version "
+                        "(id, medico_id, vigente_desde, creado_en) "
+                        "VALUES (:id, :m, :d, :ahora)"
+                    ),
+                    {"id": version_id, "m": medico_id, "d": effective_from, "ahora": moment},
+                )
+            else:
+                version_id = str(version.id)
+                conn.execute(
+                    text("DELETE FROM horarios_trabajo_medico WHERE version_id = :v"),
+                    {"v": version_id},
+                )
+            for block in blocks:
+                conn.execute(
+                    text(
+                        "INSERT INTO horarios_trabajo_medico "
+                        "(id, version_id, dia_semana, inicio, fin, actualizado_en) "
+                        "VALUES (:id, :v, :d, :i, :f, :ahora)"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "v": version_id,
+                        "d": block.dia_semana,
+                        "i": block.inicio,
+                        "f": block.fin,
+                        "ahora": moment,
+                    },
+                )
+
+    def consultorio_is_active(self, consultorio_id: str) -> bool:
+        if _as_guid(consultorio_id) is None:
+            return False
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text("SELECT 1 FROM consultorios WHERE id = :c AND activo = 1"),
+                {"c": consultorio_id},
+            ).first()
+        return found is not None
+
+    def insert_generated_slots(
+        self,
+        medico_id: str,
+        consultorio_id: str,
+        desde: date,
+        hasta: date,
+        slots: list[tuple[datetime, datetime]],
+    ) -> tuple[int, int]:
+        with self._engine.begin() as conn:
+            agenda = conn.execute(
+                text(
+                    "SELECT TOP 1 id FROM agendas WHERE medico_id = :m AND consultorio_id = :c "
+                    "AND activa = 1 AND fecha_inicio <= :d "
+                    "AND (fecha_fin IS NULL OR fecha_fin >= :h)"
+                ),
+                {"m": medico_id, "c": consultorio_id, "d": desde, "h": hasta},
+            ).first()
+            agenda_id = str(agenda.id) if agenda else str(uuid.uuid4())
+            if agenda is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO agendas "
+                        "(id, medico_id, consultorio_id, fecha_inicio, fecha_fin, activa) "
+                        "VALUES (:id, :m, :c, :d, :h, 1)"
+                    ),
+                    {"id": agenda_id, "m": medico_id, "c": consultorio_id, "d": desde, "h": hasta},
+                )
+            created = 0
+            for start, end in slots:
+                # A doctor never has two slots at the same start, in any agenda.
+                created += conn.execute(
+                    text(
+                        "INSERT INTO horarios_disponibles (id, agenda_id, inicio_utc, fin_utc) "
+                        "SELECT :id, :a, :s, :e WHERE NOT EXISTS ("
+                        "SELECT 1 FROM horarios_disponibles h "
+                        "JOIN agendas ag ON ag.id = h.agenda_id "
+                        "WHERE ag.medico_id = :m AND h.inicio_utc = :s)"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "a": agenda_id,
+                        "s": _utc_naive(start),
+                        "e": _utc_naive(end),
+                        "m": medico_id,
+                    },
+                ).rowcount
+        return created, len(slots) - created
+
+    def service_franja(self, servicio_id: str) -> str | None:
+        if _as_guid(servicio_id) is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT franja FROM servicios_medicos WHERE id = :s"), {"s": servicio_id}
+            ).first()
+        return row.franja if row else None
+
     def list_available(
-        self, start, end, medico_id, limit, especialidad_id=None
+        self, start, end, medico_id, limit, especialidad_id=None, franja=None
     ) -> list[AvailableSlot]:
         sql = (
             "SELECT TOP (:limite) h.id, m.id AS medico_id, h.inicio_utc, h.fin_utc, "
@@ -247,6 +436,11 @@ class SqlSchedulingStore:
                 "AND me.especialidad_id = :esp) "
             )
             params["esp"] = especialidad_id
+        if franja is not None:
+            # Branch time is UTC-5, as the slot generation uses.
+            local = "CAST(DATEADD(hour, -5, h.inicio_utc) AS time)"
+            sql += f"AND {local} >= :franja_ini AND {local} < :franja_fin "
+            params["franja_ini"], params["franja_fin"] = FRANJAS[franja]
         sql += "ORDER BY h.inicio_utc"
         with self._engine.connect() as conn:
             rows = conn.execute(text(sql), params).all()

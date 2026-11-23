@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
@@ -23,6 +23,7 @@ from medicalbooking.modules.scheduling.application.ports import (
     ReserveStatus,
     SchedulingStore,
 )
+from medicalbooking.modules.scheduling.domain.clinic_hours import BRANCH_TZ, franja_of_start
 from medicalbooking.modules.scheduling.domain.policies import (
     CONSULTATION_APPOINTMENT_STATES,
     PERM_BOOK,
@@ -85,6 +86,7 @@ class SchedulingService:
         end: datetime,
         medico_id: str | None = None,
         especialidad_id: int | None = None,
+        servicio_id: str | None = None,
     ) -> list[AvailableSlot]:
         _require(actor, PERM_BOOK)
         validate_window(start, end)
@@ -92,8 +94,15 @@ class SchedulingService:
         effective_start = max(start, self._clock())
         if effective_start >= end:
             return []
+        # A service offers only the slots of its own window (morning samples, afternoon visits).
+        franja = self._store.service_franja(servicio_id) if servicio_id else None
         return self._store.list_available(
-            effective_start, end, medico_id, MAX_RESULTS, especialidad_id=especialidad_id
+            effective_start,
+            end,
+            medico_id,
+            MAX_RESULTS,
+            especialidad_id=especialidad_id,
+            franja=franja,
         )
 
     def book(
@@ -121,6 +130,7 @@ class SchedulingService:
             raise ValidationFailed("The schedule slot has already started")
         if not self._store.service_is_active(servicio_id):
             raise NotFound("Medical service not found")
+        self._check_franja(servicio_id, slot_start)
 
         outcome = self._store.reserve(
             ReserveCommand(
@@ -323,6 +333,15 @@ class SchedulingService:
                 occurred_at=self._clock(),
             )
         )
+
+    def _check_franja(self, servicio_id: str, slot_start: datetime) -> None:
+        """Sample collection is booked in the morning window, consultations in the afternoon."""
+        franja = self._store.service_franja(servicio_id)
+        if franja is None:
+            return
+        start = slot_start if slot_start.tzinfo is not None else slot_start.replace(tzinfo=UTC)
+        if franja_of_start(start.astimezone(BRANCH_TZ).time()) != franja:
+            raise ValidationFailed("This service cannot be booked at this time of day")
 
     @staticmethod
     def _replay_or_conflict(

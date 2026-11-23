@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Protocol
 
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
+from medicalbooking.modules.scheduling.domain.clinic_hours import WorkBlock
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,61 @@ class ApprovalStatus(Enum):
     ALREADY_APPROVED = "already_approved"
 
 
+@dataclass(frozen=True)
+class Consultorio:
+    id: str
+    nombre: str
+    sede: str
+
+
+@dataclass(frozen=True)
+class DoctorProfile:
+    medico_id: str
+    duracion_cita_min: int
+    activo: bool
+
+
+@dataclass(frozen=True)
+class ProposedSlot:
+    inicio_utc: datetime
+    fin_utc: datetime
+    franja: str
+
+
 class SchedulingStore(Protocol):
+    def doctor_profile_for_user(self, user_id: str) -> DoctorProfile | None: ...
+
+    def doctor_profile_by_id(self, medico_id: str) -> DoctorProfile | None: ...
+
+    def get_work_blocks(self, medico_id: str, on: date) -> list[WorkBlock]:
+        """The hours in force on `on`: the latest version effective on or before that day."""
+        ...
+
+    def declared_hours_exist(self, medico_id: str) -> bool: ...
+
+    def list_consultorios(self) -> list[Consultorio]: ...
+
+    def replace_work_blocks(
+        self, medico_id: str, blocks: list[WorkBlock], effective_from: date, now: datetime
+    ) -> None:
+        """Set the hours from `effective_from` on. A later change for the same day replaces it."""
+        ...
+
+    def consultorio_is_active(self, consultorio_id: str) -> bool: ...
+
+    def insert_generated_slots(
+        self,
+        medico_id: str,
+        consultorio_id: str,
+        desde: date,
+        hasta: date,
+        slots: list[tuple[datetime, datetime]],
+    ) -> tuple[int, int]:
+        """Create the slots that do not exist yet: (created, already there)."""
+        ...
+
+    def service_franja(self, servicio_id: str) -> str | None: ...
+
     def list_available(
         self,
         start: datetime,
@@ -162,6 +217,7 @@ class SchedulingStore(Protocol):
         medico_id: str | None,
         limit: int,
         especialidad_id: int | None = None,
+        franja: str | None = None,
     ) -> list[AvailableSlot]: ...
 
     def find_slot(self, horario_id: str) -> datetime | None:

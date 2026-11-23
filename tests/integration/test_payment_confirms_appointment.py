@@ -11,6 +11,7 @@ from sqlalchemy import Engine, text
 from medicalbooking.modules.payments.domain.webhook import interpret_event
 from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
 from medicalbooking.modules.payments.infrastructure.repositories import SqlPaymentsStore
+from tests.integration.clinic_time import afternoon
 from tests.integration.test_stripe_webhook_store import _event, _seed_pago
 
 pytestmark = pytest.mark.integration
@@ -45,7 +46,7 @@ def _cita(conn, ids: dict[str, str], estado: str) -> str:
         ),
         {"a": agenda, "m": medico, "c": consultorio},
     )
-    start = (datetime.now(UTC) + timedelta(days=3)).replace(tzinfo=None)
+    start = afternoon(datetime.now(UTC) + timedelta(days=3)).replace(tzinfo=None)
     conn.execute(
         text(
             "INSERT INTO horarios_disponibles (id, agenda_id, inicio_utc, fin_utc, estado) "
