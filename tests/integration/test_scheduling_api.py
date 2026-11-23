@@ -21,6 +21,7 @@ from medicalbooking.config import Settings
 from medicalbooking.modules.identity.application.ports import NewUser
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
 from medicalbooking.modules.identity.infrastructure.security import Argon2PasswordHasher
+from tests.integration.clinic_time import afternoon
 
 pytestmark = pytest.mark.integration
 
@@ -73,7 +74,9 @@ def _slot(engine: Engine, *, days_ahead: int = 2, doctor: str | None = None) -> 
     """
     if doctor is None:
         doctor = _user(engine, "MEDICO")
-    start = datetime.now(UTC).replace(second=0, microsecond=0) + timedelta(days=days_ahead)
+    start = afternoon(
+        datetime.now(UTC).replace(second=0, microsecond=0) + timedelta(days=days_ahead)
+    )
     start = start.replace(tzinfo=None)
     with engine.begin() as conn:
         medico_id = conn.execute(

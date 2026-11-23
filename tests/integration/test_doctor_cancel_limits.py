@@ -16,6 +16,7 @@ from sqlalchemy import Engine, text
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
+from tests.integration.clinic_time import afternoon
 from tests.integration.test_scheduling_api import _book, _service, _token, _user
 
 pytestmark = pytest.mark.integration
@@ -67,8 +68,13 @@ def _doctor_with_slots(engine: Engine, offsets_hours: list[int]) -> tuple[str, l
             {"m": medico_id, "c": consultorio_id, "d": now.date()},
         ).scalar_one()
         slots = []
-        for hours in offsets_hours:
-            start = (now + timedelta(hours=hours)).replace(tzinfo=None)
+        # Consultations are afternoon slots. A slot less than a day away starts at the next
+        # afternoon (within 24 hours); the others sit on consecutive days, so they never collide.
+        for index, hours in enumerate(offsets_hours):
+            if hours < 24:
+                start = afternoon(now + timedelta(hours=1)).replace(tzinfo=None)
+            else:
+                start = afternoon(now + timedelta(days=3 + index)).replace(tzinfo=None)
             slot_id = conn.execute(
                 text(
                     "INSERT INTO horarios_disponibles (id, agenda_id, inicio_utc, fin_utc) "

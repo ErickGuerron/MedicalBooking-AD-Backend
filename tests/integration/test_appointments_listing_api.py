@@ -20,6 +20,7 @@ from medicalbooking.config import Settings
 from medicalbooking.modules.identity.application.ports import NewUser
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
 from medicalbooking.modules.identity.infrastructure.security import Argon2PasswordHasher
+from tests.integration.clinic_time import afternoon
 
 pytestmark = pytest.mark.integration
 
@@ -70,7 +71,9 @@ def _headers(app: Flask, user_id: str) -> dict[str, str]:
 def _agenda(engine: Engine) -> tuple[str, str]:
     """Create a clinician with one agenda and one free slot; return (doctor user, slot id)."""
     doctor = _user(engine, "MEDICO")
-    start = (datetime.now(UTC) + timedelta(days=4)).replace(second=0, microsecond=0, tzinfo=None)
+    start = afternoon(datetime.now(UTC) + timedelta(days=4)).replace(
+        second=0, microsecond=0, tzinfo=None
+    )
     with engine.begin() as conn:
         medico_id = conn.execute(
             text(
