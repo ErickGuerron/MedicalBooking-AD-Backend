@@ -209,6 +209,27 @@ def laboratory_fragment() -> dict[str, Any]:
                     },
                 },
             },
+            "/api/v1/lab/orders/{order_id}/results/review": {
+                "post": {
+                    "tags": ["Laboratory"],
+                    "operationId": "reviewLabResults",
+                    "summary": "Read each result before confirming: confirm or correct it",
+                    "description": (
+                        "Requires resultados.registrar. Every reading is kept; the latest one is "
+                        "effective. A reading that differs from the system's needs a motivo."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [_path_param("order_id")],
+                    "requestBody": _body("ReviewResultsRequest"),
+                    "responses": {
+                        "200": {"description": "Results reviewed"},
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks resultados.registrar"),
+                        "404": _problem("Order or result not found"),
+                        "422": _problem("Invalid reading, or a corrected reading without motivo"),
+                    },
+                }
+            },
             "/api/v1/lab/orders/{order_id}/review": {
                 "post": {
                     "tags": ["Laboratory"],
@@ -244,7 +265,9 @@ def laboratory_fragment() -> dict[str, Any]:
                         "401": _problem("Missing, malformed or inactive credentials"),
                         "403": _problem("Caller lacks resultados.registrar"),
                         "404": _problem("Order not found"),
-                        "409": _problem("Not completed, or already confirmed"),
+                        "409": _problem(
+                            "Not completed, already confirmed, or a result still awaits review"
+                        ),
                     },
                 }
             },
@@ -620,6 +643,44 @@ def laboratory_fragment() -> dict[str, Any]:
                             "type": ["string", "null"],
                             "enum": ["BAJO", "DENTRO_REFERENCIA", "ALTO", "NO_EVALUABLE", None],
                         },
+                        "interpretacion_sistema": {
+                            "type": ["string", "null"],
+                            "description": "Reading computed by the system; never changed",
+                            "enum": ["BAJO", "DENTRO_REFERENCIA", "ALTO", "NO_EVALUABLE", None],
+                        },
+                        "revisado": {"type": "boolean"},
+                        "corregido": {
+                            "type": "boolean",
+                            "description": "True when the effective reading differs from the "
+                            "system's",
+                        },
+                        "motivo_correccion": {"type": ["string", "null"], "maxLength": 1000},
+                    },
+                },
+                "ResultReviewItem": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["resultado_id", "interpretacion_final"],
+                    "properties": {
+                        "resultado_id": _UUID_PARAM,
+                        "interpretacion_final": {
+                            "type": "string",
+                            "enum": ["BAJO", "DENTRO_REFERENCIA", "ALTO", "NO_EVALUABLE"],
+                        },
+                        "motivo": {"type": ["string", "null"], "maxLength": 1000},
+                    },
+                },
+                "ReviewResultsRequest": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["revisiones"],
+                    "properties": {
+                        "revisiones": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 200,
+                            "items": {"$ref": "#/components/schemas/ResultReviewItem"},
+                        }
                     },
                 },
                 "LabResultList": {

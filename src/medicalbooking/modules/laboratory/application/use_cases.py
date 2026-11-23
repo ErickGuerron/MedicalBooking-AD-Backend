@@ -321,6 +321,14 @@ class LabService:
             raise NotFound("Order not found")
         if not entries:
             raise ValidationFailed("At least one analyte result is required")
+        detail = next((d for d in order.details if d.id == str(detail_id)), None)
+        free_text = any(entry.analito_id is None for entry in entries)
+        mixed = detail is not None and self._store.detail_has_analyte_results(detail.id)
+        if free_text and mixed:
+            # Once a test is reported per analyte, a loose value cannot be added to it.
+            raise ValidationFailed(
+                "This test is already reported per analyte; add the analyte instead"
+            )
         for entry in entries:
             validate_result_values(
                 nombre=entry.nombre_analito,
@@ -333,7 +341,6 @@ class LabService:
             if entry.analito_id is not None:
                 # A result belongs to the test it is entered under. Analytes that were not part
                 # of the order need a new order, never a silent extra row on this one.
-                detail = next((d for d in order.details if d.id == str(detail_id)), None)
                 if detail is not None and not self._store.analyte_linked_to_test(
                     entry.analito_id, detail.tipo_prueba_id
                 ):

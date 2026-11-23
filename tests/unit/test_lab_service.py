@@ -68,11 +68,15 @@ class FakeStore:
     references: list = field(default_factory=list)
     profile: tuple = (None, None)
     linked: set | None = None  # None: every analyte is linked (no restriction in the fake)
+    analyte_detail_ids: set = field(default_factory=set)  # details already reported per analyte
     related: set = field(default_factory=set)  # (medico_id, paciente_id) pairs with a relation
     inactive: set = field(default_factory=set)  # paciente ids whose account is not ACTIVO
 
     def analyte_linked_to_test(self, analito_id, tipo_prueba_id):
         return self.linked is None or (analito_id, tipo_prueba_id) in self.linked
+
+    def detail_has_analyte_results(self, detalle_id):
+        return detalle_id in self.analyte_detail_ids
 
     def patient_profile(self, paciente_id):
         return self.profile
@@ -597,6 +601,37 @@ def test_a_result_needs_a_text_or_numeric_value(store, storage, world) -> None:
             order.details[0].id,
             [_entry(valor_numerico=None, valor_texto=None)],
         )
+
+
+def test_a_free_text_result_cannot_join_a_test_already_reported_per_analyte(
+    store, storage, world
+) -> None:
+    service = _service(store, storage)
+    order = _order(service, world)
+    store.analyte_detail_ids.add(order.details[0].id)
+
+    with pytest.raises(ValidationFailed):
+        service.record_results(
+            world["lab"],
+            order.id,
+            order.details[0].id,
+            [_entry(nombre_analito="Valor suelto", valor_numerico=7.0)],
+        )
+    assert store.recorded_entries == []
+
+
+def test_a_numeric_result_cannot_be_negative(store, storage, world) -> None:
+    service = _service(store, storage)
+    order = _order(service, world)
+
+    with pytest.raises(ValidationFailed):
+        service.record_results(
+            world["lab"],
+            order.id,
+            order.details[0].id,
+            [_entry(valor_numerico=-5.0)],
+        )
+    assert store.recorded_entries == []
 
 
 def test_results_never_carry_a_clinical_classification(store, storage, world) -> None:
