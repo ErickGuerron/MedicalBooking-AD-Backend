@@ -96,3 +96,21 @@ def slot_starts(block: WorkBlock, duration_min: int) -> list[time]:
 def local_to_utc_naive(day: date, at: time) -> datetime:
     """A branch-time day and time as the naive UTC datetime the database stores."""
     return datetime.combine(day, at, BRANCH_TZ).astimezone(UTC).replace(tzinfo=None)
+
+
+def declared_hours_payload(
+    medico_id: str, vigente_desde: date, blocks: Sequence[WorkBlock]
+) -> dict[str, object]:
+    """Replica snapshot of one declared week: the whole block set, so a replay replaces the week."""
+    ordered = sorted(blocks, key=lambda block: (block.dia_semana, block.inicio))
+    return {
+        "horario": {"medico_id": medico_id, "vigente_desde": vigente_desde.isoformat()},
+        "bloques": [
+            {
+                "dia_semana": block.dia_semana,
+                "inicio": block.inicio.isoformat(),
+                "fin": block.fin.isoformat(),
+            }
+            for block in ordered
+        ],
+    }

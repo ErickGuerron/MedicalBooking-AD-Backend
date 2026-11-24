@@ -33,7 +33,11 @@ from medicalbooking.modules.scheduling.application.ports import (
     ReserveOutcome,
     ReserveStatus,
 )
-from medicalbooking.modules.scheduling.domain.clinic_hours import FRANJAS, WorkBlock
+from medicalbooking.modules.scheduling.domain.clinic_hours import (
+    FRANJAS,
+    WorkBlock,
+    declared_hours_payload,
+)
 from medicalbooking.modules.scheduling.domain.policies import (
     ACTIVE_STATES,
     cancellation_window_closed,
@@ -341,6 +345,15 @@ class SqlSchedulingStore:
                         "ahora": moment,
                     },
                 )
+            # Replica event (replica-work-hours S1): the whole week in the same transaction.
+            append_outbox(
+                conn,
+                "medico_horario",
+                _canonical(medico_id),
+                "horario_trabajo.declarado",
+                declared_hours_payload(_canonical(medico_id), effective_from, blocks),
+                moment,
+            )
 
     def consultorio_is_active(self, consultorio_id: str) -> bool:
         if _as_guid(consultorio_id) is None:
