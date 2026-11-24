@@ -17,7 +17,7 @@ Branch: feat/replica-work-hours (from develop). Delivery: ask-on-risk. Test runn
 - T3a | S3 | inline | done (2589475) | RED: test_declared_hours_snapshot collection error; GREEN: declared_hours_sync (build + guarded upsert), declared_hours_source (SQL Server reader), wired into sync_replica_catalog; reader SQL verified against Azure with a read-only SELECT (0 weeks, data empty). Unit suite 1654 passed
 - T3b | S5 | inline | pending | franja in directory snapshot. Changing the servicios tuple also touches test_directory_sync, test_mongo_directory and test_catalog_api; needs its own review
 - T6 | S1-S3 (Atlas) | inline | done in code, commit pending review | RED: test_mongo_declared_hours collection error; GREEN: horario_key, _MongoTransaction.upsert_horario_version, mongo_declared_hours snapshot wired in sync_replica_catalog. Collection horarios_trabajo. Unit suite 1659 passed. Not verified: the Atlas projection role must have write access to this collection
-- T4 | S4 | inline | pending | contingency read endpoints for work hours and availability (read-only, no writes); not started
+- T4 | S4 | inline | done in part (9dafaee) | GET /api/v1/contingencia/horarios-medicos: the week in force per active doctor, active account, audited before the read, fail closed. RED observed (collection error), then GREEN. Availability (free slots) NOT implemented: replica.citas has no medico_id and other patients' bookings are not replicated, so free slots cannot be computed without exposing other patients' appointments. Needs a product decision
 - T5 | S6 | - | pending | user review of commits d1a0cbb, cedfc60, 2589475; no push, no migration 0015 apply to Supabase until approved
 
 ## Log
@@ -29,4 +29,6 @@ Branch: feat/replica-work-hours (from develop). Delivery: ask-on-risk. Test runn
 - L6 (parent, check): the new event passes through every outbox destination. Mongo records an unknown event type as processed without applying it, and the notifications handler ignores types it does not template, so no destination blocks on it.
 - L7 (parent, not verified): the integration tests against a real SQL Server (outbox row in the same transaction, snapshot end to end) have not been run in this session. Only unit tests and a read-only query against Azure were run.
 - L8 (parent): nothing was written to Azure by this work. Supabase received nothing; migration 0015 is in the repo only.
+- L9 (parent, deviation from S4): availability is not in the outage read. The contingency returns work hours only. Free slots would need other patients' booking state, which the replica must not expose (cita snapshot excludes the doctor and the agenda by design).
+- L10 (parent): the schedule denial is audited with entidad horario_trabajo, the same rule as the results read.
 - L5 (parent): the earlier claim that the schedule was internal was wrong. The feature is merged in PR #107 and used by scheduling/infrastructure/repositories.py; the search that missed it was not recursive.
