@@ -16,6 +16,7 @@ Branch: feat/replica-work-hours (from develop). Delivery: ask-on-risk. Test runn
 - T2 | S2 | inline | done (cedfc60) | RED: test_replica_work_hours_projection failed; GREEN: handler, upsert_horario_version with version guard, migration migrations_supabase/sql/0015_replica_work_hours.sql; unit suite 1652 passed
 - T3a | S3 | inline | done (2589475) | RED: test_declared_hours_snapshot collection error; GREEN: declared_hours_sync (build + guarded upsert), declared_hours_source (SQL Server reader), wired into sync_replica_catalog; reader SQL verified against Azure with a read-only SELECT (0 weeks, data empty). Unit suite 1654 passed
 - T3b | S5 | inline | pending | franja in directory snapshot. Changing the servicios tuple also touches test_directory_sync, test_mongo_directory and test_catalog_api; needs its own review
+- T6 | S1-S3 (Atlas) | inline | done in code, commit pending review | RED: test_mongo_declared_hours collection error; GREEN: horario_key, _MongoTransaction.upsert_horario_version, mongo_declared_hours snapshot wired in sync_replica_catalog. Collection horarios_trabajo. Unit suite 1659 passed. Not verified: the Atlas projection role must have write access to this collection
 - T4 | S4 | inline | pending | contingency read endpoints for work hours and availability (read-only, no writes); not started
 - T5 | S6 | - | pending | user review of commits d1a0cbb, cedfc60, 2589475; no push, no migration 0015 apply to Supabase until approved
 

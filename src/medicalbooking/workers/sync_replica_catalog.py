@@ -29,6 +29,9 @@ from medicalbooking.modules.replica.application.directory_sync import replace_di
 from medicalbooking.modules.replica.infrastructure.declared_hours_source import (
     read_declared_hours,
 )
+from medicalbooking.modules.replica.infrastructure.mongo_declared_hours import (
+    upsert_declared_hours_mongo,
+)
 from medicalbooking.modules.replica.infrastructure.mongo_directory import replace_directory_mongo
 from medicalbooking.modules.replica.infrastructure.supabase_catalog import (
     SupabaseCatalogTarget,
@@ -87,6 +90,7 @@ def main() -> int:
                 settings.mongodb_projection_uri.get_secret_value(), serverSelectionTimeoutMS=5000
             )
             replace_directory_mongo(directory, client[settings.mongodb_database])
+            upsert_declared_hours_mongo(declared_hours, client[settings.mongodb_database])
     except Exception as error:
         logger.error("directory sync failed for mongodb: %s", type(error).__name__)
         failed.append("mongodb")

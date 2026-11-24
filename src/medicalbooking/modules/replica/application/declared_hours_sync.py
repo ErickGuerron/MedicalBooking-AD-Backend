@@ -8,6 +8,7 @@ a row is replaced only by a newer version. Snapshot and events never reverse eac
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -21,6 +22,11 @@ _UPSERT = (
     "bloques = excluded.bloques, version = excluded.version "
     "WHERE replica.horarios_trabajo_version.version < excluded.version"
 )
+
+
+def horario_key(medico_id: str, vigente_desde: str) -> str:
+    """Document key of one doctor and one week in MongoDB: "<canonical medico>:<YYYY-MM-DD>"."""
+    return f"{uuid.UUID(str(medico_id))}:{vigente_desde}"
 
 
 @dataclass(frozen=True)
