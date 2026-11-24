@@ -12,6 +12,7 @@ delete. The replica's deletes are plain DELETE statements, and a missing row is 
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -328,6 +329,25 @@ class _Transaction:
                 tratamiento["estado"],
                 tratamiento["fecha_inicio"],
                 tratamiento.get("fecha_fin"),
+                version,
+            ),
+        )
+
+    def upsert_horario_version(
+        self, horario: dict[str, Any], bloques: list[dict[str, Any]], version: int
+    ) -> None:
+        """A newer version of the same doctor and week replaces its blocks; an older one is not."""
+        self._cur.execute(
+            "INSERT INTO replica.horarios_trabajo_version "
+            "(medico_id, vigente_desde, bloques, version) "
+            "VALUES (%s, %s, %s::jsonb, %s) "
+            "ON CONFLICT (medico_id, vigente_desde) DO UPDATE SET "
+            "bloques = excluded.bloques, version = excluded.version "
+            "WHERE replica.horarios_trabajo_version.version < excluded.version",
+            (
+                horario["medico_id"],
+                horario["vigente_desde"],
+                json.dumps(bloques),
                 version,
             ),
         )
