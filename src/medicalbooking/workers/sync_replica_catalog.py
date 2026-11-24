@@ -22,7 +22,13 @@ from pymongo import MongoClient
 
 from medicalbooking.config import Settings
 from medicalbooking.modules.replica.application.catalog_sync import replace_catalog
+from medicalbooking.modules.replica.application.declared_hours_sync import (
+    upsert_declared_hours,
+)
 from medicalbooking.modules.replica.application.directory_sync import replace_directory
+from medicalbooking.modules.replica.infrastructure.declared_hours_source import (
+    read_declared_hours,
+)
 from medicalbooking.modules.replica.infrastructure.mongo_directory import replace_directory_mongo
 from medicalbooking.modules.replica.infrastructure.supabase_catalog import (
     SupabaseCatalogTarget,
@@ -55,6 +61,7 @@ def main() -> int:
     try:
         catalog = read_catalog(engine)
         directory = read_directory(engine)
+        declared_hours = read_declared_hours(engine)
     except Exception as error:
         # Log the error type only: driver messages may carry connection data.
         logger.error("catalog sync failed reading the source: %s", type(error).__name__)
@@ -70,6 +77,7 @@ def main() -> int:
             target = SupabaseCatalogTarget(lambda: psycopg.connect(writer_url, connect_timeout=15))
             replace_catalog(catalog, target)
             replace_directory(directory, target)
+            upsert_declared_hours(declared_hours, target)
     except Exception as error:
         logger.error("catalog sync failed for supabase: %s", type(error).__name__)
         failed.append("supabase")
