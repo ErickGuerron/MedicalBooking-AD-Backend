@@ -12,11 +12,12 @@ Branch: feat/replica-work-hours (from develop). Delivery: ask-on-risk. Test runn
 
 ## Tasks
 
-- T1 | S1 | inline | pending | RED: payload test for horario_trabajo.declarado (unit) | GREEN: emit in replace_work_blocks
-- T2 | S2 | inline | pending | migration replica 0015 + projection handler + unit test
-- T3 | S3, S5 | inline | pending | catalog snapshot of declared hours and franja
-- T4 | S4 | inline | pending | contingency read endpoints (work hours, availability), read-only
-- T5 | S6 | - | pending | review of commits by the user; no push, no Supabase apply until approved
+- T1 | S1 | inline | done (d1a0cbb) | RED: test_horario_trabajo_payload ImportError; GREEN: declared_hours_payload + append_outbox in replace_work_blocks; unit suite 1650 passed
+- T2 | S2 | inline | done (cedfc60) | RED: test_replica_work_hours_projection failed; GREEN: handler, upsert_horario_version with version guard, migration migrations_supabase/sql/0015_replica_work_hours.sql; unit suite 1652 passed
+- T3a | S3 | inline | done (2589475) | RED: test_declared_hours_snapshot collection error; GREEN: declared_hours_sync (build + guarded upsert), declared_hours_source (SQL Server reader), wired into sync_replica_catalog; reader SQL verified against Azure with a read-only SELECT (0 weeks, data empty). Unit suite 1654 passed
+- T3b | S5 | inline | pending | franja in directory snapshot. Changing the servicios tuple also touches test_directory_sync, test_mongo_directory and test_catalog_api; needs its own review
+- T4 | S4 | inline | pending | contingency read endpoints for work hours and availability (read-only, no writes); not started
+- T5 | S6 | - | pending | user review of commits d1a0cbb, cedfc60, 2589475; no push, no migration 0015 apply to Supabase until approved
 
 ## Log
 
@@ -24,4 +25,7 @@ Branch: feat/replica-work-hours (from develop). Delivery: ask-on-risk. Test runn
 - L2 (user, verbatim): "diria que lo mejor seria aplicarlo tanto a nivel de A como B porque, si hago insercion o hay algun error se puede actualizar dentro de 15 minutos y en el outbox igual para que pueda ver replicacion instantanea si no falla la consulta"
 - L3 (user): "si"
 - L4 (parent): the outbox dispatcher runs every minute (cron VM1), so the event path is about one minute, not instantaneous. The snapshot repairs at most 15 minutes after a failure.
+- L6 (parent, check): the new event passes through every outbox destination. Mongo records an unknown event type as processed without applying it, and the notifications handler ignores types it does not template, so no destination blocks on it.
+- L7 (parent, not verified): the integration tests against a real SQL Server (outbox row in the same transaction, snapshot end to end) have not been run in this session. Only unit tests and a read-only query against Azure were run.
+- L8 (parent): nothing was written to Azure by this work. Supabase received nothing; migration 0015 is in the repo only.
 - L5 (parent): the earlier claim that the schedule was internal was wrong. The feature is merged in PR #107 and used by scheduling/infrastructure/repositories.py; the search that missed it was not recursive.
