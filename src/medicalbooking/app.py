@@ -25,6 +25,10 @@ from medicalbooking.modules.clinical.application.shadow_findings import ShadowFi
 from medicalbooking.modules.clinical.infrastructure.repositories import SqlClinicalStore
 from medicalbooking.modules.clinical.presentation.openapi import clinical_fragment
 from medicalbooking.modules.clinical.presentation.routes import clinical_bp
+from medicalbooking.modules.history.application.history_service import HistoryService
+from medicalbooking.modules.history.infrastructure.repositories import SqlHistoryStore
+from medicalbooking.modules.history.presentation.openapi import history_fragment
+from medicalbooking.modules.history.presentation.routes import history_bp
 from medicalbooking.modules.identity.application.use_cases import IdentityService
 from medicalbooking.modules.identity.infrastructure.email import BrevoActivationMailer
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
@@ -110,6 +114,11 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.catalog"] = CatalogService(SqlCatalogStore(engine))
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
     app.extensions["medicalbooking.treatments"] = _build_treatments(engine)
+    app.extensions["medicalbooking.history"] = HistoryService(
+        store=SqlHistoryStore(engine),
+        clock=lambda: datetime.now(UTC),
+        correlation_id=lambda: g.get("correlation_id"),
+    )
     app.extensions["medicalbooking.reporting"] = ReportingService(
         SqlReportingStore(engine), clock=_utc_now
     )
@@ -141,6 +150,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(catalog_bp)
     app.register_blueprint(lab_bp)
     app.register_blueprint(treatments_bp)
+    app.register_blueprint(history_bp)
     app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
     app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
@@ -153,6 +163,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 identity_fragment(),
                 scheduling_fragment(),
                 office_admin_fragment(),
+                history_fragment(),
                 catalog_fragment(),
                 laboratory_fragment(),
                 treatments_fragment(),
