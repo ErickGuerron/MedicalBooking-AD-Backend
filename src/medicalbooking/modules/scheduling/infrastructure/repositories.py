@@ -753,7 +753,9 @@ class SqlSchedulingStore:
                     if with_medico
                     else {}
                 ),
-                pago_id=_canonical(row._mapping["pago_id"]) if row._mapping.get("pago_id") else None,
+                pago_id=_canonical(row._mapping["pago_id"])
+                if row._mapping.get("pago_id")
+                else None,
                 reembolso_estado=row._mapping.get("reembolso_estado"),
             )
             for row in rows
@@ -1138,7 +1140,8 @@ _PATIENT_SUMMARY_SELECT = (
     "WHERE f2.cita_id = c.id AND p2.estado = 'CONFIRMADO' ORDER BY p2.creado_en DESC) AS pago_id, "
     "(SELECT TOP (1) r.estado FROM reembolsos AS r JOIN pagos AS p3 ON p3.id = r.pago_id "
     "JOIN facturas AS f3 ON f3.id = p3.factura_id WHERE f3.cita_id = c.id "
-    "ORDER BY CASE WHEN r.estado IN ('PENDIENTE', 'PROCESADO') THEN 0 ELSE 1 END, r.solicitado_en DESC) AS reembolso_estado "
+    "ORDER BY CASE WHEN r.estado IN ('PENDIENTE', 'PROCESADO') THEN 0 ELSE 1 END, "
+    "r.solicitado_en DESC) AS reembolso_estado "
 )
 _PATIENT_SOURCE = (
     "FROM citas c JOIN pacientes p ON p.id = c.paciente_id "

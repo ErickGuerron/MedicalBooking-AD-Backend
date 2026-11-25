@@ -185,7 +185,8 @@ class SqlRefundStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT TOP (1) r.id, r.estado, r.stripe_refund_id, pa.usuario_id AS owner_user_id "
+                    "SELECT TOP (1) r.id, r.estado, r.stripe_refund_id, pa.usuario_id AS "
+                    "owner_user_id "
                     "FROM reembolsos AS r "
                     "JOIN pagos AS p ON p.id = r.pago_id "
                     "JOIN facturas AS f ON f.id = p.factura_id "

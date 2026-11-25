@@ -259,7 +259,8 @@ class SqlUserDirectory:
     def consume_verification(self, token_hash: str) -> bool:
         """Activate the account behind a valid token, marking the token used atomically.
 
-        A token used in the last ten minutes still answers success for a patient account, so a repeated
+        A token used in the last ten minutes still answers success for a patient account,
+        so a repeated
         request (a reloaded page, a mail client that opens the link first) does not show a failure.
         Only the first use changes the account and emits the event.
         """
@@ -267,11 +268,14 @@ class SqlUserDirectory:
         with self._engine.begin() as conn:
             row = conn.execute(
                 text(
-                    "SELECT id, usuario_id, usado_en FROM verificaciones_correo WITH (UPDLOCK, ROWLOCK) "
+                    "SELECT id, usuario_id, usado_en FROM verificaciones_correo "
+                    "WITH (UPDLOCK, ROWLOCK) "
                     "WHERE token_hash = :hash AND expira_en > SYSUTCDATETIME() "
-                    "AND (usado_en IS NULL OR usado_en >= DATEADD(MINUTE, :grace, SYSUTCDATETIME())) "
+                    "AND (usado_en IS NULL OR usado_en >= DATEADD(MINUTE, :grace, "
+                    "SYSUTCDATETIME())) "
                     "AND EXISTS (SELECT 1 FROM usuarios_roles ur JOIN roles r ON r.id = ur.rol_id "
-                    "WHERE ur.usuario_id = verificaciones_correo.usuario_id AND r.nombre = 'PACIENTE')"
+                    "WHERE ur.usuario_id = verificaciones_correo.usuario_id "
+                    "AND r.nombre = 'PACIENTE')"
                 ),
                 {"hash": token_hash, "grace": grace_minutes},
             ).first()
@@ -305,7 +309,8 @@ class SqlUserDirectory:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT usado_en, CASE WHEN expira_en > SYSUTCDATETIME() THEN 1 ELSE 0 END AS vigente "
+                    "SELECT usado_en, CASE WHEN expira_en > SYSUTCDATETIME() THEN 1 ELSE 0 END "
+                    "AS vigente "
                     "FROM verificaciones_correo WHERE token_hash = :hash"
                 ),
                 {"hash": token_hash},
@@ -329,8 +334,10 @@ class SqlUserDirectory:
             )
             conn.execute(
                 text(
-                    "INSERT INTO restablecimientos_contrasena (id, usuario_id, token_hash, creado_en, expira_en) "
-                    "VALUES (NEWID(), :u, :hash, SYSUTCDATETIME(), DATEADD(MINUTE, :minutes, SYSUTCDATETIME()))"
+                    "INSERT INTO restablecimientos_contrasena (id, usuario_id, "
+                    "token_hash, creado_en, expira_en) "
+                    "VALUES (NEWID(), :u, :hash, SYSUTCDATETIME(), DATEADD(MINUTE, :minutes, "
+                    "SYSUTCDATETIME()))"
                 ),
                 {"u": user_id, "hash": token_hash, "minutes": valid_minutes},
             )
@@ -340,7 +347,8 @@ class SqlUserDirectory:
         with self._engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT usado_en, CASE WHEN expira_en > SYSUTCDATETIME() THEN 1 ELSE 0 END AS vigente "
+                    "SELECT usado_en, CASE WHEN expira_en > SYSUTCDATETIME() THEN 1 ELSE 0 END "
+                    "AS vigente "
                     "FROM restablecimientos_contrasena WHERE token_hash = :hash"
                 ),
                 {"hash": token_hash},
@@ -358,7 +366,8 @@ class SqlUserDirectory:
         with self._engine.begin() as conn:
             row = conn.execute(
                 text(
-                    "SELECT r.id, r.usuario_id FROM restablecimientos_contrasena r WITH (UPDLOCK, ROWLOCK) "
+                    "SELECT r.id, r.usuario_id FROM restablecimientos_contrasena r "
+                    "WITH (UPDLOCK, ROWLOCK) "
                     "JOIN usuarios u ON u.id = r.usuario_id "
                     "WHERE r.token_hash = :hash AND r.usado_en IS NULL "
                     "AND r.expira_en > SYSUTCDATETIME() AND u.estado = 'ACTIVO'"
@@ -368,7 +377,10 @@ class SqlUserDirectory:
             if row is None:
                 return False
             conn.execute(
-                text("UPDATE restablecimientos_contrasena SET usado_en = SYSUTCDATETIME() WHERE id = :id"),
+                text(
+                    "UPDATE restablecimientos_contrasena SET usado_en = SYSUTCDATETIME() "
+                    "WHERE id = :id"
+                ),
                 {"id": row.id},
             )
             conn.execute(
@@ -395,11 +407,13 @@ class SqlUserDirectory:
         with self._engine.begin() as conn:
             row = conn.execute(
                 text(
-                    "SELECT v.id, v.usuario_id FROM verificaciones_correo v WITH (UPDLOCK, ROWLOCK) "
+                    "SELECT v.id, v.usuario_id FROM verificaciones_correo v "
+                    "WITH (UPDLOCK, ROWLOCK) "
                     "JOIN usuarios u ON u.id = v.usuario_id "
                     "WHERE v.token_hash = :hash AND v.usado_en IS NULL "
                     "AND v.expira_en > SYSUTCDATETIME() AND u.estado = 'INACTIVO' "
-                    "AND NOT EXISTS (SELECT 1 FROM usuarios_roles ur JOIN roles r ON r.id = ur.rol_id "
+                    "AND NOT EXISTS (SELECT 1 FROM usuarios_roles ur JOIN roles r ON r.id = "
+                    "ur.rol_id "
                     "WHERE ur.usuario_id = v.usuario_id AND r.nombre = 'PACIENTE')"
                 ),
                 {"hash": token_hash},

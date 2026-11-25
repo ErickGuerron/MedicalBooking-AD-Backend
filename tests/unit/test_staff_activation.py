@@ -1,4 +1,5 @@
-"""Staff accounts: created inactive, activated once through an emailed link, with the person's password.
+"""Staff accounts: created inactive, activated once through an emailed link,
+with the person's password.
 
 Checked with an in-memory directory and a recording mailer. The SQL side is covered by the
 integration suite; these tests pin the behaviour the use cases promise.
@@ -11,7 +12,11 @@ from datetime import UTC, datetime
 
 import pytest
 
-from medicalbooking.modules.identity.application.ports import AccessProfile, MailDeliveryError, NewUser
+from medicalbooking.modules.identity.application.ports import (
+    AccessProfile,
+    MailDeliveryError,
+    NewUser,
+)
 from medicalbooking.modules.identity.application.use_cases import IdentityService
 from medicalbooking.modules.identity.domain.policies import PERM_USERS_ADMIN
 from medicalbooking.modules.identity.infrastructure.email import render_staff_activation_email
@@ -23,7 +28,11 @@ ADMIN = AccessProfile(
     roles=frozenset({"ADMINISTRADOR"}),
     permissions=frozenset({PERM_USERS_ADMIN}),
 )
-BENEFITS = (("Agenda", "Revisa tus citas."), ("Propuestas", "Valida propuestas."), ("Horario", "Declara horario."))
+BENEFITS = (
+    ("Agenda", "Revisa tus citas."),
+    ("Propuestas", "Valida propuestas."),
+    ("Horario", "Declara horario."),
+)
 STRONG = "Contraseña-Segura-2026"
 
 
@@ -96,7 +105,9 @@ class Mailer:
         self.sent.append({"to": to_email, "name": first_name, "link": link, **kwargs})
 
 
-def service(mailer: Mailer | None = None, directory: Directory | None = None) -> tuple[IdentityService, Directory]:
+def service(
+    mailer: Mailer | None = None, directory: Directory | None = None
+) -> tuple[IdentityService, Directory]:
     directory = directory or Directory()
     svc = IdentityService(
         directory=directory,

@@ -60,8 +60,8 @@ from medicalbooking.modules.payments.infrastructure.stripe_checkout import Strip
 from medicalbooking.modules.payments.presentation.openapi import payments_fragment
 from medicalbooking.modules.payments.presentation.routes import (
     auto_refund_after_cancel,
-    reconcile_patient_refunds,
     payments_bp,
+    reconcile_patient_refunds,
 )
 from medicalbooking.modules.replica.infrastructure.factory import (
     ReplicaConfigError,

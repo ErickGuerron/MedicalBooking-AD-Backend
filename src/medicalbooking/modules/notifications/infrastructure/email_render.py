@@ -107,7 +107,8 @@ def motivo_text(cancellation: CitaCancellation) -> str | None:
     return label or texto or None
 
 
-# Why the automatic refund was not made, in words the patient understands. The codes are the refund rules.
+# Why the automatic refund was not made, in words the patient understands.
+# The codes are the refund rules.
 _REFUND_REASONS = {
     "CANCELACION_TARDIA": "la cita se canceló fuera del plazo para reembolsos",
     "FUERA_DE_VENTANA": "ya pasó el plazo para pedir reembolsos de este pago",
@@ -121,25 +122,36 @@ _REFUND_REASONS = {
 
 
 def refund_notice(cancellation: CitaCancellation) -> tuple[str, str] | None:
-    """What the patient is told about the money of a cancelled visit: (title, sentence). None when the visit
+    """What the patient is told about the money of a cancelled visit: (title, sentence).
+    None when the visit
     was not paid, so the mail says nothing about money."""
     if cancellation.monto_pagado is None:
         return None
     monto = f"${cancellation.monto_pagado:.2f}"
     resultado = cancellation.reembolso_resultado
     if resultado == "PROCESADO":
-        return ("Reembolso completado",
-                f"Te reembolsamos {monto}, el monto de tu cita. El banco puede tardar unos días en acreditarlo.")
+        return (
+            "Reembolso completado",
+            f"Te reembolsamos {monto}, el monto de tu cita. "
+            f"El banco puede tardar unos días en acreditarlo.",
+        )
     if resultado == "PENDIENTE":
-        return ("Reembolso en proceso",
-                f"Estamos procesando el reembolso de {monto}. Puedes revisar su estado en Mi portal.")
+        return (
+            "Reembolso en proceso",
+            f"Estamos procesando el reembolso de {monto}. Puedes revisar su estado en Mi portal.",
+        )
     if resultado is None:
-        return ("Tu pago",
-                f"Si pagaste {monto} por esta cita, puedes revisar el estado de tu reembolso en Mi portal.")
+        return (
+            "Tu pago",
+            f"Si pagaste {monto} por esta cita, puedes revisar el estado de tu reembolso en "
+            f"Mi portal.",
+        )
     motivo = _REFUND_REASONS.get(resultado, "no pudimos completarlo")
-    return ("No pudimos reembolsar tu pago",
-            f"No pudimos reembolsar automáticamente los {monto} porque {motivo}. "
-            "Para pedirlo tú, entra a Mi portal, abre esta cita y pulsa «Pedir reembolso».")
+    return (
+        "No pudimos reembolsar tu pago",
+        f"No pudimos reembolsar automáticamente los {monto} porque {motivo}. "
+        "Para pedirlo tú, entra a Mi portal, abre esta cita y pulsa «Pedir reembolso».",
+    )
 
 
 def _reembolso_html(reembolso: tuple[str, str] | None) -> str:
@@ -147,8 +159,12 @@ def _reembolso_html(reembolso: tuple[str, str] | None) -> str:
         return ""
     titulo, frase = reembolso
     return (
-        '<div style="font-size:13.5px;color:#4A5280;margin-top:12px;">' + html.escape(titulo) + '</div>'
-        '<div style="font-size:15px;line-height:1.5;color:#16206B;">' + html.escape(frase) + '</div>'
+        '<div style="font-size:13.5px;color:#4A5280;margin-top:12px;">'
+        + html.escape(titulo)
+        + "</div>"
+        '<div style="font-size:15px;line-height:1.5;color:#16206B;">'
+        + html.escape(frase)
+        + "</div>"
     )
 
 
@@ -173,7 +189,8 @@ def cancellation_content(
     motivo: str | None = None,
     reembolso: tuple[str, str] | None = None,
 ) -> EmailContent:
-    """Appointment cancelled. If the doctor cancelled it, the mail says so and gives the reason. A paid visit
+    """Appointment cancelled. If the doctor cancelled it, the mail says so and gives the reason.
+    A paid visit
     also says what happened to its money."""
     if por_medico:
         subject = "El médico canceló tu cita en Medilo"

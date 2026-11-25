@@ -31,7 +31,9 @@ class ResetDirectory(Directory):
     def find_credentials_by_email(self, email: str) -> CredentialRecord | None:
         for user in self.users.values():
             if user.email == email:
-                return CredentialRecord(user_id=user.user_id, email=user.email, status=user.status, password_hash=None)
+                return CredentialRecord(
+                    user_id=user.user_id, email=user.email, status=user.status, password_hash=None
+                )
         return None
 
     def find_user(self, user_id: str) -> UserSummary | None:

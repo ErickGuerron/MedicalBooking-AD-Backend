@@ -138,7 +138,8 @@ def register() -> tuple[Response, int]:
 
 @identity_bp.post("/auth/activate-account")
 def activate_account() -> tuple[Response, int]:
-    """Staff activation: the single-use link from the email, plus the password the person chooses."""
+    """Staff activation: the single-use link from the email, plus the password the person
+    chooses."""
     body = _parse(ActivateAccountRequest)
     _service().activate_staff_account(body.token, body.password)
     return jsonify(activated=True), 200
@@ -175,7 +176,9 @@ def request_password_reset() -> tuple[Response, int]:
     """Asks for a reset link. The answer never says whether the account exists."""
     body = _parse(PasswordResetRequest)
     _service().request_password_reset(body.email)
-    return jsonify(message="If the address can receive an account, we sent a reset link to it."), 202
+    return jsonify(
+        message="If the address can receive an account, we sent a reset link to it."
+    ), 202
 
 
 @identity_bp.get("/auth/password-reset/status")

@@ -257,8 +257,9 @@ class BillingService:
         if appointment.estado not in INVOICEABLE_APPOINTMENT_STATES:
             raise Conflict("The appointment cannot be invoiced in its current state")
         if appointment.factura_id is not None:
-            # A repeated request (a retry, a double click, a reload) gets the invoice that already exists. A
-            # pending one is paid as it is; a paid one reaches the checkout, which says it is already paid.
+            # A repeated request (a retry, a double click, a reload) gets the invoice
+            # that already exists. A pending one is paid as it is; a paid one reaches the checkout,
+            # which says it is already paid.
             existing = self._store.find_invoice(appointment.factura_id)
             if existing is not None and existing.estado in (FACTURA_PENDIENTE, FACTURA_PAGADA):
                 return existing

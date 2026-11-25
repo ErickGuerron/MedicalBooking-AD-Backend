@@ -84,7 +84,8 @@ PASSWORD_RESET_MINUTES = 60
 
 
 def staff_password_problems(password: str) -> list[str]:
-    """Requirements a staff member's new password still misses; an empty list means it is acceptable."""
+    """Requirements a staff member's new password still misses;
+    an empty list means it is acceptable."""
     problems: list[str] = []
     if len(password) < MIN_PASSWORD_LENGTH:
         problems.append(f"at least {MIN_PASSWORD_LENGTH} characters")
@@ -313,7 +314,8 @@ class IdentityService:
             raise ValidationFailed(VERIFICATION_FAILED, code=self._refusal_code(token))
 
     def activation_status(self, token: str) -> str:
-        """Tells the activation pages why a link cannot be used, before the person types anything."""
+        """Tells the activation pages why a link cannot be used,
+        before the person types anything."""
         if not token or len(token) > 200:
             return "INVALID"
         return self._directory.verification_state(_token_hash(token))
@@ -327,7 +329,9 @@ class IdentityService:
         if user is None:
             return
         token = secrets.token_urlsafe(32)
-        self._directory.create_password_reset(record.user_id, _token_hash(token), PASSWORD_RESET_MINUTES)
+        self._directory.create_password_reset(
+            record.user_id, _token_hash(token), PASSWORD_RESET_MINUTES
+        )
         if self._mailer is None:
             _log.error("Password reset email not sent: mail is not configured")
             return
@@ -352,9 +356,13 @@ class IdentityService:
         problems = staff_password_problems(password)
         if problems:
             raise ValidationFailed("Password must have: " + ", ".join(problems))
-        if not self._directory.consume_password_reset(_token_hash(token), self._hasher.hash(password)):
+        if not self._directory.consume_password_reset(
+            _token_hash(token), self._hasher.hash(password)
+        ):
             state = self.password_reset_status(token)
-            raise ValidationFailed(VERIFICATION_FAILED, code=state if state in {"USED", "EXPIRED"} else "INVALID")
+            raise ValidationFailed(
+                VERIFICATION_FAILED, code=state if state in {"USED", "EXPIRED"} else "INVALID"
+            )
 
     def _refusal_code(self, token: str) -> str:
         """The reason behind a refused link: USED, EXPIRED or INVALID (never VALID)."""

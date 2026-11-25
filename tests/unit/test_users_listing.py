@@ -50,6 +50,7 @@ class FakeDirectory:
 
     def create_pending_staff(self, new_user, token_hash, valid_hours):
         self.created.append(new_user)
+
     list_calls: list[tuple[int, int]] = field(default_factory=list)
 
     def load_access(self, user_id: str) -> AccessProfile | None:

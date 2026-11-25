@@ -276,7 +276,11 @@ def test_paid_visit_without_a_recorded_outcome_points_to_the_portal() -> None:
 def test_refund_text_is_escaped_in_the_html_mail() -> None:
     assert refund_notice(_paid_visit("PROCESADO"))[1].startswith("Te reembolsamos $25.00")
     content = cancellation_content(
-        "Ana", "Dr. Luis", "18/11", "09:30", "https://a.ex",
+        "Ana",
+        "Dr. Luis",
+        "18/11",
+        "09:30",
+        "https://a.ex",
         reembolso=("Reembolso <b>x</b>", "Frase & más"),
     )
     assert "<b>x</b>" not in content.html

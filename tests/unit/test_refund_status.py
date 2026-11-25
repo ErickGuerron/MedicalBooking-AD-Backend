@@ -1,4 +1,5 @@
-"""Refund status: the owner reads the newest refund of a payment; a pending one is checked at Stripe first."""
+"""Refund status: the owner reads the newest refund of a payment;
+a pending one is checked at Stripe first."""
 
 from __future__ import annotations
 

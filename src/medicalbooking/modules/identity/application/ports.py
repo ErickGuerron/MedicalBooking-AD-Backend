@@ -98,10 +98,13 @@ class UserDirectory(Protocol):
         """Activate the account behind a valid, unused, unexpired token. Single use."""
         ...
 
-    def create_pending_staff(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None: ...
+    def create_pending_staff(
+        self, new_user: NewUser, token_hash: str, valid_hours: int
+    ) -> None: ...
 
     def verification_state(self, token_hash: str) -> str:
-        """VALID, USED, EXPIRED or INVALID: why a link cannot be used now. Carries no account data."""
+        """VALID, USED, EXPIRED or INVALID: why a link cannot be used now.
+        Carries no account data."""
         ...
 
     def create_password_reset(self, user_id: str, token_hash: str, valid_minutes: int) -> None:

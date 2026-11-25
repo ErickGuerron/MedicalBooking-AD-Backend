@@ -86,7 +86,9 @@ class ProviderRefund:
 class RefundStore(Protocol):
     def find_latest_refund(self, pago_id: str) -> LatestRefund | None: ...
 
-    def pending_stripe_refunds_of_user(self, usuario_id: str, limit: int) -> list[tuple[str, str]]: ...
+    def pending_stripe_refunds_of_user(
+        self, usuario_id: str, limit: int
+    ) -> list[tuple[str, str]]: ...
 
     def record_automatic_refund(self, cita_id: str, resultado: str) -> None: ...
 
@@ -153,16 +155,23 @@ class RefundService:
         self._store = store
         self._gateway = gateway
         self._clock = clock
-        # Asks Stripe about a refund still pending and applies its final answer; None means no check.
+        # Asks Stripe about a refund still pending and applies its final answer;
+        # None means no check.
         self._checker = checker
 
     def reconcile_pending_for_user(self, actor: AccessProfile, limit: int = 5) -> int:
-        """Asks Stripe about the caller's pending refunds (bounded), so a refund that finished is marked
-        PROCESADO when the patient reads their listing, without waiting for a webhook. Returns how many were checked."""
+        """Asks Stripe about the caller's pending refunds (bounded), so a refund that finished
+        is marked
+        PROCESADO when the patient reads their listing,
+        without waiting for a webhook.
+        Returns how many were
+        checked."""
         if self._checker is None or PERM_CHECKOUT not in actor.permissions:
             return 0
         checked = 0
-        for refund_id, stripe_refund_id in self._store.pending_stripe_refunds_of_user(actor.user_id, limit):
+        for refund_id, stripe_refund_id in self._store.pending_stripe_refunds_of_user(
+            actor.user_id, limit
+        ):
             try:
                 self._checker(refund_id, stripe_refund_id)
             except Exception as error:  # the listing must still load if Stripe is unreachable
@@ -171,8 +180,10 @@ class RefundService:
         return checked
 
     def status(self, actor: AccessProfile, *, pago_id: str) -> str | None:
-        """The state of the newest refund of a payment the caller owns. A refund still PENDIENTE with a Stripe
-        id is checked at Stripe first, so a refund that finished is reported as PROCESADO. None: no refund."""
+        """The state of the newest refund of a payment the caller owns. A refund still PENDIENTE
+        with a Stripe
+        id is checked at Stripe first, so a refund that finished
+        is reported as PROCESADO. None: no refund."""
         if PERM_CHECKOUT not in actor.permissions:
             raise Forbidden("Access to this resource is not allowed")
         latest = self._store.find_latest_refund(pago_id)
@@ -180,7 +191,11 @@ class RefundService:
             return None
         if latest.owner_user_id != actor.user_id:
             raise Forbidden("Access to this resource is not allowed")
-        if latest.estado == REEMBOLSO_PENDIENTE and latest.stripe_refund_id and self._checker is not None:
+        if (
+            latest.estado == REEMBOLSO_PENDIENTE
+            and latest.stripe_refund_id
+            and self._checker is not None
+        ):
             self._checker(latest.id, latest.stripe_refund_id)
             latest = self._store.find_latest_refund(pago_id) or latest
         return latest.estado
@@ -244,7 +259,9 @@ class RefundService:
             replayed=False,
         )
 
-    def request_after_cancellation(self, actor: AccessProfile, cita_id: str) -> dict[str, str | None] | None:
+    def request_after_cancellation(
+        self, actor: AccessProfile, cita_id: str
+    ) -> dict[str, str | None] | None:
         """Request the refund of a cancelled appointment, if its payment qualifies.
 
         The patient who owns the payment is the owner of the refund in every case:
@@ -295,7 +312,8 @@ class RefundService:
             return {"estado": None, "motivo": "ERROR"}
 
     def _record_automatic(self, cita_id: str, resultado: str) -> None:
-        """Keeps the outcome on the appointment so the cancellation mail can tell the patient. Never raises."""
+        """Keeps the outcome on the appointment so the cancellation mail can tell the
+        patient. Never raises."""
         try:
             self._store.record_automatic_refund(cita_id, resultado)
         except Exception as error:  # the refund is already decided; the mail just says less

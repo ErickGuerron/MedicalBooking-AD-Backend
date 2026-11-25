@@ -135,7 +135,8 @@ def test_user_creation_schema_is_generated_from_the_validating_model(spec) -> No
 
     assert schema == CreateUserRequest.model_json_schema()
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["password"]["minLength"] == 12
+    # Staff accounts are created inactive and activated by an emailed link: no password here.
+    assert "password" not in schema["properties"]
 
 
 def test_protected_operations_require_bearer_and_login_does_not(spec) -> None:

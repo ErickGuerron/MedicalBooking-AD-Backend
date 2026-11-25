@@ -174,7 +174,9 @@ class BrevoActivationMailer:
         except httpx.HTTPError:
             raise MailDeliveryError("Password reset email could not be sent") from None
         if response.status_code >= 300:
-            raise MailDeliveryError(f"Brevo rejected the password reset email (HTTP {response.status_code})")
+            raise MailDeliveryError(
+                f"Brevo rejected the password reset email (HTTP {response.status_code})"
+            )
 
     def send_activation(self, to_email: str, first_name: str, link: str) -> None:
         rendered = render_activation_email(first_name, link, self._asset_base_url)
