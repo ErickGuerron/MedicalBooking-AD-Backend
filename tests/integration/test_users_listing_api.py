@@ -202,7 +202,6 @@ def test_post_users_still_creates_an_account(app, engine) -> None:
         PATH,
         json={
             "email": f"nuevo-{uuid.uuid4()}@synthetic.test",
-            "password": PASSWORD,
             "first_name": "Nuevo",
             "last_name": "Usuario",
             "roles": ["PACIENTE"],
