@@ -33,8 +33,8 @@ the calendar day.
 
 Profile fields (tipo_documento CEDULA, numero_documento, fecha_nacimiento, sexo_registrado,
 contacto_emergencia, telefono_emergencia and usuarios.telefono) are written by plain SQL after the
-account is created through the service, because the account service stores only name, email,
-password and roles. This is acceptable for demo data. These writes carry no outbox event, so a
+account is created through the service, because the account service stores only name, email
+and roles. This is acceptable for demo data. These writes carry no outbox event, so a
 replica receives the profile fields only when another path syncs those rows.
 """
 
@@ -79,6 +79,7 @@ from medicalbooking.config import Settings
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.identity.domain.policies import PERM_USERS_ADMIN
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
+from medicalbooking.modules.identity.infrastructure.security import Argon2PasswordHasher
 from medicalbooking.modules.scheduling.domain.clinic_hours import TARDE, franja_of_start
 from medicalbooking.shared.domain.demographics import SEXES, validate_sex
 from medicalbooking.shared.domain.errors import AppError
@@ -525,7 +526,7 @@ def _write_credentials(path: Path, database: str, credentials: list[dict[str, st
 def _seed(
     app: Any, engine: Engine, metadata: MetaData, faker: Faker, days: int
 ) -> tuple[dict[str, int], list[dict[str, str]]]:
-    accounts = _create_accounts(app.extensions["medicalbooking.identity"], faker)
+    accounts = _create_accounts(app.extensions["medicalbooking.identity"], engine, faker)
     _write_profiles(engine, accounts, faker)
     doctors = [account for account in accounts if account.role == "MEDICO"]
     patients = [account for account in accounts if account.role == "PACIENTE"]
@@ -545,7 +546,39 @@ def _seed(
     return report, credentials
 
 
-def _create_accounts(identity: Any, faker: Faker) -> list[Account]:
+def _give_demo_password(engine: Engine, user_id: str, password: str) -> None:
+    """Set the password written to the credentials file and activate the demo account.
+
+    create_user leaves a staff or patient account inactive with an unusable hash, and its
+    activation token is only emailed. The seed cannot read that token, so it sets the password
+    directly and voids the pending token, so no link can change the demo password later.
+    """
+    password_hash = Argon2PasswordHasher().hash(password)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE credenciales_usuario SET password_hash = :h, intentos_fallidos = 0, "
+                "actualizado_en = SYSUTCDATETIME() WHERE usuario_id = :u"
+            ),
+            {"h": password_hash, "u": user_id},
+        )
+        conn.execute(
+            text(
+                "UPDATE usuarios SET estado = 'ACTIVO', actualizado_en = SYSUTCDATETIME() "
+                "WHERE id = :u"
+            ),
+            {"u": user_id},
+        )
+        conn.execute(
+            text(
+                "UPDATE verificaciones_correo SET usado_en = SYSUTCDATETIME() "
+                "WHERE usuario_id = :u AND usado_en IS NULL"
+            ),
+            {"u": user_id},
+        )
+
+
+def _create_accounts(identity: Any, engine: Engine, faker: Faker) -> list[Account]:
     """Every account goes through IdentityService.create_user, doctors included."""
     accounts: list[Account] = []
     for local, role in ACCOUNT_PLAN:
@@ -556,12 +589,12 @@ def _create_accounts(identity: Any, faker: Faker) -> list[Account]:
         user_id = identity.create_user(
             SEED_ACTOR,
             email=email,
-            password=password,
             first_name=first_name,
             last_name=faker.last_name(),
             roles=[role],
             professional_registration=f"DEMO-{local.upper()}" if role == "MEDICO" else None,
         )
+        _give_demo_password(engine, user_id, password)
         accounts.append(
             Account(
                 role=role,
