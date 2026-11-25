@@ -50,7 +50,7 @@ The CLI does not need a Dashboard endpoint. It forwards test events to your mach
 
 ```powershell
 stripe login
-stripe listen --forward-to http://127.0.0.1:5000/api/v1/payments/webhook --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired
+stripe listen --forward-to http://127.0.0.1:5000/api/v1/payments/webhook --events "checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired,refund.created,refund.updated"
 ```
 
 Write the command on one line. PowerShell does not continue lines with a trailing `\` (that is bash syntax). If you must split it, end each line with a backtick (`` ` ``) in PowerShell.

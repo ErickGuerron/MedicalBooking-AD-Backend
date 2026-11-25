@@ -22,7 +22,6 @@ ADMIN_HEADERS = {"Authorization": "Bearer tok-admin"}
 PATIENT_HEADERS = {"Authorization": "Bearer tok-patient"}
 VALID_CREATE_BODY = {
     "email": "nueva.persona@synthetic.test",
-    "password": "synthetic-pass-123",
     "first_name": "Nueva",
     "last_name": "Persona",
     "roles": ["PACIENTE"],
@@ -48,6 +47,9 @@ class FakeDirectory:
     profiles: dict[str, AccessProfile] = field(default_factory=dict)
     users: list[StoredUser] = field(default_factory=list)
     created: list[NewUser] = field(default_factory=list)
+
+    def create_pending_staff(self, new_user, token_hash, valid_hours):
+        self.created.append(new_user)
     list_calls: list[tuple[int, int]] = field(default_factory=list)
 
     def load_access(self, user_id: str) -> AccessProfile | None:

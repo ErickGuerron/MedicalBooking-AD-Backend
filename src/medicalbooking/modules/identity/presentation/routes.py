@@ -30,7 +30,6 @@ class CreateUserRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: str = Field(min_length=3, max_length=255)
-    password: str = Field(min_length=12, max_length=256)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     roles: list[str] = Field(min_length=1, max_length=4)
@@ -137,11 +136,65 @@ def register() -> tuple[Response, int]:
     return jsonify(message=message), 202
 
 
+@identity_bp.post("/auth/activate-account")
+def activate_account() -> tuple[Response, int]:
+    """Staff activation: the single-use link from the email, plus the password the person chooses."""
+    body = _parse(ActivateAccountRequest)
+    _service().activate_staff_account(body.token, body.password)
+    return jsonify(activated=True), 200
+
+
 @identity_bp.get("/auth/verify-email")
 def verify_email() -> tuple[Response, int]:
     """Activate the account from the link in the email. The token is single use."""
     _service().verify_email(request.args.get("token", ""))
     return jsonify(verified=True), 200
+
+
+@identity_bp.get("/auth/activation-status")
+def activation_status() -> tuple[Response, int]:
+    """Public: says whether an activation link can still be used, so the page refuses it at once."""
+    return jsonify(status=_service().activation_status(request.args.get("token", ""))), 200
+
+
+class PasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=255)
+
+
+class PasswordResetConfirm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=12, max_length=256)
+
+
+@identity_bp.post("/auth/password-reset")
+def request_password_reset() -> tuple[Response, int]:
+    """Asks for a reset link. The answer never says whether the account exists."""
+    body = _parse(PasswordResetRequest)
+    _service().request_password_reset(body.email)
+    return jsonify(message="If the address can receive an account, we sent a reset link to it."), 202
+
+
+@identity_bp.get("/auth/password-reset/status")
+def password_reset_status() -> tuple[Response, int]:
+    return jsonify(status=_service().password_reset_status(request.args.get("token", ""))), 200
+
+
+@identity_bp.post("/auth/password-reset/confirm")
+def confirm_password_reset() -> tuple[Response, int]:
+    body = _parse(PasswordResetConfirm)
+    _service().reset_password(body.token, body.password)
+    return jsonify(reset=True), 200
+
+
+class ActivateAccountRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=12, max_length=256)
 
 
 class PasswordChangeRequest(BaseModel):
@@ -191,7 +244,6 @@ def create_user() -> tuple[Response, int]:
     user_id = _service().create_user(
         g.actor,
         email=body.email,
-        password=body.password,
         first_name=body.first_name,
         last_name=body.last_name,
         roles=body.roles,

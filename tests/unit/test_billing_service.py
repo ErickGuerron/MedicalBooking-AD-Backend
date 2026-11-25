@@ -396,11 +396,37 @@ def test_invoice_allowed_for_pending_or_confirmed_appointments(estado):
     assert len(store.created_invoices) == 1
 
 
-def test_second_invoice_for_the_same_appointment_conflicts():
+def test_repeated_invoice_request_returns_the_pending_invoice():
     owner = _id()
-    store, appointment = _seeded(owner, factura_id=_id())
+    store, appointment = _seeded(owner)
+    service = _service(store, FakeGateway())
+    first = service.create_invoice(_patient(owner), cita_id=appointment.cita_id)
+    again = service.create_invoice(_patient(owner), cita_id=appointment.cita_id)
+    assert again.id == first.id
+    assert again.estado == "PENDIENTE"
+    assert len(store.created_invoices) == 1
+
+
+def test_repeated_invoice_request_returns_a_paid_invoice_so_checkout_says_it_is_paid():
+    owner = _id()
+    store, appointment = _seeded(owner)
+    service = _service(store, FakeGateway())
+    first = service.create_invoice(_patient(owner), cita_id=appointment.cita_id)
+    store.invoices[first.id] = replace(store.invoices[first.id], estado="PAGADA")
+    again = service.create_invoice(_patient(owner), cita_id=appointment.cita_id)
+    assert again.id == first.id
+    assert again.estado == "PAGADA"
+    assert len(store.created_invoices) == 1
+
+
+def test_repeated_invoice_request_still_conflicts_for_a_cancelled_invoice():
+    owner = _id()
+    store, appointment = _seeded(owner)
+    service = _service(store, FakeGateway())
+    first = service.create_invoice(_patient(owner), cita_id=appointment.cita_id)
+    store.invoices[first.id] = replace(store.invoices[first.id], estado="ANULADA")
     with pytest.raises(Conflict):
-        _service(store, FakeGateway()).create_invoice(_patient(owner), cita_id=appointment.cita_id)
+        service.create_invoice(_patient(owner), cita_id=appointment.cita_id)
 
 
 # --- checkout -----------------------------------------------------------------

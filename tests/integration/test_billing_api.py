@@ -112,14 +112,15 @@ def test_invoice_for_a_booked_appointment_has_one_detail_line(app, engine) -> No
     )
 
 
-def test_second_invoice_for_the_same_appointment_conflicts(app, engine) -> None:
+def test_repeated_invoice_request_returns_the_same_invoice(app, engine) -> None:
     headers, cita = _booked_appointment(app, engine)
     client = app.test_client()
-    assert (
-        client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers).status_code == 201
-    )
+    first = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers)
+    assert first.status_code == 201
     again = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers)
-    assert again.status_code == 409
+    assert again.status_code == 201
+    assert again.get_json()["id"] == first.get_json()["id"]
+    assert _count(engine, "SELECT COUNT(*) FROM facturas WHERE cita_id = :c", c=cita) == 1
 
 
 def test_foreign_patient_cannot_invoice_and_gets_the_same_answer_as_missing(app, engine) -> None:

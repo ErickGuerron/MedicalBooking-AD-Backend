@@ -56,6 +56,7 @@ from medicalbooking.modules.payments.infrastructure.stripe_checkout import Strip
 from medicalbooking.modules.payments.presentation.openapi import payments_fragment
 from medicalbooking.modules.payments.presentation.routes import (
     auto_refund_after_cancel,
+    reconcile_patient_refunds,
     payments_bp,
 )
 from medicalbooking.modules.replica.infrastructure.factory import (
@@ -139,6 +140,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
     app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
+    app.extensions["medicalbooking.before_patient_listing"] = reconcile_patient_refunds
     app.register_blueprint(replica_bp)
     app.register_blueprint(reporting_bp)
     if settings.docs_enabled:
@@ -171,6 +173,8 @@ def _build_identity(settings: Settings, engine: Any) -> IdentityService:
         mailer=_build_mailer(settings),
         public_base_url=settings.app_public_url,
         verification_hours=settings.email_verification_hours,
+        staff_activation_url=settings.angular_front_url,
+        patient_verification_url=settings.flutter_front_url,
     )
 
 

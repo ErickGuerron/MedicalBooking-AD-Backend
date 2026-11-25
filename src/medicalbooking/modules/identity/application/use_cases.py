@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+import string
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -47,7 +48,55 @@ _log = logging.getLogger("medicalbooking.identity")
 # which create_user requires and stores in the same transaction as the account.
 ASSIGNABLE_ROLES = frozenset({"PACIENTE", "LABORATORISTA", "ADMINISTRADOR", "MEDICO"})
 PROFESSIONAL_ROLE = "MEDICO"
+
+# Staff activation email: one template, with these values per role.
+STAFF_ROLE_LABELS = {
+    "MEDICO": "médico",
+    "LABORATORISTA": "laboratorio",
+    "ADMINISTRADOR": "administración",
+    "PACIENTE": "paciente",
+}
+STAFF_INTRO = "Con tu cuenta podrás:"
+STAFF_DEFAULT_BENEFITS = (
+    ("Cuenta", "Accede al sistema de Medilo con tu rol."),
+    ("Seguridad", "Tu sesión se cierra tras 15 minutos de inactividad."),
+    ("Contraseña", "Solo tú conoces la contraseña que defines."),
+)
+STAFF_BENEFITS = {
+    "MEDICO": (
+        ("Agenda", "Revisa tus citas y pacientes."),
+        ("Propuestas", "Valida las propuestas del motor clínico."),
+        ("Horario", "Declara tu horario de atención."),
+    ),
+    "LABORATORISTA": (
+        ("Órdenes", "Registra los resultados de cada prueba."),
+        ("Informes", "Sube los informes en PDF."),
+        ("Cola", "Atiende las órdenes pendientes."),
+    ),
+    "ADMINISTRADOR": (
+        ("Usuarios", "Crea cuentas del personal y de pacientes."),
+        ("Conocimiento", "Gestiona analitos y reglas clínicas."),
+        ("Reportes", "Revisa cifras y el monitoreo."),
+    ),
+}
 MIN_PASSWORD_LENGTH = 12
+PASSWORD_RESET_MINUTES = 60
+
+
+def staff_password_problems(password: str) -> list[str]:
+    """Requirements a staff member's new password still misses; an empty list means it is acceptable."""
+    problems: list[str] = []
+    if len(password) < MIN_PASSWORD_LENGTH:
+        problems.append(f"at least {MIN_PASSWORD_LENGTH} characters")
+    if not any(c.isupper() for c in password):
+        problems.append("an uppercase letter")
+    if not any(c.islower() for c in password):
+        problems.append("a lowercase letter")
+    if not any(c.isdigit() for c in password):
+        problems.append("a digit")
+    if not any(c in string.punctuation for c in password):
+        problems.append("a symbol")
+    return problems
 
 
 @dataclass(frozen=True)
@@ -66,6 +115,8 @@ class IdentityService:
         mailer: ActivationMailer | None = None,
         public_base_url: str = "http://localhost:5000",
         verification_hours: int = 24,
+        staff_activation_url: str = "http://localhost:4200",
+        patient_verification_url: str | None = None,
     ) -> None:
         self._directory = directory
         self._hasher = hasher
@@ -74,6 +125,9 @@ class IdentityService:
         self._mailer = mailer
         self._public_base_url = public_base_url.rstrip("/")
         self._verification_hours = verification_hours
+        self._staff_activation_url = staff_activation_url.rstrip("/")
+        # The link opens the patient portal, which shows the verification view and calls the API.
+        self._patient_verification_url = (patient_verification_url or public_base_url).rstrip("/")
         # Verified against when the account is unknown, so response time does not
         # reveal whether an email is registered.
         self._dummy_hash = hasher.hash(secrets.token_urlsafe(32))
@@ -140,7 +194,7 @@ class IdentityService:
             self._mailer.send_activation(
                 normalized,
                 first_name,
-                f"{self._public_base_url}/api/v1/auth/verify-email?token={token}",
+                f"{self._patient_verification_url}/#/verificar?token={token}",
             )
         except MailDeliveryError as error:
             # The account stays inactive; the message carries no token or address.
@@ -152,7 +206,7 @@ class IdentityService:
         if not token or len(token) > 200:
             raise ValidationFailed(VERIFICATION_FAILED)
         if not self._directory.consume_verification(_token_hash(token)):
-            raise ValidationFailed(VERIFICATION_FAILED)
+            raise ValidationFailed(VERIFICATION_FAILED, code=self._refusal_code(token))
 
     def login(self, email: str, password: str) -> IssuedToken:
         record = self._directory.find_credentials_by_email(_normalize_email(email))
@@ -207,17 +261,19 @@ class IdentityService:
         actor: AccessProfile,
         *,
         email: str,
-        password: str,
         first_name: str,
         last_name: str,
         roles: list[str],
         professional_registration: str | None = None,
     ) -> str:
+        """Create a staff account that stays inactive until its owner sets a password.
+
+        The administrator never chooses or sees a password. The account gets an unusable hash
+        and a single-use activation link; the person defines the password through that link.
+        """
         if PERM_USERS_ADMIN not in actor.permissions:
             raise Forbidden("Access to this resource is not allowed")
         normalized = _normalize_email(email)
-        if len(password) < MIN_PASSWORD_LENGTH:
-            raise ValidationFailed(f"Password must have at least {MIN_PASSWORD_LENGTH} characters")
         unique_roles = tuple(sorted(set(roles)))
         if not unique_roles or not set(unique_roles) <= ASSIGNABLE_ROLES:
             raise ValidationFailed(
@@ -226,18 +282,103 @@ class IdentityService:
         registration = _professional_registration(unique_roles, professional_registration)
 
         user_id = str(uuid.uuid4())
-        self._directory.create_user(
+        # Nobody knows this value, so sign-in stays impossible until activation sets the real hash.
+        unusable_hash = self._hasher.hash(secrets.token_urlsafe(48))
+        token = secrets.token_urlsafe(32)
+        self._directory.create_pending_staff(
             NewUser(
                 user_id=user_id,
                 email=normalized,
                 first_name=first_name,
                 last_name=last_name,
-                password_hash=self._hasher.hash(password),
+                password_hash=unusable_hash,
                 roles=unique_roles,
+                status=INACTIVE,
                 professional_registration=registration,
-            )
+            ),
+            _token_hash(token),
+            self._verification_hours,
         )
+        self._send_staff_activation(normalized, first_name, unique_roles[0], token)
         return user_id
+
+    def activate_staff_account(self, token: str, password: str) -> None:
+        """Set the password of a staff account and activate it, once, from its email link."""
+        if not token or len(token) > 200:
+            raise ValidationFailed(VERIFICATION_FAILED)
+        problems = staff_password_problems(password)
+        if problems:
+            raise ValidationFailed("Password must have: " + ", ".join(problems))
+        if not self._directory.activate_staff(_token_hash(token), self._hasher.hash(password)):
+            raise ValidationFailed(VERIFICATION_FAILED, code=self._refusal_code(token))
+
+    def activation_status(self, token: str) -> str:
+        """Tells the activation pages why a link cannot be used, before the person types anything."""
+        if not token or len(token) > 200:
+            return "INVALID"
+        return self._directory.verification_state(_token_hash(token))
+
+    def request_password_reset(self, email: str) -> None:
+        """Always answers the same, whatever the email. Only an active account receives a link."""
+        record = self._directory.find_credentials_by_email(_normalize_email(email))
+        if record is None or record.status != "ACTIVO":
+            return
+        user = self._directory.find_user(record.user_id)
+        if user is None:
+            return
+        token = secrets.token_urlsafe(32)
+        self._directory.create_password_reset(record.user_id, _token_hash(token), PASSWORD_RESET_MINUTES)
+        if self._mailer is None:
+            _log.error("Password reset email not sent: mail is not configured")
+            return
+        # Patients reset in the Flutter portal; staff reset in the Angular app.
+        if "PACIENTE" in user.roles:
+            link = f"{self._patient_verification_url}/#/restablecer?token={token}"
+        else:
+            link = f"{self._staff_activation_url}/restablecer-contrasena?token={token}"
+        try:
+            self._mailer.send_password_reset(user.email, user.first_name, link)
+        except MailDeliveryError:
+            _log.error("Password reset email could not be delivered")
+
+    def password_reset_status(self, token: str) -> str:
+        if not token or len(token) > 200:
+            return "INVALID"
+        return self._directory.password_reset_state(_token_hash(token))
+
+    def reset_password(self, token: str, password: str) -> None:
+        if not token or len(token) > 200:
+            raise ValidationFailed(VERIFICATION_FAILED, code="INVALID")
+        problems = staff_password_problems(password)
+        if problems:
+            raise ValidationFailed("Password must have: " + ", ".join(problems))
+        if not self._directory.consume_password_reset(_token_hash(token), self._hasher.hash(password)):
+            state = self.password_reset_status(token)
+            raise ValidationFailed(VERIFICATION_FAILED, code=state if state in {"USED", "EXPIRED"} else "INVALID")
+
+    def _refusal_code(self, token: str) -> str:
+        """The reason behind a refused link: USED, EXPIRED or INVALID (never VALID)."""
+        state = self.activation_status(token)
+        return state if state in {"USED", "EXPIRED"} else "INVALID"
+
+    def _send_staff_activation(self, email: str, first_name: str, role: str, token: str) -> None:
+        if self._mailer is None:
+            _log.error("Staff activation email not sent: mail is not configured")
+            return
+        link = f"{self._staff_activation_url}/activar-cuenta?token={token}"
+        try:
+            self._mailer.send_staff_activation(
+                email,
+                first_name,
+                link,
+                role_label=STAFF_ROLE_LABELS.get(role, role.lower()),
+                expiry_hours=self._verification_hours,
+                intro_list=STAFF_INTRO,
+                benefits=STAFF_BENEFITS.get(role, STAFF_DEFAULT_BENEFITS),
+            )
+        except MailDeliveryError as error:
+            # The account stays inactive and the message carries no token or address.
+            _log.error("Staff activation email failed: %s", error)
 
     def change_password(self, actor: AccessProfile, current: str, new: str) -> None:
         """The signed-in account replaces its password after proving the current one.

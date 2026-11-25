@@ -18,6 +18,7 @@ const outputDir = path.join(root, "src", "medicalbooking", "modules", "identity"
 const notificationsDir = path.join(root, "src", "medicalbooking", "modules", "notifications", "infrastructure", "email_templates");
 const templates = [
   { source: path.join(here, "activation", "activation.mjml"), output: path.join(outputDir, "activation.html") },
+  { source: path.join(here, "password-reset", "password-reset.mjml"), output: path.join(outputDir, "password_reset.html") },
   { source: path.join(here, "results", "resultados.mjml"), output: path.join(notificationsDir, "resultados.html") },
   { source: path.join(here, "reminder", "recordatorio-cita.mjml"), output: path.join(notificationsDir, "recordatorio_cita.html") },
   { source: path.join(here, "cancelada", "cita-cancelada.mjml"), output: path.join(notificationsDir, "cita_cancelada.html") },
