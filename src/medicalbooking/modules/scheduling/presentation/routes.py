@@ -8,7 +8,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, ValidationError
 
 from medicalbooking.modules.identity.presentation.routes import authenticated
 from medicalbooking.modules.scheduling.application.office_admin import OfficeAdminService
@@ -363,33 +363,33 @@ class GenerateSlotsRequest(BaseModel):
 
 
 class CreateSedeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    nombre: str
-    direccion: str | None = None
+    nombre: StrictStr
+    direccion: StrictStr | None = None
 
 
 class UpdateSedeRequest(BaseModel):
     """Only sent fields change. A null direccion clears it; a null nombre or activo is refused."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    nombre: str | None = None
-    direccion: str | None = None
-    activo: bool | None = None
+    nombre: StrictStr | None = None
+    direccion: StrictStr | None = None
+    activo: StrictBool | None = None
 
 
 class CreateConsultorioRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    nombre: str
+    nombre: StrictStr
 
 
 class UpdateConsultorioRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    nombre: str | None = None
-    activo: bool | None = None
+    nombre: StrictStr | None = None
+    activo: StrictBool | None = None
 
 
 def _work_hours() -> WorkHoursService:

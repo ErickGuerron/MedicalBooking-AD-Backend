@@ -33,11 +33,29 @@ def _require(actor: AccessProfile, permission: str) -> None:
         raise Forbidden("Access to this resource is not allowed")
 
 
+def _utf16_units(text: str) -> int:
+    """SQL Server's nvarchar(n) counts UTF-16 code units: an emoji takes two, not one."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _has_control_characters(text: str) -> bool:
+    return any(ord(char) < 32 or ord(char) == 127 for char in text)
+
+
+def _text(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValidationFailed(f"'{field}' must be a string")
+    text = value.strip()  # trim first: surrounding tabs and newlines are not content
+    if _has_control_characters(text):
+        raise ValidationFailed(f"'{field}' must not contain control characters")
+    return text
+
+
 def _nombre(value: Any, maximum: int) -> str:
-    if not isinstance(value, str) or not value.strip():
+    nombre = _text(value, "nombre")
+    if not nombre:
         raise ValidationFailed("'nombre' is required")
-    nombre = value.strip()
-    if len(nombre) > maximum:
+    if _utf16_units(nombre) > maximum:
         raise ValidationFailed(f"'nombre' must be at most {maximum} characters")
     return nombre
 
@@ -45,12 +63,10 @@ def _nombre(value: Any, maximum: int) -> str:
 def _direccion(value: Any) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str):
-        raise ValidationFailed("'direccion' must be a string or null")
-    direccion = value.strip()
+    direccion = _text(value, "direccion")
     if not direccion:
         return None
-    if len(direccion) > SEDE_DIRECCION_MAX:
+    if _utf16_units(direccion) > SEDE_DIRECCION_MAX:
         raise ValidationFailed(f"'direccion' must be at most {SEDE_DIRECCION_MAX} characters")
     return direccion
 
