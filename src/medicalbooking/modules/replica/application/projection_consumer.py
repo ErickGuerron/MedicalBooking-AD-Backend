@@ -196,7 +196,14 @@ def _seguimiento_registrado(envelope: dict[str, Any], tx: Any) -> None:
     tx.upsert_seguimiento(_pick(envelope["payload"]["seguimiento"], _SEGUIMIENTO_FIELDS))
 
 
+def _horario_declarado(envelope: dict[str, Any], tx: Any) -> None:
+    """The whole declared week: the sink keeps the stored row only over an older version."""
+    payload = envelope["payload"]
+    tx.upsert_horario_version(payload["horario"], payload["bloques"], envelope["aggregate_version"])
+
+
 _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
+    "horario_trabajo.declarado": _horario_declarado,
     "usuario.creado": _usuario_creado,
     "usuario.activado": _usuario_activado,
     "usuario.eliminado": _usuario_eliminado,

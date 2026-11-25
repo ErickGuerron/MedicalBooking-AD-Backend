@@ -15,9 +15,11 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
+
+from medicalbooking.modules.scheduling.domain.clinic_hours import BRANCH_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,10 @@ class PatientResolver(Protocol):
 class ReplicaReader(Protocol):
     def results_of(self, patient_id: UUID, usuario_id: UUID) -> PatientResults: ...
 
+    def assert_active(self, usuario_id: UUID) -> None: ...
+
+    def doctor_schedules(self, on: date) -> list[dict]: ...
+
 
 class FallbackReadService:
     def __init__(
@@ -109,7 +115,39 @@ class FallbackReadService:
         )
         return self._reader.results_of(patient_id, actor_id)
 
-    def _audit_denial(self, actor_id: UUID, correlation_id: UUID, ip: str | None) -> None:
+    def schedules_for(self, actor_id: UUID, correlation_id: UUID, ip: str | None) -> list[dict]:
+        """Doctors' work hours in force today. Staff schedules only: no patient data.
+
+        Same order as the results read: the account is checked, the read is audited (a failed
+        audit refuses it), and only then the replica is read.
+        """
+        try:
+            self._reader.assert_active(actor_id)
+        except AccountNotActive:
+            self._audit_denial(actor_id, correlation_id, ip, entidad="horario_trabajo")
+            raise
+        on = self._clock().astimezone(BRANCH_TZ).date()
+        self._sink.append(
+            AuditRecord(
+                fecha_evento=self._clock(),
+                paciente_id=None,
+                actor_id=str(actor_id),
+                accion="READ_CONTINGENCY",
+                entidad="horario_trabajo",
+                resultado="AUTORIZADA",
+                correlation_id=str(correlation_id),
+                ip_origen=ip,
+            )
+        )
+        return self._reader.doctor_schedules(on)
+
+    def _audit_denial(
+        self,
+        actor_id: UUID,
+        correlation_id: UUID,
+        ip: str | None,
+        entidad: str = "resultados_laboratorio",
+    ) -> None:
         """Record a refused attempt without patient data. A failed audit keeps the refusal."""
         try:
             self._sink.append(
@@ -118,7 +156,7 @@ class FallbackReadService:
                     paciente_id=None,
                     actor_id=str(actor_id),
                     accion="READ_CONTINGENCY",
-                    entidad="resultados_laboratorio",
+                    entidad=entidad,
                     resultado="DENEGADA",
                     correlation_id=str(correlation_id),
                     ip_origen=ip,
