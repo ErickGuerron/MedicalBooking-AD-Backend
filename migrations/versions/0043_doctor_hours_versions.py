@@ -27,5 +27,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # shortcut: the versions and the declared hours stay on downgrade; dropping them would lose data.
+    # shortcut: versions and declared hours stay on downgrade; dropping them would lose data.
     pass

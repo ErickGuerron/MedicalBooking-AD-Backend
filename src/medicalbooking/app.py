@@ -25,6 +25,10 @@ from medicalbooking.modules.clinical.application.shadow_findings import ShadowFi
 from medicalbooking.modules.clinical.infrastructure.repositories import SqlClinicalStore
 from medicalbooking.modules.clinical.presentation.openapi import clinical_fragment
 from medicalbooking.modules.clinical.presentation.routes import clinical_bp
+from medicalbooking.modules.history.application.history_service import HistoryService
+from medicalbooking.modules.history.infrastructure.repositories import SqlHistoryStore
+from medicalbooking.modules.history.presentation.openapi import history_fragment
+from medicalbooking.modules.history.presentation.routes import history_bp
 from medicalbooking.modules.identity.application.use_cases import IdentityService
 from medicalbooking.modules.identity.infrastructure.email import BrevoActivationMailer
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
@@ -68,9 +72,11 @@ from medicalbooking.modules.reporting.application.use_cases import ReportingServ
 from medicalbooking.modules.reporting.infrastructure.repositories import SqlReportingStore
 from medicalbooking.modules.reporting.presentation.openapi import reporting_fragment
 from medicalbooking.modules.reporting.presentation.routes import reporting_bp
+from medicalbooking.modules.scheduling.application.office_admin import OfficeAdminService
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
 from medicalbooking.modules.scheduling.application.work_hours import WorkHoursService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
+from medicalbooking.modules.scheduling.presentation.office_openapi import office_admin_fragment
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
 from medicalbooking.modules.scheduling.presentation.routes import scheduling_bp
 from medicalbooking.modules.treatments.application.use_cases import TreatmentService
@@ -103,9 +109,17 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.work_hours"] = WorkHoursService(
         store=SqlSchedulingStore(engine), clock=lambda: datetime.now(UTC)
     )
+    app.extensions["medicalbooking.offices"] = OfficeAdminService(
+        store=SqlSchedulingStore(engine), clock=lambda: datetime.now(UTC)
+    )
     app.extensions["medicalbooking.catalog"] = CatalogService(SqlCatalogStore(engine))
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
     app.extensions["medicalbooking.treatments"] = _build_treatments(engine)
+    app.extensions["medicalbooking.history"] = HistoryService(
+        store=SqlHistoryStore(engine),
+        clock=lambda: datetime.now(UTC),
+        correlation_id=lambda: g.get("correlation_id"),
+    )
     app.extensions["medicalbooking.reporting"] = ReportingService(
         SqlReportingStore(engine), clock=_utc_now
     )
@@ -137,6 +151,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(catalog_bp)
     app.register_blueprint(lab_bp)
     app.register_blueprint(treatments_bp)
+    app.register_blueprint(history_bp)
     app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
     app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
@@ -149,6 +164,8 @@ def create_app(settings: Settings | None = None) -> Flask:
             [
                 identity_fragment(),
                 scheduling_fragment(),
+                office_admin_fragment(),
+                history_fragment(),
                 catalog_fragment(),
                 laboratory_fragment(),
                 treatments_fragment(),

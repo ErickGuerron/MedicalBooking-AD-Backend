@@ -26,6 +26,7 @@ from typing import Any
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
+from medicalbooking.modules.replica.application.declared_hours_sync import horario_key
 from medicalbooking.modules.replica.application.projection_consumer import apply_event
 from medicalbooking.modules.synchronization.application.ports import (
     PermanentDeliveryError,
@@ -187,6 +188,27 @@ class _MongoTransaction:
 
     def delete_cita(self, cita_id: str) -> None:
         self._delete("citas", cita_id, cita_id)
+
+    def upsert_horario_version(
+        self, horario: dict[str, Any], bloques: list[dict[str, Any]], version: int
+    ) -> None:
+        """One doctor's declared week. Written only over a version that is not newer."""
+        key = horario_key(horario["medico_id"], horario["vigente_desde"])
+        try:
+            self._db["horarios_trabajo"].update_one(
+                {"_id": key, "_v": {"$lte": self._version}},
+                {
+                    "$set": {
+                        "medico_id": canonical_id(horario["medico_id"]),
+                        "vigente_desde": horario["vigente_desde"],
+                        "bloques": bloques,
+                        "_v": self._version,
+                    }
+                },
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            return
 
     def upsert_tratamiento(self, tratamiento: dict[str, Any], version: int) -> None:
         # The envelope version is this event's version, the one the sink was built with.

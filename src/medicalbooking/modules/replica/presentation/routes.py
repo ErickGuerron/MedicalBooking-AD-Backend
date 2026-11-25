@@ -76,6 +76,26 @@ def read_fallback_results():
     )
 
 
+@replica_bp.get("/contingencia/horarios-medicos")
+@_authenticated_without_sql
+def read_fallback_schedules():
+    """Doctors' work hours in force today, served during an Azure SQL outage (read only)."""
+    service = current_app.extensions.get("medicalbooking.fallback_read")
+    if service is None:
+        raise ServiceUnavailable("Fallback reads are not configured on this instance")
+    try:
+        schedules = service.schedules_for(
+            actor_id=g.actor_id,
+            correlation_id=uuid.uuid4(),
+            ip=request.remote_addr,
+        )
+    except AccountNotActive as error:
+        raise Forbidden("Schedules are not available for this account") from error
+    except AuditUnavailable as error:
+        raise ServiceUnavailable("The read was not served: audit is unavailable") from error
+    return jsonify(medicos=_plain(schedules), fuente="replica"), 200
+
+
 def _plain(value: Any) -> Any:
     """JSON-safe copy: decimals become numbers, dates ISO strings, UUIDs strings."""
     if is_dataclass(value) and not isinstance(value, type):

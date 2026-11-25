@@ -11,6 +11,7 @@ any failed check raises before the results are read.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from medicalbooking.modules.replica.application.fallback_read import (
     AccountNotActive,
     PatientResults,
 )
+from medicalbooking.modules.replica.application.horarios_contingencia import vigente_por_medico
 
 OWN_RESULTS_PERMISSION = "resultados.leer_propios"
 
@@ -61,6 +63,15 @@ ORDER BY pc.orden_id, ph.tipo
 
 _PATIENT_OF_USER = "SELECT id FROM replica.pacientes WHERE usuario_id = %s LIMIT 1"
 
+# Every declared week of an active doctor that starts on or before the day; the most recent
+# one per doctor is picked in Python (vigente_por_medico).
+_DECLARED_WEEKS = """
+SELECT m.id, m.nombre, m.apellido, v.vigente_desde, v.bloques
+FROM replica.horarios_trabajo_version v
+JOIN replica.medicos m ON m.id = v.medico_id
+WHERE m.activo AND v.vigente_desde <= %s
+"""
+
 
 def _authorize(cursor: Any, usuario_id: UUID) -> None:
     """The rule shared by both reads: an active account holding the own-results permission."""
@@ -89,6 +100,28 @@ class SupabaseReplicaReader:
         if row is None:
             raise AccessDenied("no patient belongs to the account")
         return UUID(str(row[0]))
+
+    def assert_active(self, usuario_id: UUID) -> None:
+        """The account must be ACTIVO in the replica. Schedules need no other permission."""
+        connection = self._connect()
+        with connection.transaction():
+            with connection.cursor() as cursor:
+                cursor.execute(_ACCOUNT_STATE, (str(usuario_id),))
+                account = cursor.fetchone()
+        if account is None or account[0] != "ACTIVO":
+            raise AccountNotActive("account not active in the replica")
+
+    def doctor_schedules(self, on: date) -> list[dict[str, Any]]:
+        """The week in force per active doctor, read through the replica_reader role (RLS open)."""
+        connection = self._connect()
+        with connection.transaction():
+            with connection.cursor() as cursor:
+                cursor.execute(_DECLARED_WEEKS, (on,))
+                rows = cursor.fetchall()
+        return vigente_por_medico(
+            ((str(r[0]), r[1], r[2], r[3], r[4]) for r in rows),
+            on=on,
+        )
 
     def results_of(self, patient_id: UUID, usuario_id: UUID) -> PatientResults:
         connection = self._connect()

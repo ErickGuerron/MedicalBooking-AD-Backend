@@ -10,6 +10,10 @@ from medicalbooking.shared.domain.errors import ValidationFailed
 PERM_BOOK = "citas.reservar"
 PERM_DECLARE_HOURS = "horario.declarar"  # a doctor declares the hours they work
 PERM_GENERATE_SLOTS = "horario.generar"  # an administrator proposes and creates slots
+PERM_MANAGE_OFFICES = "sedes.administrar"  # creates and edits sedes and consultorios
+# Appointments that still hold a consultorio's future slots: a sede or consultorio with one cannot
+# be deactivated (it is blocked, never cancelled).
+ACTIVE_BOOKING_STATES = ("PENDIENTE_PAGO", "CONFIRMADA")
 PERM_CANCEL_MEDICO = "citas.cancelar_medico"
 ROLE_PATIENT = "PACIENTE"
 PERM_OPEN_CONSULTATION = "consultas.abrir"

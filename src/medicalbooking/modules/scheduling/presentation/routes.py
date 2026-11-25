@@ -8,13 +8,16 @@ from datetime import date, datetime, time
 from typing import Any
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, ValidationError
 
 from medicalbooking.modules.identity.presentation.routes import authenticated
+from medicalbooking.modules.scheduling.application.office_admin import OfficeAdminService
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
     AppointmentSummary,
     AvailableSlot,
+    ConsultorioOwned,
+    SedeDetail,
 )
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
 from medicalbooking.modules.scheduling.application.work_hours import WorkHoursService
@@ -371,8 +374,63 @@ class GenerateSlotsRequest(BaseModel):
     semana: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
 
+class CreateSedeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    nombre: StrictStr
+    direccion: StrictStr | None = None
+
+
+class UpdateSedeRequest(BaseModel):
+    """Only sent fields change. A null direccion clears it; a null nombre or activo is refused."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    nombre: StrictStr | None = None
+    direccion: StrictStr | None = None
+    activo: StrictBool | None = None
+
+
+class CreateConsultorioRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    nombre: StrictStr
+
+
+class UpdateConsultorioRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    nombre: StrictStr | None = None
+    activo: StrictBool | None = None
+
+
 def _work_hours() -> WorkHoursService:
     return current_app.extensions["medicalbooking.work_hours"]
+
+
+def _offices() -> OfficeAdminService:
+    return current_app.extensions["medicalbooking.offices"]
+
+
+def _sede_json(sede: SedeDetail) -> dict[str, Any]:
+    return {
+        "id": sede.id,
+        "nombre": sede.nombre,
+        "direccion": sede.direccion,
+        "activo": sede.activo,
+        "consultorios": [
+            {"id": c.id, "nombre": c.nombre, "activo": c.activo} for c in sede.consultorios
+        ],
+    }
+
+
+def _consultorio_json(consultorio: ConsultorioOwned) -> dict[str, Any]:
+    return {
+        "id": consultorio.id,
+        "sede_id": consultorio.sede_id,
+        "nombre": consultorio.nombre,
+        "activo": consultorio.activo,
+    }
 
 
 def _hhmm(text: str) -> time:
@@ -439,6 +497,47 @@ def doctor_work_hours(medico_id: uuid.UUID) -> tuple[Response, int]:
 def list_consultorios() -> tuple[Response, int]:
     offices = _work_hours().list_consultorios(g.actor)
     return jsonify(items=[{"id": o.id, "nombre": o.nombre, "sede": o.sede} for o in offices]), 200
+
+
+@scheduling_bp.get("/admin/sedes")
+@authenticated
+def list_sedes() -> tuple[Response, int]:
+    sedes = _offices().list_sedes(g.actor)
+    return jsonify(items=[_sede_json(s) for s in sedes]), 200
+
+
+@scheduling_bp.post("/admin/sedes")
+@authenticated
+def create_sede() -> tuple[Response, int]:
+    body = _validate(CreateSedeRequest)
+    sede = _offices().create_sede(g.actor, body.nombre, body.direccion)
+    return jsonify(_sede_json(sede)), 201
+
+
+@scheduling_bp.patch("/admin/sedes/<uuid:sede_id>")
+@authenticated
+def update_sede(sede_id: uuid.UUID) -> tuple[Response, int]:
+    body = _validate(UpdateSedeRequest)
+    sede = _offices().update_sede(g.actor, str(sede_id), body.model_dump(exclude_unset=True))
+    return jsonify(_sede_json(sede)), 200
+
+
+@scheduling_bp.post("/admin/sedes/<uuid:sede_id>/consultorios")
+@authenticated
+def create_consultorio(sede_id: uuid.UUID) -> tuple[Response, int]:
+    body = _validate(CreateConsultorioRequest)
+    sede = _offices().create_consultorio(g.actor, str(sede_id), body.nombre)
+    return jsonify(_sede_json(sede)), 201
+
+
+@scheduling_bp.patch("/admin/consultorios/<uuid:consultorio_id>")
+@authenticated
+def update_consultorio(consultorio_id: uuid.UUID) -> tuple[Response, int]:
+    body = _validate(UpdateConsultorioRequest)
+    consultorio = _offices().update_consultorio(
+        g.actor, str(consultorio_id), body.model_dump(exclude_unset=True)
+    )
+    return jsonify(_consultorio_json(consultorio)), 200
 
 
 @scheduling_bp.get("/admin/horarios/propuesta")

@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Connection, Engine, bindparam, text
 from sqlalchemy.exc import IntegrityError
 
 from medicalbooking.modules.laboratory.application.ports import AuditEvent
@@ -27,14 +27,22 @@ from medicalbooking.modules.scheduling.application.ports import (
     ConsultationOutcome,
     ConsultationStatus,
     Consultorio,
+    ConsultorioDetail,
+    ConsultorioOwned,
     DoctorProfile,
     OpenConsultationCommand,
     ReserveCommand,
     ReserveOutcome,
     ReserveStatus,
+    SedeDetail,
 )
-from medicalbooking.modules.scheduling.domain.clinic_hours import FRANJAS, WorkBlock
+from medicalbooking.modules.scheduling.domain.clinic_hours import (
+    FRANJAS,
+    WorkBlock,
+    declared_hours_payload,
+)
 from medicalbooking.modules.scheduling.domain.policies import (
+    ACTIVE_BOOKING_STATES,
     ACTIVE_STATES,
     cancellation_window_closed,
     doctor_cancellation_blockers,
@@ -289,6 +297,144 @@ class SqlSchedulingStore:
             Consultorio(id=_canonical(row.id), nombre=row.nombre, sede=row.sede) for row in rows
         ]
 
+    # ---------- sedes and consultorios (administration) ----------
+
+    def list_sedes(self) -> list[SedeDetail]:
+        with self._engine.connect() as conn:
+            sedes = conn.execute(
+                text("SELECT id, nombre, direccion, activo FROM sedes ORDER BY nombre")
+            ).all()
+            offices = conn.execute(
+                text("SELECT id, sede_id, nombre, activo FROM consultorios ORDER BY nombre")
+            ).all()
+        by_sede: dict[str, list[ConsultorioDetail]] = {}
+        for office in offices:
+            by_sede.setdefault(_canonical(office.sede_id), []).append(
+                ConsultorioDetail(
+                    id=_canonical(office.id), nombre=office.nombre, activo=bool(office.activo)
+                )
+            )
+        return [
+            SedeDetail(
+                id=_canonical(row.id),
+                nombre=row.nombre,
+                direccion=row.direccion,
+                activo=bool(row.activo),
+                consultorios=tuple(by_sede.get(_canonical(row.id), [])),
+            )
+            for row in sedes
+        ]
+
+    def get_sede(self, sede_id: str) -> SedeDetail | None:
+        guid = _as_guid(sede_id)
+        if guid is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id, nombre, direccion, activo FROM sedes WHERE id = :s"),
+                {"s": str(guid)},
+            ).first()
+            if row is None:
+                return None
+            offices = conn.execute(
+                text(
+                    "SELECT id, nombre, activo FROM consultorios WHERE sede_id = :s ORDER BY nombre"
+                ),
+                {"s": str(guid)},
+            ).all()
+        return SedeDetail(
+            id=_canonical(row.id),
+            nombre=row.nombre,
+            direccion=row.direccion,
+            activo=bool(row.activo),
+            consultorios=tuple(
+                ConsultorioDetail(id=_canonical(o.id), nombre=o.nombre, activo=bool(o.activo))
+                for o in offices
+            ),
+        )
+
+    def insert_sede(self, sede_id: str, nombre: str, direccion: str | None) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO sedes (id, nombre, direccion) VALUES (:id, :n, :d)"),
+                {"id": sede_id, "n": nombre, "d": direccion},
+            )
+
+    def update_sede(self, sede_id: str, nombre: str, direccion: str | None, activo: bool) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("UPDATE sedes SET nombre = :n, direccion = :d, activo = :a WHERE id = :id"),
+                {"id": sede_id, "n": nombre, "d": direccion, "a": int(activo)},
+            )
+
+    def get_consultorio(self, consultorio_id: str) -> ConsultorioOwned | None:
+        guid = _as_guid(consultorio_id)
+        if guid is None:
+            return None
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id, sede_id, nombre, activo FROM consultorios WHERE id = :c"),
+                {"c": str(guid)},
+            ).first()
+        if row is None:
+            return None
+        return ConsultorioOwned(
+            id=_canonical(row.id),
+            sede_id=_canonical(row.sede_id),
+            nombre=row.nombre,
+            activo=bool(row.activo),
+        )
+
+    def insert_consultorio(self, consultorio_id: str, sede_id: str, nombre: str) -> bool:
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(
+                    text("INSERT INTO consultorios (id, sede_id, nombre) VALUES (:id, :s, :n)"),
+                    {"id": consultorio_id, "s": sede_id, "n": nombre},
+                )
+        except IntegrityError as error:
+            if not is_unique_violation(str(error.orig)):
+                raise
+            return False
+        return True
+
+    def update_consultorio(self, consultorio_id: str, nombre: str, activo: bool) -> bool:
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(
+                    text("UPDATE consultorios SET nombre = :n, activo = :a WHERE id = :c"),
+                    {"c": consultorio_id, "n": nombre, "a": int(activo)},
+                )
+        except IntegrityError as error:
+            if not is_unique_violation(str(error.orig)):
+                raise
+            return False
+        return True
+
+    def has_future_bookings(self, consultorio_ids: list[str], now: datetime) -> bool:
+        guids = [str(guid) for guid in (_as_guid(c) for c in consultorio_ids) if guid is not None]
+        if not guids:
+            return False
+        statement = text(
+            "SELECT TOP 1 1 FROM citas ct "
+            "JOIN horarios_disponibles h ON h.id = ct.horario_id "
+            "JOIN agendas a ON a.id = h.agenda_id "
+            "WHERE a.consultorio_id IN :consultorios AND ct.estado IN :estados "
+            "AND h.inicio_utc > :ahora"
+        ).bindparams(
+            bindparam("consultorios", expanding=True), bindparam("estados", expanding=True)
+        )
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                statement,
+                {
+                    "consultorios": guids,
+                    "estados": list(ACTIVE_BOOKING_STATES),
+                    "ahora": _utc_naive(now),
+                },
+            ).first()
+        return found is not None
+
     def declared_hours_exist(self, medico_id: str) -> bool:
         with self._engine.connect() as conn:
             found = conn.execute(
@@ -341,6 +487,15 @@ class SqlSchedulingStore:
                         "ahora": moment,
                     },
                 )
+            # Replica event (replica-work-hours S1): the whole week in the same transaction.
+            append_outbox(
+                conn,
+                "medico_horario",
+                _canonical(medico_id),
+                "horario_trabajo.declarado",
+                declared_hours_payload(_canonical(medico_id), effective_from, blocks),
+                moment,
+            )
 
     def consultorio_is_active(self, consultorio_id: str) -> bool:
         if _as_guid(consultorio_id) is None:
