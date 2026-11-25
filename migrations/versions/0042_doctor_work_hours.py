@@ -1,4 +1,4 @@
-"""Doctor work hours, service windows (morning sample collection, afternoon consultation) and permissions.
+"""Doctor work hours, service windows (morning sampling, afternoon consultation) and permissions.
 
 Revision ID: 0042_doctor_work_hours
 Revises: 0041_reporting_permissions

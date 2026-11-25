@@ -1013,10 +1013,11 @@ class SqlLabStore:
                 text(
                     "INSERT INTO auditoria_accesos (id, usuario_id, paciente_id, entidad, "
                     "entidad_id, accion, fecha_evento, resultado, correlation_id) "
-                    # A denied request may name a patient that does not exist: the FK would reject the
-                    # audit row and turn the 403 into a 500. The requested id stays in entidad_id.
-                    "VALUES (:id, :u, (SELECT p.id FROM pacientes AS p WHERE p.id = :p), :entidad, "
-                    ":entidad_id, :accion, :ahora, :resultado, "
+                    # A denied request may name a patient that does not exist: the FK would reject
+                    # the audit row and turn the 403 into a 500. The requested id stays in
+                    # entidad_id.
+                    "VALUES (:id, :u, (SELECT p.id FROM pacientes AS p WHERE p.id = :p), "
+                    ":entidad, :entidad_id, :accion, :ahora, :resultado, "
                     ":correlacion)"
                 ),
                 {
