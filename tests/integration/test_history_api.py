@@ -21,8 +21,7 @@ pytestmark = pytest.mark.integration
 KEY = "integration-signing-key-with-32+chars"
 FORBIDDEN = "Access to this resource is not allowed"
 ALLERGY = {
-    "sustancia": "Penicilina",
-    "categoria": "MEDICAMENTO",
+    "sustancia_codigo": "PENICILINA",
     "severidad": "GRAVE",
     "reaccion": "Urticaria",
 }
@@ -44,18 +43,26 @@ def engine(app: Flask) -> Engine:
 def _patient_id(engine: Engine, user_id: str) -> str:
     with engine.connect() as conn:
         return str(
-            conn.execute(
-                text("SELECT id FROM pacientes WHERE usuario_id = :u"), {"u": user_id}
-            ).scalar_one()
+            uuid.UUID(
+                str(
+                    conn.execute(
+                        text("SELECT id FROM pacientes WHERE usuario_id = :u"), {"u": user_id}
+                    ).scalar_one()
+                )
+            )
         )
 
 
 def _medico_id(engine: Engine, user_id: str) -> str:
     with engine.connect() as conn:
         return str(
-            conn.execute(
-                text("SELECT id FROM medicos WHERE usuario_id = :u"), {"u": user_id}
-            ).scalar_one()
+            uuid.UUID(
+                str(
+                    conn.execute(
+                        text("SELECT id FROM medicos WHERE usuario_id = :u"), {"u": user_id}
+                    ).scalar_one()
+                )
+            )
         )
 
 
@@ -128,7 +135,7 @@ def test_a_treating_doctor_registers_a_verified_allergy_and_the_patient_declares
 
     declared = client.post(
         f"/api/v1/patients/{ctx['paciente_id']}/historia/alergias",
-        json={**ALLERGY, "sustancia": "Mani"},
+        json={**ALLERGY, "sustancia_codigo": "CACAHUATE"},
         headers=ctx["patient"],
     )
     assert declared.status_code == 201, declared.get_json()
@@ -202,9 +209,7 @@ def test_the_history_read_answers_the_active_allergy_first(app, engine):
     client = app.test_client()
     base = f"/api/v1/patients/{ctx['paciente_id']}/historia/alergias"
     first = client.post(base, json=ALLERGY, headers=ctx["doctor"]).get_json()
-    client.post(
-        base, json={**ALLERGY, "sustancia": "Latex", "categoria": "LATEX"}, headers=ctx["doctor"]
-    )
+    client.post(base, json={**ALLERGY, "sustancia_codigo": "LATEX"}, headers=ctx["doctor"])
     client.patch(
         f"{base}/{first['id']}/estado",
         json={"expected_estado": "ACTIVA", "estado": "RESUELTA", "motivo": "Ya no reacciona"},
@@ -325,7 +330,7 @@ def test_unknown_fields_and_bad_dates_are_refused(app, engine):
         client.post(
             base,
             json={
-                "vacuna": "Influenza",
+                "vacuna_codigo": "INFLUENZA",
                 "dosis_numero": 1,
                 "fecha": "2026-06-01",
                 "estado": "ERRONEA",
@@ -337,7 +342,7 @@ def test_unknown_fields_and_bad_dates_are_refused(app, engine):
     assert (
         client.post(
             base,
-            json={"vacuna": "Influenza", "dosis_numero": True, "fecha": "2026-06-01"},
+            json={"vacuna_codigo": "INFLUENZA", "dosis_numero": True, "fecha": "2026-06-01"},
             headers=ctx["doctor"],
         ).status_code
         == 422
@@ -345,7 +350,7 @@ def test_unknown_fields_and_bad_dates_are_refused(app, engine):
     assert (
         client.post(
             base,
-            json={"vacuna": "Influenza", "dosis_numero": 1, "fecha": future},
+            json={"vacuna_codigo": "INFLUENZA", "dosis_numero": 1, "fecha": future},
             headers=ctx["doctor"],
         ).status_code
         == 422

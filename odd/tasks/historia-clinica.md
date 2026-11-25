@@ -25,7 +25,7 @@ S15. Status changes are guarded: a change applies only if the entry is still in 
 S16. Permissions seeded by migration: historia.leer (MEDICO), historia.registrar (MEDICO), historia.declarar (PACIENTE), historia.leer_propia (PACIENTE). No other role receives them.
 S17. Validation failures are 422 (ValidationFailed), as in the rest of the project.
 S18. The OpenAPI contract and docs/api/openapi.json are updated before the work is considered done (AGENTS.md: contrato primero).
-S19. Known gaps stated up front: the event log is written but not yet exposed through an endpoint (auditors read it in SQL); the Flutter portal does not yet show the patient's own history; CIE-11 codes are validated by format only, not against the catalog; the vital-sign read does not yet filter by date range.
+S19 (superseded in part by L8). Known gaps stated up front: the event log is written but not yet exposed through an endpoint (auditors read it in SQL); the Flutter portal does not yet show the patient's own history; CIE-11 codes are validated by format only, not against the catalog; the vital-sign read does not yet filter by date range.
 
 ## Tasks
 
@@ -46,3 +46,12 @@ L4 (decision, S5): the motivo is required for every state change, not only for r
 L5 (decision, S10): vital signs are numbers in the API (Decimal converted at the HTTP edge), not strings; money keeps its string convention elsewhere.
 L6 (fixes found while building): vacunas had no estado column, so an erroneous vaccine could not be marked without deleting it; added in migration 0045. The service now checks the patient in the path before verifying or changing a state (S12). Pydantic strict mode on the whole model refused ISO dates, so strictness is per field.
 L7 (evidence): migration 0045 applies in the test fixture chain; 87 history unit tests and 1818 backend unit tests pass; 15 history integration tests pass against SQL Server on port 1270, including the append-only trigger and the access audit; the OpenAPI contract test (40) passes with the new paths.
+L8 (second iteration, user request): catalogs, date ranges, the event log and the patient's own history.
+  - Catalogs (migration 0046): catalogo_cie11 (starter seed), catalogo_vacunas, catalogo_sustancias_alergia. Allergies take sustancia_codigo and vacunas take vacuna_codigo; the name and category come from the catalog and are kept as a snapshot. Antecedentes and problemas accept cie11 only when it is an active catalog code. The full CIE-11 list is NOT loaded: it needs an import from the official source, which is a gap.
+  - Date ranges: GET historia and the event log take desde and hasta (inclusive days, UTC). At most 366 days apart; hasta before desde is refused.
+  - Event log: GET /patients/{id}/historia/eventos with entidad, accion, desde, hasta, limit (default 50, max 200) and offset. The treating doctor sees the actor; the patient sees the change without the actor identity. Newest first, with a total.
+  - Patient's own: GET /me/historia and GET /me/historia/eventos, so Flutter does not need to know its patient id.
+  - Catalog search (any signed-in person): GET /catalogos/cie11, /catalogos/vacunas, /catalogos/sustancias-alergia with q and limit. Wildcards typed by a person are matched literally.
+  - Fixes found while testing: a patient id returned in upper case by SQL Server now comes back lower case everywhere (own history); a decimal in vital signs comes back as a number.
+  - Evidence: 1842 backend unit tests pass; 49 history, catalog and sedes integration tests pass against SQL Server on port 1270; the OpenAPI contract test passes with the new paths.
+  - Gaps still open: the full CIE-11 catalog import; a catalog admin screen; the patient's Flutter screen; the Angular staff screen. The repository has no ICD-11 or vaccine catalog before this change, so the seed is a starter set.

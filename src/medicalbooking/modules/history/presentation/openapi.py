@@ -1,4 +1,5 @@
-"""OpenAPI fragment for the clinical history. Contract first: routes must match it."""
+# ruff: noqa: E501  (OpenAPI summaries and descriptions are prose shown to readers, not code)
+"""OpenAPI fragment for the clinical history. Contract first: the routes must match this document."""
 
 from __future__ import annotations
 
@@ -8,6 +9,8 @@ BEARER = [{"bearerAuth": []}]
 _PROBLEM_CONTENT = {
     "application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}
 }
+_KINDS_ENUM = ["alergia", "antecedente", "medicacion", "problema", "vacuna", "signos_vitales"]
+_ACTIONS_ENUM = ["CREAR", "VERIFICAR", "ESTADO", "CORREGIR"]
 
 
 def json_response(description: str, schema_name: str) -> dict[str, Any]:
@@ -23,25 +26,37 @@ def problem_response(description: str) -> dict[str, Any]:
     return {"description": description, "content": _PROBLEM_CONTENT}
 
 
-_KINDS = ("alergias", "antecedentes", "medicacion", "problemas", "vacunas")
-_PATIENT = {
-    "name": "paciente_id",
-    "in": "path",
-    "required": True,
-    "schema": {"type": "string", "format": "uuid"},
-}
-_KIND = {
-    "name": "path_kind",
-    "in": "path",
-    "required": True,
-    "schema": {"type": "string", "enum": list(_KINDS)},
-}
-_ENTRY = {
-    "name": "entry_id",
-    "in": "path",
-    "required": True,
-    "schema": {"type": "string", "format": "uuid"},
-}
+def _path_param(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    return {"name": name, "in": "path", "required": True, "schema": schema}
+
+
+def _query(name: str, schema: dict[str, Any], description: str = "") -> dict[str, Any]:
+    param: dict[str, Any] = {"name": name, "in": "query", "required": False, "schema": schema}
+    if description:
+        param["description"] = description
+    return param
+
+
+_UUID = {"type": "string", "format": "uuid"}
+_PATIENT = _path_param("paciente_id", _UUID)
+_KIND = _path_param(
+    "path_kind",
+    {"type": "string", "enum": ["alergias", "antecedentes", "medicacion", "problemas", "vacunas"]},
+)
+_ENTRY = _path_param("entry_id", _UUID)
+_DESDE = _query("desde", {"type": "string", "format": "date"}, "First day included (YYYY-MM-DD)")
+_HASTA = _query(
+    "hasta",
+    {"type": "string", "format": "date"},
+    "Last day included (YYYY-MM-DD). With desde, at most 366 days apart",
+)
+_LIMIT = _query("limit", {"type": "integer", "minimum": 1, "maximum": 200}, "Default 50")
+_OFFSET = _query("offset", {"type": "integer", "minimum": 0})
+_ENTIDAD = _query("entidad", {"type": "string", "enum": _KINDS_ENUM})
+_ACCION = _query("accion", {"type": "string", "enum": _ACTIONS_ENUM})
+_RESPONSES_403_PATIENT = problem_response(
+    "Caller is not the treating doctor or the patient; the same answer for a missing resource"
+)
 
 
 def _body(schema: str) -> dict[str, Any]:
@@ -52,10 +67,7 @@ def _body(schema: str) -> dict[str, Any]:
 
 
 def history_fragment() -> dict[str, Any]:
-    """Clinical history: verified entries, vital signs and their corrections."""
-    responses_403 = problem_response(
-        "Caller is not the treating doctor or the patient; the same answer for a missing resource"
-    )
+    """Clinical history: verified entries, catalogs, date ranges, the event log and vital signs."""
     return {
         "paths": {
             "/api/v1/patients/{paciente_id}/historia": {
@@ -64,11 +76,76 @@ def history_fragment() -> dict[str, Any]:
                     "operationId": "readClinicalHistory",
                     "summary": "Read a patient's clinical history; active allergies first",
                     "security": BEARER,
-                    "parameters": [_PATIENT],
+                    "parameters": [_PATIENT, _DESDE, _HASTA],
                     "responses": {
                         "200": json_response("The history grouped by kind", "ClinicalHistory"),
                         "401": problem_response("Missing, malformed or inactive credentials"),
-                        "403": responses_403,
+                        "403": _RESPONSES_403_PATIENT,
+                        "422": problem_response("A date is malformed or the range is too wide"),
+                    },
+                },
+            },
+            "/api/v1/patients/{paciente_id}/historia/eventos": {
+                "get": {
+                    "tags": ["ClinicalHistory"],
+                    "operationId": "readHistoryEvents",
+                    "summary": "Event log of a history, newest first. The doctor sees the actor; the patient does not",
+                    "security": BEARER,
+                    "parameters": [_PATIENT, _ENTIDAD, _ACCION, _DESDE, _HASTA, _LIMIT, _OFFSET],
+                    "responses": {
+                        "200": json_response("One page of the event log", "EventPage"),
+                        "401": problem_response("Missing, malformed or inactive credentials"),
+                        "403": _RESPONSES_403_PATIENT,
+                        "422": problem_response("A filter, a range or a page is out of its rule"),
+                    },
+                },
+            },
+            "/api/v1/me/historia": {
+                "get": {
+                    "tags": ["ClinicalHistory"],
+                    "operationId": "readOwnClinicalHistory",
+                    "summary": "The signed-in patient's own history",
+                    "security": BEARER,
+                    "parameters": [_DESDE, _HASTA],
+                    "responses": {
+                        "200": json_response("The history grouped by kind", "ClinicalHistory"),
+                        "401": problem_response("Missing, malformed or inactive credentials"),
+                        "403": problem_response("The account is not a patient's"),
+                    },
+                },
+            },
+            "/api/v1/me/historia/eventos": {
+                "get": {
+                    "tags": ["ClinicalHistory"],
+                    "operationId": "readOwnHistoryEvents",
+                    "summary": "The signed-in patient's own event log, without the professional's identity",
+                    "security": BEARER,
+                    "parameters": [_ENTIDAD, _ACCION, _DESDE, _HASTA, _LIMIT, _OFFSET],
+                    "responses": {
+                        "200": json_response("One page of the event log", "EventPage"),
+                        "401": problem_response("Missing, malformed or inactive credentials"),
+                        "403": problem_response("The account is not a patient's"),
+                    },
+                },
+            },
+            "/api/v1/catalogos/{catalog_path}": {
+                "get": {
+                    "tags": ["ClinicalHistory"],
+                    "operationId": "searchCatalog",
+                    "summary": "Active items of a catalog, for a picker. Any signed-in person may read them",
+                    "security": BEARER,
+                    "parameters": [
+                        _path_param(
+                            "catalog_path",
+                            {"type": "string", "enum": ["cie11", "vacunas", "sustancias-alergia"]},
+                        ),
+                        _query("q", {"type": "string", "maxLength": 100}),
+                        _LIMIT,
+                    ],
+                    "responses": {
+                        "200": json_response("Matching active items", "CatalogList"),
+                        "401": problem_response("Missing, malformed or inactive credentials"),
+                        "422": problem_response("Unknown catalog, query or limit"),
                     },
                 },
             },
@@ -76,7 +153,7 @@ def history_fragment() -> dict[str, Any]:
                 "post": {
                     "tags": ["ClinicalHistory"],
                     "operationId": "createHistoryEntry",
-                    "summary": "Register an entry. A doctor's entry is verified; a patient's is not",  # noqa: E501
+                    "summary": "Register an entry. A doctor's entry is verified; a patient's is not",
                     "security": BEARER,
                     "parameters": [_PATIENT, _KIND],
                     "requestBody": {
@@ -101,8 +178,10 @@ def history_fragment() -> dict[str, Any]:
                     "responses": {
                         "201": json_response("The created entry", "HistoryEntry"),
                         "401": problem_response("Missing, malformed or inactive credentials"),
-                        "403": responses_403,
-                        "422": problem_response("A field is missing, unknown or out of its rule"),
+                        "403": _RESPONSES_403_PATIENT,
+                        "422": problem_response(
+                            "A field is missing, unknown, outside the catalog or its rule"
+                        ),
                     },
                 },
             },
@@ -116,7 +195,7 @@ def history_fragment() -> dict[str, Any]:
                     "responses": {
                         "200": json_response("The verified entry", "HistoryEntry"),
                         "401": problem_response("Missing, malformed or inactive credentials"),
-                        "403": responses_403,
+                        "403": _RESPONSES_403_PATIENT,
                         "409": problem_response(
                             "Already verified, or the kind does not need verifying"
                         ),
@@ -134,7 +213,7 @@ def history_fragment() -> dict[str, Any]:
                     "responses": {
                         "200": json_response("The changed entry", "HistoryEntry"),
                         "401": problem_response("Missing, malformed or inactive credentials"),
-                        "403": responses_403,
+                        "403": _RESPONSES_403_PATIENT,
                         "409": problem_response(
                             "The entry changed since it was read, or the transition is not allowed"
                         ),
@@ -148,19 +227,12 @@ def history_fragment() -> dict[str, Any]:
                     "operationId": "recordVitalSigns",
                     "summary": "Record vital signs for one of the caller's appointments",
                     "security": BEARER,
-                    "parameters": [
-                        {
-                            "name": "cita_id",
-                            "in": "path",
-                            "required": True,
-                            "schema": {"type": "string", "format": "uuid"},
-                        }
-                    ],
+                    "parameters": [_path_param("cita_id", _UUID)],
                     "requestBody": _body("VitalSignsInput"),
                     "responses": {
                         "201": json_response("The recorded vital signs", "VitalSigns"),
                         "401": problem_response("Missing, malformed or inactive credentials"),
-                        "403": responses_403,
+                        "403": _RESPONSES_403_PATIENT,
                         "422": problem_response("No measure, unknown measure, or out of range"),
                     },
                 },
@@ -171,19 +243,12 @@ def history_fragment() -> dict[str, Any]:
                     "operationId": "correctVitalSigns",
                     "summary": "Correct vital signs: a new entry with a motivo; the original stays",
                     "security": BEARER,
-                    "parameters": [
-                        {
-                            "name": "vitals_id",
-                            "in": "path",
-                            "required": True,
-                            "schema": {"type": "string", "format": "uuid"},
-                        }
-                    ],
+                    "parameters": [_path_param("vitals_id", _UUID)],
                     "requestBody": _body("VitalSignsCorrectionInput"),
                     "responses": {
                         "201": json_response("The correction", "VitalSigns"),
                         "401": problem_response("Missing, malformed or inactive credentials"),
-                        "403": responses_403,
+                        "403": _RESPONSES_403_PATIENT,
                         "422": problem_response("Missing motivo, no measure, or out of range"),
                     },
                 },
@@ -194,13 +259,10 @@ def history_fragment() -> dict[str, Any]:
                 "AllergyInput": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["sustancia", "categoria", "severidad"],
+                    "required": ["sustancia_codigo", "severidad"],
+                    "description": "The allergen is a code of the allergen catalog; name and category come from it.",
                     "properties": {
-                        "sustancia": {"type": "string", "maxLength": 150},
-                        "categoria": {
-                            "type": "string",
-                            "enum": ["MEDICAMENTO", "ALIMENTO", "LATEX", "AMBIENTAL", "OTRA"],
-                        },
+                        "sustancia_codigo": {"type": "string", "example": "PENICILINA"},
                         "reaccion": {"type": ["string", "null"], "maxLength": 300},
                         "severidad": {
                             "type": "string",
@@ -220,7 +282,12 @@ def history_fragment() -> dict[str, Any]:
                             "maxLength": 50,
                             "description": "Required when tipo is FAMILIAR",
                         },
-                        "cie11": {"type": ["string", "null"], "maxLength": 20, "example": "BA00"},
+                        "cie11": {
+                            "type": ["string", "null"],
+                            "maxLength": 20,
+                            "example": "BA00",
+                            "description": "Must be an active code of the CIE-11 catalog",
+                        },
                     },
                 },
                 "MedicationInput": {
@@ -241,16 +308,20 @@ def history_fragment() -> dict[str, Any]:
                     "description": "Only a treating doctor registers a problem.",
                     "properties": {
                         "descripcion": {"type": "string", "maxLength": 300},
-                        "cie11": {"type": ["string", "null"], "maxLength": 20},
+                        "cie11": {
+                            "type": ["string", "null"],
+                            "maxLength": 20,
+                            "description": "Must be an active code of the CIE-11 catalog",
+                        },
                         "inicio": {"type": ["string", "null"], "format": "date"},
                     },
                 },
                 "VaccineInput": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["vacuna", "dosis_numero", "fecha"],
+                    "required": ["vacuna_codigo", "dosis_numero", "fecha"],
                     "properties": {
-                        "vacuna": {"type": "string", "maxLength": 120},
+                        "vacuna_codigo": {"type": "string", "example": "INFLUENZA"},
                         "dosis_numero": {"type": "integer", "minimum": 1, "maximum": 10},
                         "fecha": {
                             "type": "string",
@@ -291,6 +362,61 @@ def history_fragment() -> dict[str, Any]:
                     "allOf": [{"$ref": "#/components/schemas/VitalSignsInput"}],
                     "required": ["motivo"],
                     "properties": {"motivo": {"type": "string", "minLength": 1, "maxLength": 500}},
+                },
+                "EventItem": {
+                    "type": "object",
+                    "required": ["id", "entidad", "entidad_id", "accion", "ocurrido_en"],
+                    "properties": {
+                        "id": {"type": "integer", "format": "int64"},
+                        "entidad": {"type": "string", "enum": _KINDS_ENUM},
+                        "entidad_id": {"type": "string", "format": "uuid"},
+                        "accion": {"type": "string", "enum": _ACTIONS_ENUM},
+                        "motivo": {"type": ["string", "null"]},
+                        "antes": {"type": ["object", "null"], "additionalProperties": True},
+                        "despues": {"type": ["object", "null"], "additionalProperties": True},
+                        "ocurrido_en": {"type": "string", "format": "date-time"},
+                        "actor_usuario_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "description": "Only present when incluye_actor is true",
+                        },
+                    },
+                },
+                "EventPage": {
+                    "type": "object",
+                    "required": ["items", "total", "limit", "offset", "incluye_actor"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/EventItem"},
+                        },
+                        "total": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                        "offset": {"type": "integer"},
+                        "incluye_actor": {"type": "boolean"},
+                    },
+                },
+                "CatalogItem": {
+                    "type": "object",
+                    "required": ["codigo", "nombre"],
+                    "properties": {
+                        "codigo": {"type": "string"},
+                        "nombre": {"type": "string"},
+                        "categoria": {
+                            "type": "string",
+                            "description": "Only for the allergen catalog",
+                        },
+                    },
+                },
+                "CatalogList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/CatalogItem"},
+                        },
+                    },
                 },
                 "HistoryEntry": {
                     "type": "object",

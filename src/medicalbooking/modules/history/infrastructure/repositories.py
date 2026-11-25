@@ -14,7 +14,13 @@ from typing import Any
 
 from sqlalchemy import Engine, text
 
-from medicalbooking.modules.history.application.ports import CitaOwnership, Entry, VitalSigns
+from medicalbooking.modules.history.application.ports import (
+    CatalogItem,
+    CitaOwnership,
+    Entry,
+    EventRow,
+    VitalSigns,
+)
 from medicalbooking.modules.history.domain.policies import (
     ALERGIA,
     ANTECEDENTE,
@@ -36,11 +42,11 @@ _KINDS = {
 
 # The value columns of each table, besides the shared ones (id, paciente_id, estado, origen, ...).
 VALUE_COLUMNS: dict[str, tuple[str, ...]] = {
-    "alergia": ("sustancia", "categoria", "reaccion", "severidad"),
+    "alergia": ("sustancia_codigo", "sustancia", "categoria", "reaccion", "severidad"),
     "antecedente": ("tipo", "descripcion", "parentesco", "cie11"),
     "medicacion": ("medicamento", "dosis", "frecuencia", "inicio"),
     "problema": ("descripcion", "cie11", "inicio"),
-    "vacuna": ("vacuna", "dosis_numero", "fecha", "lote"),
+    "vacuna": ("vacuna_codigo", "vacuna", "dosis_numero", "fecha", "lote"),
 }
 VITAL_COLUMNS = (
     "peso_kg",
@@ -91,10 +97,12 @@ class SqlHistoryStore:
     # ---------- identities and relations ----------
 
     def resolve_patient_id(self, user_id: str) -> str | None:
-        return self._shared.resolve_patient_id(user_id)
+        found = self._shared.resolve_patient_id(user_id)
+        return _canonical(found) if found is not None else None
 
     def resolve_medico_id(self, user_id: str) -> str | None:
-        return self._shared.resolve_medico_id(user_id)
+        found = self._shared.resolve_medico_id(user_id)
+        return _canonical(found) if found is not None else None
 
     def doctor_treats_patient(self, medico_id: str, paciente_id: str) -> bool:
         with self._engine.connect() as conn:
@@ -184,11 +192,23 @@ class SqlHistoryStore:
             row = conn.execute(text(self._select(kind) + " WHERE id = :id"), {"id": guid}).first()
         return self._entry(kind, row) if row is not None else None
 
-    def list_entries(self, kind: str, paciente_id: str) -> list[Entry]:
+    def list_entries(
+        self,
+        kind: str,
+        paciente_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[Entry]:
+        clause, params = _registered_between(start, end)
         with self._engine.connect() as conn:
             rows = conn.execute(
-                text(self._select(kind) + " WHERE paciente_id = :p ORDER BY registrada_en DESC"),
-                {"p": paciente_id},
+                text(
+                    self._select(kind)
+                    + " WHERE paciente_id = :p"
+                    + clause
+                    + " ORDER BY registrada_en DESC"
+                ),
+                {"p": paciente_id, **params},
             ).all()
         return [self._entry(kind, row) for row in rows]
 
@@ -282,7 +302,9 @@ class SqlHistoryStore:
             ).first()
         return self._vitals(row) if row is not None else None
 
-    def list_vitals(self, paciente_id: str) -> list[VitalSigns]:
+    def list_vitals(
+        self, paciente_id: str, start: datetime | None = None, end: datetime | None = None
+    ) -> list[VitalSigns]:
         columns = ", ".join(
             (
                 "id",
@@ -295,15 +317,90 @@ class SqlHistoryStore:
                 *VITAL_COLUMNS,
             )
         )
+        clause, params = _registered_between(start, end)
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(
                     f"SELECT {columns} FROM historia_signos_vitales "  # noqa: S608
-                    "WHERE paciente_id = :p ORDER BY registrada_en DESC"
+                    "WHERE paciente_id = :p" + clause + " ORDER BY registrada_en DESC"
                 ),
-                {"p": paciente_id},
+                {"p": paciente_id, **params},
             ).all()
         return [self._vitals(row) for row in rows]
+
+    def list_events(
+        self,
+        paciente_id: str,
+        *,
+        entidad: str | None,
+        accion: str | None,
+        start: datetime | None,
+        end: datetime | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[EventRow], int]:
+        clause, params = _event_filters(paciente_id, entidad, accion, start, end)
+        with self._engine.connect() as conn:
+            total = conn.execute(
+                # The clause is built from fixed fragments above; every value is a bound parameter.
+                text("SELECT COUNT(*) FROM historia_eventos WHERE " + clause),  # noqa: S608
+                params,
+            ).scalar_one()
+            rows = conn.execute(
+                text(
+                    "SELECT id, entidad, entidad_id, accion, actor_usuario_id, motivo, antes, "  # noqa: S608
+                    "despues, ocurrido_en FROM historia_eventos WHERE "
+                    + clause
+                    + " ORDER BY ocurrido_en DESC, id DESC"
+                    " OFFSET :skip ROWS FETCH NEXT :size ROWS ONLY"
+                ),
+                {**params, "skip": offset, "size": limit},
+            ).all()
+        events = [
+            EventRow(
+                id=int(row.id),
+                entidad=row.entidad,
+                entidad_id=_canonical(row.entidad_id),
+                accion=row.accion,
+                actor_usuario_id=_canonical(row.actor_usuario_id),
+                motivo=row.motivo,
+                antes=row.antes,
+                despues=row.despues,
+                ocurrido_en=row.ocurrido_en,
+            )
+            for row in rows
+        ]
+        return events, int(total)
+
+    def catalog_item(self, catalog: str, codigo: str) -> CatalogItem | None:
+        table, code_col, name_col, category_col = _catalog_columns(catalog)
+        category = category_col or "NULL"
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    f"SELECT {code_col} AS codigo, {name_col} AS nombre, activo, "  # noqa: S608
+                    f"{category} AS categoria FROM {table} WHERE {code_col} = :c"
+                ),
+                {"c": codigo},
+            ).first()
+        return _catalog_row(row) if row is not None else None
+
+    def search_catalog(self, catalog: str, query: str | None, limit: int) -> list[CatalogItem]:
+        table, code_col, name_col, category_col = _catalog_columns(catalog)
+        category = category_col or "NULL"
+        pattern = "%" + _like_safe(query) + "%" if query else None
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    f"SELECT TOP (:n) {code_col} AS codigo, {name_col} AS nombre, activo, "  # noqa: S608
+                    f"{category} AS categoria FROM {table} WHERE activo = 1 AND "
+                    f"(:q IS NULL OR {code_col} LIKE :q ESCAPE '\\' "
+                    f"OR {name_col} LIKE :q ESCAPE '\\') "
+                    f"ORDER BY {name_col}"
+                ),
+                {"n": limit, "q": pattern},
+            ).all()
+        return [_catalog_row(row) for row in rows]
 
     # ---------- event log and audit ----------
 
@@ -375,6 +472,75 @@ class SqlHistoryStore:
             registrada_en=row.registrada_en,
             data={column: _json_value(getattr(row, column)) for column in VALUE_COLUMNS[kind]},
         )
+
+
+def _registered_between(
+    start: datetime | None, end: datetime | None
+) -> tuple[str, dict[str, datetime]]:
+    """A SQL clause for a half-open registration window. An open side adds no condition."""
+    clause = ""
+    params: dict[str, datetime] = {}
+    if start is not None:
+        clause += " AND registrada_en >= :start"
+        params["start"] = _utc_naive(start)
+    if end is not None:
+        clause += " AND registrada_en < :end"
+        params["end"] = _utc_naive(end)
+    return clause, params
+
+
+def _event_filters(
+    paciente_id: str,
+    entidad: str | None,
+    accion: str | None,
+    start: datetime | None,
+    end: datetime | None,
+) -> tuple[str, dict[str, Any]]:
+    clause = "paciente_id = :p"
+    params: dict[str, Any] = {"p": paciente_id}
+    if entidad is not None:
+        clause += " AND entidad = :entidad"
+        params["entidad"] = entidad
+    if accion is not None:
+        clause += " AND accion = :accion"
+        params["accion"] = accion
+    if start is not None:
+        clause += " AND ocurrido_en >= :start"
+        params["start"] = _utc_naive(start)
+    if end is not None:
+        clause += " AND ocurrido_en < :end"
+        params["end"] = _utc_naive(end)
+    return clause, params
+
+
+# catalog name -> (table, code column, name column, category column or None). A whitelist: a table
+# name never comes from a request.
+_CATALOG_TABLES: dict[str, tuple[str, str, str, str | None]] = {
+    "cie11": ("catalogo_cie11", "codigo", "titulo", None),
+    "vacunas": ("catalogo_vacunas", "codigo", "nombre", None),
+    "sustancias_alergia": ("catalogo_sustancias_alergia", "codigo", "nombre", "categoria"),
+}
+
+
+def _catalog_columns(catalog: str) -> tuple[str, str, str, str | None]:
+    return _CATALOG_TABLES[catalog]
+
+
+def _catalog_row(row: Any) -> CatalogItem:
+    return CatalogItem(
+        codigo=row.codigo,
+        nombre=row.nombre,
+        activo=bool(row.activo),
+        categoria=row.categoria,
+    )
+
+
+def _like_safe(query: str) -> str:
+    """Wildcards typed by a person are literal text, not patterns."""
+    """Escapes LIKE wildcards so the text is matched literally."""
+    for char in ("\\", "[", "%", "_"):
+        query = query.replace(char, "\\" + char)
+    return query
 
 
 __all__ = ["SqlHistoryStore"]

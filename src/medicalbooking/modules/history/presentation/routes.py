@@ -1,11 +1,13 @@
-"""HTTP adapter for the clinical history: /api/v1/patients/{id}/historia and vital signs.
+"""HTTP adapter for the clinical history: histories, the event log, vital signs and catalogs.
 
 Bodies are strict: a string is never read as a number or a boolean, and unknown fields are refused.
 Every request is authenticated first; the service then decides what the caller may see or change.
+Dates in the query string are ISO days (YYYY-MM-DD), inclusive on both sides.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -22,26 +24,42 @@ from pydantic import (
     ValidationError,
 )
 
-from medicalbooking.modules.history.application.history_service import HistoryService, HistoryView
-from medicalbooking.modules.history.application.ports import Entry, VitalSigns
-from medicalbooking.modules.history.domain.policies import KIND_BY_PATH, MOTIVO_MAX
+from medicalbooking.modules.history.application.history_service import (
+    CATALOG_CIE11,
+    CATALOG_SUSTANCIAS,
+    CATALOG_VACUNAS,
+    EventPage,
+    HistoryService,
+    HistoryView,
+)
+from medicalbooking.modules.history.application.ports import CatalogItem, Entry, VitalSigns
+from medicalbooking.modules.history.domain.policies import (
+    KIND_BY_PATH,
+    MOTIVO_MAX,
+    DateRange,
+)
 from medicalbooking.modules.identity.presentation.routes import authenticated
 from medicalbooking.shared.domain.errors import ValidationFailed
 
 history_bp = Blueprint("history", __name__, url_prefix="/api/v1")
 
 Severidad = Literal["LEVE", "MODERADA", "GRAVE", "DESCONOCIDA"]
-CategoriaAlergia = Literal["MEDICAMENTO", "ALIMENTO", "LATEX", "AMBIENTAL", "OTRA"]
 TipoAntecedente = Literal["PERSONAL", "FAMILIAR", "QUIRURGICO"]
+_CATALOG_BY_PATH = {
+    "cie11": CATALOG_CIE11,
+    "vacunas": CATALOG_VACUNAS,
+    "sustancias-alergia": CATALOG_SUSTANCIAS,
+}
 
 
 class AlergiaIn(BaseModel):
+    """The allergen is a catalog code; its name and category come from the catalog."""
+
     model_config = ConfigDict(extra="forbid")
 
-    sustancia: StrictStr
-    categoria: CategoriaAlergia
-    reaccion: StrictStr | None = None
+    sustancia_codigo: StrictStr
     severidad: Severidad
+    reaccion: StrictStr | None = None
 
 
 class AntecedenteIn(BaseModel):
@@ -71,9 +89,11 @@ class ProblemaIn(BaseModel):
 
 
 class VacunaIn(BaseModel):
+    """The vaccine is a catalog code; its name comes from the catalog."""
+
     model_config = ConfigDict(extra="forbid")
 
-    vacuna: StrictStr
+    vacuna_codigo: StrictStr
     dosis_numero: StrictInt = Field(ge=1, le=10)
     fecha: date
     lote: StrictStr | None = None
@@ -97,6 +117,10 @@ class SignosVitalesIn(BaseModel):
     frecuencia_cardiaca: StrictInt | None = None
     temperatura_c: StrictFloat | StrictInt | None = None
     saturacion: StrictInt | None = None
+
+
+class CorreccionVitalesIn(SignosVitalesIn):
+    motivo: StrictStr = Field(min_length=1, max_length=MOTIVO_MAX)
 
 
 _BODY_BY_KIND: dict[str, type[BaseModel]] = {
@@ -130,8 +154,39 @@ def _kind(path_kind: str) -> str:
     return kind
 
 
+def _day(name: str) -> date | None:
+    """An optional ISO day from the query string. Anything else is a validation error."""
+    raw = request.args.get(name)
+    if raw is None or raw == "":
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        raise ValidationFailed(f"'{name}' must be a date as YYYY-MM-DD") from None
+
+
+def _int_arg(name: str) -> int | None:
+    raw = request.args.get(name)
+    if raw is None or raw == "":
+        return None
+    if not raw.lstrip("-").isdigit():
+        raise ValidationFailed(f"'{name}' must be an integer")
+    return int(raw)
+
+
+def _range() -> DateRange:
+    from medicalbooking.modules.history.domain.policies import validate_rango
+
+    return validate_rango(_day("desde"), _day("hasta"))
+
+
 def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def _number(value: Any) -> Any:
+    # Decimal columns arrive as Decimal: clinical values are numbers, not strings.
+    return float(value) if isinstance(value, Decimal) else value
 
 
 def entry_json(entry: Entry) -> dict[str, Any]:
@@ -157,11 +212,7 @@ def vitals_json(vitals: VitalSigns) -> dict[str, Any]:
         "corrige_a": vitals.corrige_a,
         "motivo_correccion": vitals.motivo_correccion,
         "registrada_en": _iso(vitals.registrada_en),
-        # Decimal columns come back as Decimal: clinical values are numbers, not strings.
-        **{
-            key: float(value) if isinstance(value, Decimal) else value
-            for key, value in vitals.values.items()
-        },
+        **{key: _number(value) for key, value in vitals.values.items()},
     }
 
 
@@ -173,11 +224,79 @@ def history_json(view: HistoryView) -> dict[str, Any]:
     return body
 
 
+def event_json(row: Any, incluye_actor: bool) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "id": row.id,
+        "entidad": row.entidad,
+        "entidad_id": row.entidad_id,
+        "accion": row.accion,
+        "motivo": row.motivo,
+        "antes": json.loads(row.antes) if row.antes else None,
+        "despues": json.loads(row.despues) if row.despues else None,
+        "ocurrido_en": _iso(row.ocurrido_en),
+    }
+    if incluye_actor:
+        item["actor_usuario_id"] = row.actor_usuario_id
+    return item
+
+
+def event_page_json(page: EventPage) -> dict[str, Any]:
+    return {
+        "items": [event_json(row, page.incluye_actor) for row in page.items],
+        "total": page.total,
+        "limit": page.limit,
+        "offset": page.offset,
+        "incluye_actor": page.incluye_actor,
+    }
+
+
+# ---------- patient histories ----------
+
+
 @history_bp.get("/patients/<uuid:paciente_id>/historia")
 @authenticated
 def read_history(paciente_id: uuid.UUID) -> tuple[Response, int]:
-    view = _service().read_history(g.actor, str(paciente_id))
+    view = _service().read_history(g.actor, str(paciente_id), _range())
     return jsonify(history_json(view)), 200
+
+
+@history_bp.get("/patients/<uuid:paciente_id>/historia/eventos")
+@authenticated
+def read_events(paciente_id: uuid.UUID) -> tuple[Response, int]:
+    page = _service().list_events(
+        g.actor,
+        str(paciente_id),
+        entidad=request.args.get("entidad") or None,
+        accion=request.args.get("accion") or None,
+        rango=_range(),
+        limit=_int_arg("limit"),
+        offset=_int_arg("offset"),
+    )
+    return jsonify(event_page_json(page)), 200
+
+
+@history_bp.get("/me/historia")
+@authenticated
+def read_own_history() -> tuple[Response, int]:
+    service = _service()
+    view = service.read_history(g.actor, service.own_patient_id(g.actor), _range())
+    return jsonify(history_json(view)), 200
+
+
+@history_bp.get("/me/historia/eventos")
+@authenticated
+def read_own_events() -> tuple[Response, int]:
+    service = _service()
+    page = service.list_events(
+        g.actor,
+        service.own_patient_id(g.actor),
+        entidad=request.args.get("entidad") or None,
+        accion=request.args.get("accion") or None,
+        rango=_range(),
+        limit=_int_arg("limit"),
+        offset=_int_arg("offset"),
+    )
+    return jsonify(event_page_json(page)), 200
 
 
 @history_bp.post("/patients/<uuid:paciente_id>/historia/<path_kind>")
@@ -185,9 +304,7 @@ def read_history(paciente_id: uuid.UUID) -> tuple[Response, int]:
 def create_entry(paciente_id: uuid.UUID, path_kind: str) -> tuple[Response, int]:
     kind = _kind(path_kind)
     body = _validate(_BODY_BY_KIND[kind])
-    entry = _service().create_entry(
-        g.actor, kind, str(paciente_id), body.model_dump(exclude_unset=False)
-    )
+    entry = _service().create_entry(g.actor, kind, str(paciente_id), body.model_dump())
     return jsonify(entry_json(entry)), 201
 
 
@@ -220,8 +337,15 @@ def change_estado(
     return jsonify(entry_json(entry)), 200
 
 
-class CorreccionVitalesIn(SignosVitalesIn):
-    motivo: StrictStr = Field(min_length=1, max_length=MOTIVO_MAX)
+# ---------- vital signs ----------
+
+
+@history_bp.post("/citas/<uuid:cita_id>/signos-vitales")
+@authenticated
+def record_vitals(cita_id: uuid.UUID) -> tuple[Response, int]:
+    body = _validate(SignosVitalesIn)
+    vitals = _service().record_vitals(g.actor, str(cita_id), body.model_dump())
+    return jsonify(vitals_json(vitals)), 201
 
 
 @history_bp.post("/signos-vitales/<uuid:vitals_id>/correccion")
@@ -234,9 +358,21 @@ def correct_vitals(vitals_id: uuid.UUID) -> tuple[Response, int]:
     return jsonify(vitals_json(vitals)), 201
 
 
-@history_bp.post("/citas/<uuid:cita_id>/signos-vitales")
+# ---------- catalogs ----------
+
+
+def catalog_json(item: CatalogItem) -> dict[str, Any]:
+    body: dict[str, Any] = {"codigo": item.codigo, "nombre": item.nombre}
+    if item.categoria is not None:
+        body["categoria"] = item.categoria
+    return body
+
+
+@history_bp.get("/catalogos/<catalog_path>")
 @authenticated
-def record_vitals(cita_id: uuid.UUID) -> tuple[Response, int]:
-    body = _validate(SignosVitalesIn)
-    vitals = _service().record_vitals(g.actor, str(cita_id), body.model_dump())
-    return jsonify(vitals_json(vitals)), 201
+def search_catalog(catalog_path: str) -> tuple[Response, int]:
+    catalog = _CATALOG_BY_PATH.get(catalog_path)
+    if catalog is None:
+        raise ValidationFailed("'catalog' is not a known catalog")
+    items = _service().search_catalog(g.actor, catalog, request.args.get("q"), _int_arg("limit"))
+    return jsonify(items=[catalog_json(item) for item in items]), 200
