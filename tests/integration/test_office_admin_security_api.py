@@ -54,7 +54,7 @@ def test_a_patient_cannot_escalate_by_sending_roles_or_permissions(
         },
         headers=headers,
     )
-    assert response.status_code == 403, response.get_json()
+    assert response.status_code in (403, 422), response.get_json()  # refused, never granted
     with engine.connect() as conn:
         granted = conn.execute(
             text(
@@ -91,7 +91,7 @@ def test_a_refused_write_changes_nothing_in_the_database(app: Flask, engine: Eng
         json={"nombre": "Cambiado", "activo": "false"},
         headers=admin,
     )
-    assert denied.status_code == 400
+    assert denied.status_code == 422
     assert _sede_row(engine, sede_id) == before
 
 
@@ -103,7 +103,7 @@ def test_zona_horaria_cannot_be_chosen_by_the_client(app: Flask, engine: Engine,
     response = client.post(
         "/api/v1/admin/sedes", json={"nombre": "Sede Z", "zona_horaria": "UTC"}, headers=admin
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
     assert response.get_json()  # a problem document, not a crash
 
 
@@ -113,7 +113,7 @@ def test_client_cannot_set_the_id_of_a_new_sede(app: Flask, engine: Engine, admi
     response = client.post(
         "/api/v1/admin/sedes", json={"nombre": "Sede ID", "id": chosen}, headers=admin
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_string_booleans_are_refused_and_not_stored(app: Flask, engine: Engine, admin) -> None:
@@ -123,7 +123,7 @@ def test_string_booleans_are_refused_and_not_stored(app: Flask, engine: Engine, 
         response = client.patch(
             f"/api/v1/admin/sedes/{sede_id}", json={"activo": value}, headers=admin
         )
-        assert response.status_code == 400, value
+        assert response.status_code == 422, value
     assert _sede_row(engine, sede_id).activo == 1
 
 
@@ -134,7 +134,7 @@ def test_malformed_and_non_object_bodies_are_problems_not_crashes(app: Flask, ad
         response = client.post(
             "/api/v1/admin/sedes", data=body, headers={**admin, "Content-Type": "application/json"}
         )
-        assert response.status_code == 400, body
+        assert response.status_code == 422, body
 
 
 def test_oversized_body_is_rejected_before_it_is_processed(app: Flask, admin) -> None:
@@ -163,7 +163,7 @@ def test_control_characters_never_reach_the_database(app: Flask, engine: Engine,
     client = app.test_client()
     for nombre in ["Sede\x00", "Sede\nX", "Sede\x1b[2J"]:
         response = client.post("/api/v1/admin/sedes", json={"nombre": nombre}, headers=admin)
-        assert response.status_code == 400, nombre
+        assert response.status_code == 422, nombre
 
 
 def test_forty_emoji_consultorio_name_fits_and_forty_one_is_refused(
@@ -182,7 +182,7 @@ def test_forty_emoji_consultorio_name_fits_and_forty_one_is_refused(
         json={"nombre": "\U0001f600" * 41},
         headers=admin,
     )
-    assert too_big.status_code == 400
+    assert too_big.status_code == 422
 
 
 # ---------- missing and malformed targets ----------

@@ -66,13 +66,7 @@ def _book(engine: Engine, slot_id: str, estado: str) -> str:
     """A patient booking on the slot, in the given state. Returns the cita id."""
     paciente = _user(engine, "PACIENTE")
     with engine.begin() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO pacientes (id, usuario_id, creado_en) "
-                "VALUES (NEWID(), :u, SYSUTCDATETIME())"
-            ),
-            {"u": paciente},
-        )
+        # _user already creates the pacientes row for a PACIENTE; read it back.
         patient_id = conn.execute(
             text("SELECT id FROM pacientes WHERE usuario_id = :u"), {"u": paciente}
         ).scalar_one()

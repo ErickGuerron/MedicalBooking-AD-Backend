@@ -57,7 +57,7 @@ def office_admin_fragment() -> dict[str, Any]:
                     "requestBody": _body("SedeInput"),
                     "responses": {
                         "201": _json_response("Created sede", "Sede"),
-                        "400": _problem("Invalid nombre or direccion"),
+                        "422": _problem("Invalid nombre or direccion"),
                         "401": _problem("Missing, malformed or inactive credentials"),
                         "403": _problem("Caller lacks sedes.administrar"),
                     },
@@ -73,7 +73,7 @@ def office_admin_fragment() -> dict[str, Any]:
                     "requestBody": _body("SedeUpdate"),
                     "responses": {
                         "200": _json_response("Updated sede", "Sede"),
-                        "400": _problem("Invalid field"),
+                        "422": _problem("Invalid field"),
                         "401": _problem("Missing, malformed or inactive credentials"),
                         "403": _problem("Caller lacks sedes.administrar"),
                         "404": _problem("Sede not found"),
@@ -91,7 +91,7 @@ def office_admin_fragment() -> dict[str, Any]:
                     "requestBody": _body("ConsultorioInput"),
                     "responses": {
                         "201": _json_response("The sede with its consultorios", "Sede"),
-                        "400": _problem("Invalid nombre, or the sede is inactive"),
+                        "422": _problem("Invalid nombre, or the sede is inactive"),
                         "401": _problem("Missing, malformed or inactive credentials"),
                         "403": _problem("Caller lacks sedes.administrar"),
                         "404": _problem("Sede not found"),
@@ -109,7 +109,7 @@ def office_admin_fragment() -> dict[str, Any]:
                     "requestBody": _body("ConsultorioUpdate"),
                     "responses": {
                         "200": _json_response("Updated consultorio", "ConsultorioDetail"),
-                        "400": _problem("Invalid field, or the sede is inactive"),
+                        "422": _problem("Invalid field, or the sede is inactive"),
                         "401": _problem("Missing, malformed or inactive credentials"),
                         "403": _problem("Caller lacks sedes.administrar"),
                         "404": _problem("Consultorio not found"),
