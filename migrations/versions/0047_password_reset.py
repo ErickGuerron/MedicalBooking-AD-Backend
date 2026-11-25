@@ -1,7 +1,7 @@
 """Password reset links: single use, one hour, stored only as a hash.
 
-Revision ID: 0044_password_reset
-Revises: 0043_doctor_hours_versions
+Revision ID: 0047_password_reset
+Revises: 0046_historia_catalogos
 """
 
 from __future__ import annotations
@@ -12,12 +12,12 @@ from alembic import op
 
 from medicalbooking.shared.infrastructure.tsql import split_batches
 
-revision = "0044_password_reset"
-down_revision = "0043_doctor_hours_versions"
+revision = "0047_password_reset"
+down_revision = "0046_historia_catalogos"
 branch_labels = None
 depends_on = None
 
-_SQL_FILE = Path(__file__).resolve().parents[1] / "sql" / "0044_password_reset.sql"
+_SQL_FILE = Path(__file__).resolve().parents[1] / "sql" / "0047_password_reset.sql"
 
 
 def upgrade() -> None:

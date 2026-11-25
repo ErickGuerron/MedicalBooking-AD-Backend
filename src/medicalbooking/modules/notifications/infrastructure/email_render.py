@@ -107,6 +107,51 @@ def motivo_text(cancellation: CitaCancellation) -> str | None:
     return label or texto or None
 
 
+# Why the automatic refund was not made, in words the patient understands. The codes are the refund rules.
+_REFUND_REASONS = {
+    "CANCELACION_TARDIA": "la cita se canceló fuera del plazo para reembolsos",
+    "FUERA_DE_VENTANA": "ya pasó el plazo para pedir reembolsos de este pago",
+    "REEMBOLSO_EXISTENTE": "ya existe un reembolso para este pago",
+    "CONSULTA_ATENDIDA": "la consulta ya se atendió",
+    "DEMASIADAS_SOLICITUDES": "se hicieron demasiadas solicitudes de reembolso",
+    "PAGO_NO_CONFIRMADO": "el pago todavía no está confirmado",
+    "FALLIDO": "el banco no pudo completar la devolución",
+    "ERROR": "hubo un problema al comunicarnos con el banco",
+}
+
+
+def refund_notice(cancellation: CitaCancellation) -> tuple[str, str] | None:
+    """What the patient is told about the money of a cancelled visit: (title, sentence). None when the visit
+    was not paid, so the mail says nothing about money."""
+    if cancellation.monto_pagado is None:
+        return None
+    monto = f"${cancellation.monto_pagado:.2f}"
+    resultado = cancellation.reembolso_resultado
+    if resultado == "PROCESADO":
+        return ("Reembolso completado",
+                f"Te reembolsamos {monto}, el monto de tu cita. El banco puede tardar unos días en acreditarlo.")
+    if resultado == "PENDIENTE":
+        return ("Reembolso en proceso",
+                f"Estamos procesando el reembolso de {monto}. Puedes revisar su estado en Mi portal.")
+    if resultado is None:
+        return ("Tu pago",
+                f"Si pagaste {monto} por esta cita, puedes revisar el estado de tu reembolso en Mi portal.")
+    motivo = _REFUND_REASONS.get(resultado, "no pudimos completarlo")
+    return ("No pudimos reembolsar tu pago",
+            f"No pudimos reembolsar automáticamente los {monto} porque {motivo}. "
+            "Para pedirlo tú, entra a Mi portal, abre esta cita y pulsa «Pedir reembolso».")
+
+
+def _reembolso_html(reembolso: tuple[str, str] | None) -> str:
+    if reembolso is None:
+        return ""
+    titulo, frase = reembolso
+    return (
+        '<div style="font-size:13.5px;color:#4A5280;margin-top:12px;">' + html.escape(titulo) + '</div>'
+        '<div style="font-size:15px;line-height:1.5;color:#16206B;">' + html.escape(frase) + '</div>'
+    )
+
+
 def _motivo_html(motivo: str | None) -> str:
     if motivo is None:
         return ""
@@ -126,8 +171,10 @@ def cancellation_content(
     *,
     por_medico: bool = False,
     motivo: str | None = None,
+    reembolso: tuple[str, str] | None = None,
 ) -> EmailContent:
-    """Appointment cancelled. If the doctor cancelled it, the mail says so and gives the reason."""
+    """Appointment cancelled. If the doctor cancelled it, the mail says so and gives the reason. A paid visit
+    also says what happened to its money."""
     if por_medico:
         subject = "El médico canceló tu cita en Medilo"
         titulo = "Tu médico canceló<br>tu cita."
@@ -149,9 +196,11 @@ def cancellation_content(
         fecha=html.escape(fecha),
         hora=html.escape(hora),
         motivo_bloque=_motivo_html(motivo),
+        reembolso_bloque=_reembolso_html(reembolso),
         asset_base_url=_base(asset_base_url),
     )
     motivo_line = f"Motivo: {motivo}\n" if motivo else ""
+    reembolso_line = f"\n{reembolso[0]}\n{reembolso[1]}\n" if reembolso else ""
     text_body = (
         f"Hola {first_name}.\n\n"
         f"{intro}\n"
@@ -159,6 +208,7 @@ def cancellation_content(
         f"Fecha: {fecha}\n"
         f"Hora: {hora}\n"
         f"{motivo_line}\n"
+        f"{reembolso_line}"
         "Si quieres agendar otra cita, entra a Medilo en cualquier momento.\n"
     )
     return EmailContent(subject=subject, text=text_body, html=html_body)
@@ -277,6 +327,7 @@ def content_for(
             hora,
             asset_base_url,
             por_medico=cancellation.por_medico,
+            reembolso=refund_notice(cancellation),
             motivo=motivo_text(cancellation),
         )
     if notification.tipo == CITA_CANCELADA_MEDICO:

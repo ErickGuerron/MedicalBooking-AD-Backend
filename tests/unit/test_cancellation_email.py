@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 
@@ -16,6 +17,7 @@ from medicalbooking.modules.notifications.infrastructure.email_render import (
     cancellation_content,
     content_for,
     motivo_text,
+    refund_notice,
 )
 
 APPOINTMENT_START = datetime(2026, 11, 18, 14, 30, tzinfo=UTC)  # 09:30 in Ecuador (UTC-5)
@@ -212,3 +214,70 @@ def test_cancellation_notification_uses_the_visit_date_and_hour_in_ecuador() -> 
     assert "18/11/2026" in content.text
     assert "09:30" in content.text
     assert "Dr. Luis Perez" in content.text
+
+
+def _paid_visit(resultado: str | None) -> CitaCancellation:
+    return CitaCancellation(
+        por_medico=False, monto_pagado=Decimal("25.00"), reembolso_resultado=resultado
+    )
+
+
+@pytest.mark.parametrize(
+    ("resultado", "titulo", "frase_fragmento"),
+    [
+        ("PROCESADO", "Reembolso completado", "Te reembolsamos $25.00"),
+        ("PENDIENTE", "Reembolso en proceso", "procesando el reembolso de $25.00"),
+        ("FALLIDO", "No pudimos reembolsar tu pago", "el banco no pudo completar la devolución"),
+        ("FUERA_DE_VENTANA", "No pudimos reembolsar tu pago", "ya pasó el plazo"),
+        ("CANCELACION_TARDIA", "No pudimos reembolsar tu pago", "fuera del plazo para reembolsos"),
+    ],
+)
+def test_paid_visit_mail_states_the_refund_outcome(resultado, titulo, frase_fragmento) -> None:
+    content = content_for(
+        _notification(CITA_CANCELADA, "ana@example.com"),
+        _Store(cancellation=_paid_visit(resultado)),
+        "https://a.ex",
+    )
+
+    assert titulo in content.text
+    assert frase_fragmento in content.text
+    assert content.html is not None
+    assert titulo in content.html
+
+
+def test_failed_refund_mail_tells_the_patient_how_to_request_it_manually() -> None:
+    content = content_for(
+        _notification(CITA_CANCELADA, "ana@example.com"),
+        _Store(cancellation=_paid_visit("FALLIDO")),
+        "https://a.ex",
+    )
+
+    assert "Mi portal" in content.text
+    assert "Pedir reembolso" in content.text
+    assert "Pedir reembolso" in content.html
+
+
+def test_unpaid_visit_mail_says_nothing_about_money() -> None:
+    assert refund_notice(CitaCancellation(por_medico=False)) is None
+    content = content_for(
+        _notification(CITA_CANCELADA, "ana@example.com"), _Store(), "https://a.ex"
+    )
+    assert "reembols" not in content.text.lower()
+
+
+def test_paid_visit_without_a_recorded_outcome_points_to_the_portal() -> None:
+    title, sentence = refund_notice(_paid_visit(None))
+
+    assert title == "Tu pago"
+    assert "$25.00" in sentence
+    assert "Mi portal" in sentence
+
+
+def test_refund_text_is_escaped_in_the_html_mail() -> None:
+    assert refund_notice(_paid_visit("PROCESADO"))[1].startswith("Te reembolsamos $25.00")
+    content = cancellation_content(
+        "Ana", "Dr. Luis", "18/11", "09:30", "https://a.ex",
+        reembolso=("Reembolso <b>x</b>", "Frase & más"),
+    )
+    assert "<b>x</b>" not in content.html
+    assert "Frase &amp; más" in content.html

@@ -88,6 +88,8 @@ class RefundStore(Protocol):
 
     def pending_stripe_refunds_of_user(self, usuario_id: str, limit: int) -> list[tuple[str, str]]: ...
 
+    def record_automatic_refund(self, cita_id: str, resultado: str) -> None: ...
+
     def reserve(
         self,
         *,
@@ -277,16 +279,27 @@ class RefundService:
                 motivo_codigo=motivo,
                 idempotency_key=f"auto-cancel-{cita_id}",
             )
+            self._record_automatic(cita_id, outcome.record.estado)
             return {"estado": outcome.record.estado, "motivo": None}
         except RefundDenied as refused:
             logger.info("automatic refund not requested: %s", refused.detail)
+            self._record_automatic(cita_id, str(refused.detail))
             return {"estado": None, "motivo": str(refused.detail)}
         except (RefundProviderError, AppError) as failure:
             logger.warning("automatic refund failed: %s", type(failure).__name__)
+            self._record_automatic(cita_id, "FALLIDO")
             return {"estado": None, "motivo": "ERROR"}
         except Exception as unexpected:  # the cancellation has already committed
             logger.error("automatic refund error: %s", type(unexpected).__name__)
+            self._record_automatic(cita_id, "FALLIDO")
             return {"estado": None, "motivo": "ERROR"}
+
+    def _record_automatic(self, cita_id: str, resultado: str) -> None:
+        """Keeps the outcome on the appointment so the cancellation mail can tell the patient. Never raises."""
+        try:
+            self._store.record_automatic_refund(cita_id, resultado)
+        except Exception as error:  # the refund is already decided; the mail just says less
+            logger.warning("automatic refund outcome not stored: %s", type(error).__name__)
 
 
 __all__ = [

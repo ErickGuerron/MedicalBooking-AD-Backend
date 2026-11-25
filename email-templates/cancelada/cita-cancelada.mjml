@@ -72,6 +72,7 @@
               <div style="font-size:13.5px;color:#4A5280;">Hora</div>
               <div style="font-size:17px;font-weight:700;color:#16206B;">$hora</div>
               $motivo_bloque
+              $reembolso_bloque
             </div>
           </mj-text>
         </mj-column>

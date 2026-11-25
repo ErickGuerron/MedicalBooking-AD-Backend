@@ -158,6 +158,13 @@ class SqlRefundStore:
             return None
         return str(row.id).lower(), str(row.patient_user_id).lower()
 
+    def record_automatic_refund(self, cita_id: str, resultado: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("UPDATE citas SET reembolso_automatico = :resultado WHERE id = :cita"),
+                {"resultado": resultado[:40], "cita": cita_id},
+            )
+
     def pending_stripe_refunds_of_user(self, usuario_id: str, limit: int) -> list[tuple[str, str]]:
         with self._engine.connect() as conn:
             rows = conn.execute(
