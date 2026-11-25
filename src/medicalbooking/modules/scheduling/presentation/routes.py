@@ -159,6 +159,10 @@ def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
         item["medico"] = medico_data
     if appointment.tiene_aprobacion:
         item["tiene_aprobacion"] = True
+    if appointment.pago_id is not None:
+        item["pago_id"] = appointment.pago_id
+    if appointment.reembolso_estado is not None:
+        item["reembolso_estado"] = appointment.reembolso_estado
     return item
 
 
@@ -228,9 +232,11 @@ def cancel(appointment_id: uuid.UUID) -> tuple[Response, int]:
     )
     # The cancellation is committed. Hooks run afterwards and must not change its answer.
     hook = current_app.extensions.get("medicalbooking.after_appointment_cancelled")
-    if hook is not None:
-        hook(g.actor, str(appointment_id))
-    return jsonify(_appointment_json(appointment)), 200
+    refund = hook(g.actor, str(appointment_id)) if hook is not None else None
+    body = _appointment_json(appointment)
+    if refund is not None:
+        body["reembolso"] = refund
+    return jsonify(body), 200
 
 
 @scheduling_bp.post("/appointments/<uuid:appointment_id>/consultation")
@@ -298,6 +304,12 @@ def approve_cancellation(appointment_id: uuid.UUID) -> tuple[Response, int]:
 @scheduling_bp.get("/appointments")
 @authenticated
 def list_appointments() -> tuple[Response, int]:
+    before = current_app.extensions.get("medicalbooking.before_patient_listing")
+    if before is not None:
+        try:
+            before(g.actor)
+        except Exception:  # the listing still loads when the provider check fails
+            current_app.logger.warning("pending refund check skipped")
     items = _service().list_appointments(
         g.actor,
         estado=request.args.get("estado"),

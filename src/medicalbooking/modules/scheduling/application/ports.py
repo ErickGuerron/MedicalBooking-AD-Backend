@@ -49,6 +49,10 @@ class AppointmentSummary:
     medico_registro: str | None = None
     medico_telefono: str | None = None
     tiene_aprobacion: bool = False
+    # The patient's own listing: the confirmed payment to refund,
+    # and the state of the newest refund.
+    pago_id: str | None = None
+    reembolso_estado: str | None = None
 
 
 @dataclass(frozen=True)

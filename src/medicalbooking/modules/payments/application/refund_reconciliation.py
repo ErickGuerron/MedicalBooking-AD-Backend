@@ -141,6 +141,10 @@ class RefundReconciliationService:
             return self._recover_missing_id(refund)
         return self._apply_provider_status(refund.id, refund.stripe_refund_id)
 
+    def check_refund(self, reembolso_id: str, stripe_refund_id: str) -> str:
+        """Asks Stripe about one pending refund and applies a final answer. Returns the outcome."""
+        return self._apply_provider_status(reembolso_id, stripe_refund_id)
+
     def _apply_provider_status(self, reembolso_id: str, stripe_refund_id: str) -> str:
         try:
             remote = self._gateway.get_refund(stripe_refund_id)

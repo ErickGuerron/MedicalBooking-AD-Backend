@@ -73,7 +73,12 @@ class SqlNotificationStore:
             row = conn.execute(
                 text(
                     "SELECT TOP 1 c.motivo_cancelacion_codigo, c.motivo_cancelacion_texto, "
-                    "CASE WHEN hc.usuario_id = um.id THEN 1 ELSE 0 END AS por_medico "
+                    "CASE WHEN hc.usuario_id = um.id THEN 1 ELSE 0 END AS por_medico, "
+                    "c.reembolso_automatico AS reembolso_resultado, "
+                    "(SELECT TOP 1 p.monto FROM pagos AS p JOIN facturas AS f ON "
+                    "f.id = p.factura_id "
+                    "WHERE f.cita_id = c.id AND p.estado = 'CONFIRMADO' ORDER BY p.creado_en DESC) "
+                    "AS monto_pagado "
                     "FROM citas c "
                     "JOIN horarios_disponibles h ON h.id = c.horario_id "
                     "JOIN agendas a ON a.id = h.agenda_id "
@@ -92,6 +97,8 @@ class SqlNotificationStore:
             por_medico=bool(row.por_medico),
             motivo_codigo=row.motivo_cancelacion_codigo,
             motivo_texto=row.motivo_cancelacion_texto,
+            monto_pagado=row.monto_pagado,
+            reembolso_resultado=row.reembolso_resultado,
         )
 
     def cita_patient_name(self, cita_id: str) -> str | None:

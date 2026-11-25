@@ -1,0 +1,7 @@
+Hola $first_name,
+
+Se creó tu cuenta de $role_label en Medilo. Para activarla y definir tu contraseña, abre este enlace (válido por $expiry_hours horas y de un solo uso):
+
+$link
+
+Si no esperabas este correo, avisa al administrador de Medilo. No se activará ninguna cuenta sin que definas tu contraseña.

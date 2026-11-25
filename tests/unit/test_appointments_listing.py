@@ -62,6 +62,8 @@ class Row:
     medico_registro: str | None = None
     medico_telefono: str | None = None
     tiene_aprobacion: bool = False
+    pago_id: str | None = None
+    reembolso_estado: str | None = None
 
 
 def _doctor_fields(row: Row) -> dict:

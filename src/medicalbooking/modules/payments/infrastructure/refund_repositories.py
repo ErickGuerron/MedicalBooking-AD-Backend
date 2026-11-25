@@ -14,6 +14,7 @@ from decimal import Decimal
 from sqlalchemy import Engine, text
 
 from medicalbooking.modules.payments.application.refund_service import (
+    LatestRefund,
     RefundRecord,
     RefundReservation,
 )
@@ -156,6 +157,52 @@ class SqlRefundStore:
         if row is None:
             return None
         return str(row.id).lower(), str(row.patient_user_id).lower()
+
+    def record_automatic_refund(self, cita_id: str, resultado: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text("UPDATE citas SET reembolso_automatico = :resultado WHERE id = :cita"),
+                {"resultado": resultado[:40], "cita": cita_id},
+            )
+
+    def pending_stripe_refunds_of_user(self, usuario_id: str, limit: int) -> list[tuple[str, str]]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT TOP (:limite) r.id, r.stripe_refund_id "
+                    "FROM reembolsos AS r "
+                    "JOIN pagos AS p ON p.id = r.pago_id "
+                    "JOIN facturas AS f ON f.id = p.factura_id "
+                    "JOIN pacientes AS pa ON pa.id = f.paciente_id "
+                    "WHERE pa.usuario_id = :usuario AND r.estado = 'PENDIENTE' "
+                    "AND r.stripe_refund_id IS NOT NULL ORDER BY r.solicitado_en"
+                ),
+                {"usuario": usuario_id, "limite": limit},
+            ).all()
+        return [(str(row.id).lower(), row.stripe_refund_id) for row in rows]
+
+    def find_latest_refund(self, pago_id: str) -> LatestRefund | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT TOP (1) r.id, r.estado, r.stripe_refund_id, pa.usuario_id AS "
+                    "owner_user_id "
+                    "FROM reembolsos AS r "
+                    "JOIN pagos AS p ON p.id = r.pago_id "
+                    "JOIN facturas AS f ON f.id = p.factura_id "
+                    "JOIN pacientes AS pa ON pa.id = f.paciente_id "
+                    "WHERE r.pago_id = :pago ORDER BY r.solicitado_en DESC"
+                ),
+                {"pago": pago_id},
+            ).first()
+        if row is None:
+            return None
+        return LatestRefund(
+            id=str(row.id).lower(),
+            estado=row.estado,
+            stripe_refund_id=row.stripe_refund_id,
+            owner_user_id=str(row.owner_user_id).lower(),
+        )
 
     def mark_failed(self, refund_id: str) -> None:
         with self._engine.begin() as conn:

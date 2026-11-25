@@ -53,6 +53,11 @@ class FakeDirectory:
         self.users[new_user.user_id] = new_user
         self.verifications[token_hash] = (new_user.user_id, valid_hours)
 
+    def verification_state(self, token_hash: str) -> str:
+        if token_hash not in self.verifications:
+            return "INVALID"
+        return "USED" if token_hash in self.used else "VALID"
+
     def consume_verification(self, token_hash: str) -> bool:
         if token_hash not in self.verifications or token_hash in self.used:
             return False
@@ -113,7 +118,7 @@ def test_registration_creates_an_inactive_patient_and_sends_a_link() -> None:
     assert user.email == "paciente@synthetic.test"
     (to_email, first_name, link) = mailer.sent[0]
     assert to_email == "paciente@synthetic.test"
-    assert link.startswith("https://api.example.test/api/v1/auth/verify-email?token=")
+    assert link.startswith("https://api.example.test/#/verificar?token=")
 
 
 def test_only_the_hash_of_the_token_is_stored() -> None:

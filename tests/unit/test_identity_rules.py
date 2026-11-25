@@ -66,6 +66,9 @@ class FakeDirectory:
     def create_user(self, new_user: NewUser) -> None:
         self.created.append(new_user)
 
+    def create_pending_staff(self, new_user, token_hash, valid_hours):
+        self.created.append(new_user)
+
     def register_failed_login(self, user_id: str, now) -> None:
         return None
 
@@ -183,7 +186,6 @@ def test_create_user_requires_administrator() -> None:
         service.create_user(
             _actor(OWNER, PATIENT_PERMS),
             email="n@x.test",
-            password="long-enough-pass",
             first_name="N",
             last_name="X",
             roles=["PACIENTE"],
@@ -191,24 +193,14 @@ def test_create_user_requires_administrator() -> None:
     assert directory.created == []
 
 
-def test_create_user_enforces_password_length_and_role_domain() -> None:
+def test_create_user_enforces_the_role_domain() -> None:
     service, _, _ = _service()
     admin = _actor(OWNER, ADMIN_PERMS)
 
-    with pytest.raises(ValidationFailed, match="at least 12"):
-        service.create_user(
-            admin,
-            email="n@x.test",
-            password="short",
-            first_name="N",
-            last_name="X",
-            roles=["PACIENTE"],
-        )
     with pytest.raises(ValidationFailed, match="Roles must be"):
         service.create_user(
             admin,
             email="n@x.test",
-            password="long-enough-pass",
             first_name="N",
             last_name="X",
             roles=["ROOT"],
@@ -218,7 +210,6 @@ def test_create_user_enforces_password_length_and_role_domain() -> None:
         service.create_user(
             admin,
             email="n@x.test",
-            password="long-enough-pass",
             first_name="N",
             last_name="X",
             roles=["MEDICO"],
@@ -232,7 +223,6 @@ def test_create_user_refuses_a_doctor_with_a_blank_registration() -> None:
         service.create_user(
             _actor(OWNER, ADMIN_PERMS),
             email="m@x.test",
-            password="long-enough-pass",
             first_name="M",
             last_name="X",
             roles=["MEDICO"],
@@ -247,7 +237,6 @@ def test_create_user_passes_the_trimmed_registration_for_a_doctor() -> None:
     service.create_user(
         _actor(OWNER, ADMIN_PERMS),
         email="m@x.test",
-        password="long-enough-pass",
         first_name="M",
         last_name="X",
         roles=["MEDICO"],
@@ -265,7 +254,6 @@ def test_create_user_ignores_the_registration_for_other_roles() -> None:
     service.create_user(
         _actor(OWNER, ADMIN_PERMS),
         email="p@x.test",
-        password="long-enough-pass",
         first_name="P",
         last_name="X",
         roles=["PACIENTE"],
@@ -275,13 +263,12 @@ def test_create_user_ignores_the_registration_for_other_roles() -> None:
     assert directory.created[0].professional_registration is None
 
 
-def test_create_user_stores_hash_never_the_plain_password() -> None:
+def test_create_user_stores_an_unusable_hash_until_activation() -> None:
     service, directory, _ = _service()
 
     user_id = service.create_user(
         _actor(OWNER, ADMIN_PERMS),
         email="Nuevo@X.test",
-        password="long-enough-pass",
         first_name="N",
         last_name="X",
         roles=["PACIENTE", "PACIENTE"],
@@ -290,6 +277,6 @@ def test_create_user_stores_hash_never_the_plain_password() -> None:
     created = directory.created[0]
     assert created.user_id == user_id
     assert created.email == "nuevo@x.test"
-    assert created.password_hash == "hash::long-enough-pass"
+    assert created.password_hash.startswith("hash::")
     assert created.roles == ("PACIENTE",)
     assert uuid.UUID(user_id)
