@@ -204,6 +204,22 @@ def test_a_missing_entry_and_a_foreign_entry_give_the_same_403(app, engine):
     )
 
 
+def test_a_nonexistent_patient_is_the_same_403_as_a_foreign_one_not_a_500(app, engine):
+    # The denial is audited with the requested patient id; an id that is not a patient must not
+    # break the audit insert (it used to fail the foreign key and answer 500).
+    ctx = _treated_patient(app, engine)
+    other = _treated_patient(app, engine)
+    client = app.test_client()
+    nonexistent = str(uuid.uuid4())
+    for method, path, body in [
+        ("get", f"/api/v1/patients/{nonexistent}/historia", None),
+        ("get", f"/api/v1/patients/{other['paciente_id']}/historia", None),
+    ]:
+        response = getattr(client, method)(path, headers=ctx["doctor"], json=body)
+        assert response.status_code == 403, path
+        assert response.get_json()["detail"] == FORBIDDEN, path
+
+
 def test_the_history_read_answers_the_active_allergy_first(app, engine):
     ctx = _treated_patient(app, engine)
     client = app.test_client()
