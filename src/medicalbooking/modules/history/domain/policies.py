@@ -297,3 +297,49 @@ def validate_vitales(values: dict[str, float | int | None]) -> dict[str, float |
         if not low <= value <= high:
             raise ValidationFailed(f"'{key}' is outside the accepted range")
     return {key: values.get(key) for key in VITAL_RANGES}
+
+
+# ---------- date ranges and the event log ----------
+
+MAX_RANGO_DIAS = 366
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
+EVENT_ENTIDADES = ("alergia", "antecedente", "medicacion", "problema", "vacuna", "signos_vitales")
+EVENT_ACCIONES = ("CREAR", "VERIFICAR", "ESTADO", "CORREGIR")
+
+
+@dataclass(frozen=True)
+class DateRange:
+    """Inclusive calendar days. Either side may be open; both together span at most a year."""
+
+    desde: date | None
+    hasta: date | None
+
+
+def validate_rango(desde: date | None, hasta: date | None) -> DateRange:
+    if desde is not None and hasta is not None:
+        if hasta < desde:
+            raise ValidationFailed("'hasta' must not be before 'desde'")
+        if (hasta - desde).days > MAX_RANGO_DIAS:
+            raise ValidationFailed(f"The range must span at most {MAX_RANGO_DIAS} days")
+    return DateRange(desde=desde, hasta=hasta)
+
+
+def validate_pagina(limit: int | None, offset: int | None) -> tuple[int, int]:
+    size = DEFAULT_PAGE_SIZE if limit is None else limit
+    start = 0 if offset is None else offset
+    if isinstance(size, bool) or not 1 <= size <= MAX_PAGE_SIZE:
+        raise ValidationFailed(f"'limit' must be from 1 to {MAX_PAGE_SIZE}")
+    if isinstance(start, bool) or start < 0:
+        raise ValidationFailed("'offset' must not be negative")
+    return size, start
+
+
+def validate_filtro_evento(
+    entidad: str | None, accion: str | None
+) -> tuple[str | None, str | None]:
+    if entidad is not None and entidad not in EVENT_ENTIDADES:
+        raise ValidationFailed("'entidad' is not a known entity of the history")
+    if accion is not None and accion not in EVENT_ACCIONES:
+        raise ValidationFailed("'accion' is not a known action of the history")
+    return entidad, accion

@@ -39,6 +39,29 @@ class VitalSigns:
 
 
 @dataclass(frozen=True)
+class EventRow:
+    """One line of the append-only event log. `actor_usuario_id` is None when not visible."""
+
+    id: int
+    entidad: str
+    entidad_id: str
+    accion: str
+    actor_usuario_id: str | None
+    motivo: str | None
+    antes: str | None
+    despues: str | None
+    ocurrido_en: datetime
+
+
+@dataclass(frozen=True)
+class CatalogItem:
+    codigo: str
+    nombre: str
+    activo: bool
+    categoria: str | None = None
+
+
+@dataclass(frozen=True)
 class CitaOwnership:
     """Who an appointment belongs to: the patient and the doctor of its agenda."""
 
@@ -74,7 +97,15 @@ class HistoryStore(Protocol):
 
     def get_entry(self, kind: str, entry_id: str) -> Entry | None: ...
 
-    def list_entries(self, kind: str, paciente_id: str) -> list[Entry]: ...
+    def list_entries(
+        self,
+        kind: str,
+        paciente_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[Entry]:
+        """Entries registered in [start, end). Either bound may be None: that side is open."""
+        ...
 
     def verify_entry(self, kind: str, entry_id: str, medico_user_id: str, now: datetime) -> bool:
         """Sets verified only if the entry is still unverified. False when it already was."""
@@ -101,7 +132,27 @@ class HistoryStore(Protocol):
 
     def get_vitals(self, vitals_id: str) -> VitalSigns | None: ...
 
-    def list_vitals(self, paciente_id: str) -> list[VitalSigns]: ...
+    def list_vitals(
+        self, paciente_id: str, start: datetime | None = None, end: datetime | None = None
+    ) -> list[VitalSigns]: ...
+
+    def list_events(
+        self,
+        paciente_id: str,
+        *,
+        entidad: str | None,
+        accion: str | None,
+        start: datetime | None,
+        end: datetime | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[EventRow], int]:
+        """One page of the event log, newest first, and the total matching the filters."""
+        ...
+
+    def catalog_item(self, catalog: str, codigo: str) -> CatalogItem | None: ...
+
+    def search_catalog(self, catalog: str, query: str | None, limit: int) -> list[CatalogItem]: ...
 
     def append_event(
         self,
