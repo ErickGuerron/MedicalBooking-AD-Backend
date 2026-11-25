@@ -177,7 +177,6 @@ def test_administrator_creates_user_and_duplicate_email_conflicts(client, engine
     new_email = f"nuevo-{uuid.uuid4()}@synthetic.test"
     payload = {
         "email": new_email,
-        "password": "long-enough-pass-1",
         "first_name": "Nuevo",
         "last_name": "Usuario",
         "roles": ["PACIENTE"],
@@ -189,8 +188,8 @@ def test_administrator_creates_user_and_duplicate_email_conflicts(client, engine
     assert created.status_code == 201
     assert uuid.UUID(created.get_json()["id"])
     assert duplicate.status_code == 409
-    # The new patient can log in with the password that was set.
-    assert _login(client, new_email, "long-enough-pass-1").status_code == 200
+    # The account stays inactive until its owner sets a password through the emailed link.
+    assert _login(client, new_email, "long-enough-pass-1").status_code != 200
 
 
 def test_admin_creates_a_doctor_with_profile_and_outbox_event(client, engine) -> None:
@@ -202,7 +201,6 @@ def test_admin_creates_a_doctor_with_profile_and_outbox_event(client, engine) ->
         "/api/v1/users",
         json={
             "email": email,
-            "password": "long-enough-pass-1",
             "first_name": "Nuevo",
             "last_name": "Medico",
             "roles": ["MEDICO"],
@@ -244,7 +242,6 @@ def test_doctor_without_registration_is_refused_and_nothing_is_created(client, e
         "/api/v1/users",
         json={
             "email": email,
-            "password": "long-enough-pass-1",
             "first_name": "Sin",
             "last_name": "Registro",
             "roles": ["MEDICO"],
@@ -267,7 +264,6 @@ def test_patient_cannot_create_users(client, engine) -> None:
         "/api/v1/users",
         json={
             "email": f"x-{uuid.uuid4()}@synthetic.test",
-            "password": "long-enough-pass-1",
             "first_name": "X",
             "last_name": "Y",
             "roles": ["ADMINISTRADOR"],
