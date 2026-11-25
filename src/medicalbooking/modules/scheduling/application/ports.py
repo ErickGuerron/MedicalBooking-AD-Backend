@@ -163,6 +163,32 @@ class Consultorio:
 
 
 @dataclass(frozen=True)
+class ConsultorioDetail:
+    id: str
+    nombre: str
+    activo: bool
+
+
+@dataclass(frozen=True)
+class SedeDetail:
+    id: str
+    nombre: str
+    direccion: str | None
+    activo: bool
+    consultorios: tuple[ConsultorioDetail, ...]
+
+
+@dataclass(frozen=True)
+class ConsultorioOwned:
+    """A consultorio with the sede it belongs to: what the admin edits and checks."""
+
+    id: str
+    sede_id: str
+    nombre: str
+    activo: bool
+
+
+@dataclass(frozen=True)
 class DoctorProfile:
     medico_id: str
     duracion_cita_min: int
@@ -174,6 +200,31 @@ class ProposedSlot:
     inicio_utc: datetime
     fin_utc: datetime
     franja: str
+
+
+class OfficeStore(Protocol):
+    """Sedes and consultorios as an administrator manages them. Writes return False (not raise)
+    only for a duplicate consultorio name in the same sede; the service turns that into a 409."""
+
+    def list_sedes(self) -> list[SedeDetail]: ...
+
+    def get_sede(self, sede_id: str) -> SedeDetail | None: ...
+
+    def insert_sede(self, sede_id: str, nombre: str, direccion: str | None) -> None: ...
+
+    def update_sede(
+        self, sede_id: str, nombre: str, direccion: str | None, activo: bool
+    ) -> None: ...
+
+    def get_consultorio(self, consultorio_id: str) -> ConsultorioOwned | None: ...
+
+    def insert_consultorio(self, consultorio_id: str, sede_id: str, nombre: str) -> bool: ...
+
+    def update_consultorio(self, consultorio_id: str, nombre: str, activo: bool) -> bool: ...
+
+    def has_future_bookings(self, consultorio_ids: list[str], now: datetime) -> bool:
+        """True when an active booking holds a slot in these consultorios starting after `now`."""
+        ...
 
 
 class SchedulingStore(Protocol):
