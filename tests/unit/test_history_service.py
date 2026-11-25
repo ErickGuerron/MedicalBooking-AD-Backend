@@ -10,7 +10,13 @@ from typing import Any
 import pytest
 
 from medicalbooking.modules.history.application.history_service import HistoryService
-from medicalbooking.modules.history.application.ports import CitaOwnership, Entry, VitalSigns
+from medicalbooking.modules.history.application.ports import (
+    CatalogItem,
+    CitaOwnership,
+    Entry,
+    EventRow,
+    VitalSigns,
+)
 from medicalbooking.modules.history.domain.policies import (
     ALERGIA,
     ANTECEDENTE,
@@ -28,6 +34,19 @@ from medicalbooking.shared.domain.errors import Conflict, Forbidden, ValidationF
 NOW = datetime(2026, 11, 25, 15, 0, tzinfo=UTC)
 TODAY = date(2026, 11, 25)
 FORBIDDEN_MESSAGE = "Access to this resource is not allowed"
+CATALOGS = {
+    "cie11": {
+        "BA00": CatalogItem("BA00", "Hipertension esencial", True),
+        "OLD1": CatalogItem("OLD1", "Codigo retirado", False),
+    },
+    "vacunas": {
+        "INFLUENZA": CatalogItem("INFLUENZA", "Influenza estacional", True),
+        "RETIRED": CatalogItem("RETIRED", "Vacuna retirada", False),
+    },
+    "sustancias_alergia": {
+        "PENICILINA": CatalogItem("PENICILINA", "Penicilina", True, "MEDICAMENTO"),
+    },
+}
 INITIAL = {
     "alergia": ALERGIA.initial,
     "antecedente": ANTECEDENTE.initial,
@@ -35,6 +54,14 @@ INITIAL = {
     "problema": PROBLEMA.initial,
     "vacuna": VACUNA.initial,
 }
+
+
+def _inside(moment, start, end):
+    if start is not None and moment < start:
+        return False
+    if end is not None and moment >= end:
+        return False
+    return True
 
 
 @dataclass
@@ -91,9 +118,11 @@ class FakeStore:
     def get_entry(self, kind, entry_id):
         return self.entries.get((kind, entry_id))
 
-    def list_entries(self, kind, paciente_id):
+    def list_entries(self, kind, paciente_id, start=None, end=None):
         return [
-            e for (k, _), e in self.entries.items() if k == kind and e.paciente_id == paciente_id
+            e
+            for (k, _), e in self.entries.items()
+            if k == kind and e.paciente_id == paciente_id and _inside(e.registrada_en, start, end)
         ]
 
     def verify_entry(self, kind, entry_id, medico_user_id, now):
@@ -135,11 +164,51 @@ class FakeStore:
             values=dict(values),
         )
 
+    def catalog_item(self, catalog, codigo):
+        return CATALOGS.get(catalog, {}).get(codigo)
+
+    def search_catalog(self, catalog, query, limit):
+        items = [item for item in CATALOGS.get(catalog, {}).values() if item.activo]
+        if query:
+            items = [item for item in items if query.lower() in item.nombre.lower()]
+        return sorted(items, key=lambda item: item.nombre)[:limit]
+
+    def list_events(self, paciente_id, *, entidad, accion, start, end, limit, offset):
+        rows = []
+        for index, event in enumerate(self.events, start=1):
+            if event["paciente_id"] != paciente_id:
+                continue
+            if entidad and event["entidad"] != entidad:
+                continue
+            if accion and event["accion"] != accion:
+                continue
+            if start and event["now"] < start or end and event["now"] >= end:
+                continue
+            rows.append(
+                EventRow(
+                    id=index,
+                    entidad=event["entidad"],
+                    entidad_id=event["entidad_id"],
+                    accion=event["accion"],
+                    actor_usuario_id=event["actor_user_id"],
+                    motivo=event["motivo"],
+                    antes=event["antes"],
+                    despues=event["despues"],
+                    ocurrido_en=event["now"],
+                )
+            )
+        rows.sort(key=lambda row: row.id, reverse=True)
+        return rows[offset : offset + limit], len(rows)
+
     def get_vitals(self, vitals_id):
         return self.vitals.get(vitals_id)
 
-    def list_vitals(self, paciente_id):
-        return [v for v in self.vitals.values() if v.paciente_id == paciente_id]
+    def list_vitals(self, paciente_id, start=None, end=None):
+        return [
+            v
+            for v in self.vitals.values()
+            if v.paciente_id == paciente_id and _inside(v.registrada_en, start, end)
+        ]
 
     def append_event(self, **event):
         self.events.append(event)
@@ -184,6 +253,7 @@ def service(store: FakeStore) -> HistoryService:
 
 
 ALLERGY = {
+    "sustancia_codigo": "PENICILINA",
     "sustancia": "Penicilina",
     "categoria": "MEDICAMENTO",
     "severidad": "GRAVE",
@@ -483,13 +553,13 @@ def test_a_vaccine_is_registered_by_the_doctor_and_its_future_date_is_refused(se
             DOCTOR,
             "vacuna",
             PAT_ID,
-            {"vacuna": "Influenza", "dosis_numero": 1, "fecha": date(2030, 1, 1)},
+            {"vacuna_codigo": "INFLUENZA", "dosis_numero": 1, "fecha": date(2030, 1, 1)},
         )
     entry = service.create_entry(
         DOCTOR,
         "vacuna",
         PAT_ID,
-        {"vacuna": "Influenza", "dosis_numero": 1, "fecha": date(2026, 6, 1)},
+        {"vacuna_codigo": "INFLUENZA", "dosis_numero": 1, "fecha": date(2026, 6, 1)},
     )
     assert entry.verificada is True
 
