@@ -55,7 +55,8 @@ _RECORD_ANSWER = text(
     "WHERE id = :id AND estado = 'PENDIENTE'"
 )
 _PATIENT_OF_USER = text("SELECT id FROM pacientes WHERE usuario_id = :usuario")
-# The newest confirmed payment of each appointment of the patient (the rows are ordered newest first).
+# The newest confirmed payment of each appointment of the patient
+# (the rows are ordered newest first).
 _CONFIRMED_PAYMENTS = (
     "SELECT c.id AS cita_id, p.id AS pago_id, p.monto, p.pagado_en, p.creado_en, "
     "c.estado AS cita_estado, c.cancelada_en, h.inicio_utc, cm.inicio_atencion "
@@ -209,8 +210,9 @@ class SqlRefundStore:
     def eligibility_for_appointments(
         self, *, usuario_id: str, cita_ids: list[str], now: datetime
     ) -> dict[str, tuple[str | None, datetime | None]]:
-        """Read-only. Builds the eligibility inputs of each appointment's newest confirmed payment and
-        runs the same rules as a request. No lock: the answer is advice, the request re-checks it."""
+        """Read-only. Builds the eligibility inputs of each appointment's newest confirmed
+        payment and runs the same rules as a request. No lock: the answer is advice, the
+        request re-checks it."""
         names = {f"c{i}": cita for i, cita in enumerate(cita_ids)}
         in_citas = ", ".join(f":{name}" for name in names)
         with self._engine.connect() as conn:
@@ -234,7 +236,8 @@ class SqlRefundStore:
                     text(_REFUNDS_OF_PAYMENTS.format(in_pagos=in_pagos)), pago_names
                 ).all():
                     activos.setdefault(str(estado_row.pago_id), []).append(estado_row.estado)
-        # The request limit is gone: only the notice, window and one-refund-per-payment rules remain.
+        # The request limit is gone: only the notice, window and one-refund-per-payment
+        # rules remain.
         result: dict[str, tuple[str | None, datetime | None]] = {}
         for cita, row in latest.items():
             monto = Decimal(row.monto)

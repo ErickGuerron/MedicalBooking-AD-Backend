@@ -325,7 +325,9 @@ def list_appointments() -> tuple[Response, int]:
         offset=_int_query("offset", 0),
     )
     eligibility = _refund_eligibility(items)
-    return jsonify(items=[_summary_json(item, eligibility.get(str(item.id).lower())) for item in items]), 200
+    return jsonify(
+        items=[_summary_json(item, eligibility.get(str(item.id).lower())) for item in items]
+    ), 200
 
 
 def _refund_eligibility(items) -> dict:
