@@ -62,6 +62,7 @@ from medicalbooking.modules.payments.presentation.routes import (
     auto_refund_after_cancel,
     payments_bp,
     reconcile_patient_refunds,
+    refund_eligibility_for_patient,
 )
 from medicalbooking.modules.replica.infrastructure.factory import (
     ReplicaConfigError,
@@ -156,6 +157,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(clinical_bp)
     app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
     app.extensions["medicalbooking.before_patient_listing"] = reconcile_patient_refunds
+    app.extensions["medicalbooking.refund_eligibility_for_patient"] = refund_eligibility_for_patient
     app.register_blueprint(replica_bp)
     app.register_blueprint(reporting_bp)
     if settings.docs_enabled:

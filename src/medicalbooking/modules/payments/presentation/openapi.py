@@ -332,7 +332,7 @@ def payments_fragment() -> dict[str, Any]:
                         "409": _problem(
                             "Refused by a rule: PAGO_NO_CONFIRMADO, CITA_NO_CANCELADA, "
                             "CONSULTA_ATENDIDA, CANCELACION_TARDIA, REEMBOLSO_EXISTENTE, "
-                            "FUERA_DE_VENTANA, DEMASIADAS_SOLICITUDES, MOTIVO_INVALIDO or "
+                            "FUERA_DE_VENTANA, MOTIVO_INVALIDO or "
                             "SIN_PAYMENT_INTENT (the code is the problem detail)"
                         ),
                         "422": _problem("Missing Idempotency-Key header or invalid body"),

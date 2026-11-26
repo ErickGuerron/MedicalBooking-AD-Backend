@@ -114,7 +114,6 @@ _REFUND_REASONS = {
     "FUERA_DE_VENTANA": "ya pasó el plazo para pedir reembolsos de este pago",
     "REEMBOLSO_EXISTENTE": "ya existe un reembolso para este pago",
     "CONSULTA_ATENDIDA": "la consulta ya se atendió",
-    "DEMASIADAS_SOLICITUDES": "se hicieron demasiadas solicitudes de reembolso",
     "PAGO_NO_CONFIRMADO": "el pago todavía no está confirmado",
     "FALLIDO": "el banco no pudo completar la devolución",
     "ERROR": "hubo un problema al comunicarnos con el banco",

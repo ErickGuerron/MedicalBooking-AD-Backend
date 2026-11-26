@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 REFUND_WINDOW_DAYS = 30
-MAX_REQUESTS_PER_WINDOW = 2
+REFUND_NOTICE_HOURS = 48
 REASON_CODES = frozenset({"CANCELACION_PACIENTE", "CANCELACION_MEDICO", "ERROR_DE_COBRO"})
 _ACTIVE_REFUND_STATES = frozenset({"PENDIENTE", "PROCESADO"})
 
@@ -41,7 +41,6 @@ class RefundCase:
     cita_inicio: datetime
     consulta_atendida: bool
     reembolsos_activos: tuple[str, ...]
-    solicitudes_recientes: int
     motivo_codigo: str
     monto_solicitado: Decimal
 
@@ -56,13 +55,25 @@ def check_refund_eligibility(case: RefundCase, now: datetime) -> None:
         raise RefundRefused("CONSULTA_ATENDIDA")
     if case.cancelada_en is None or case.cancelada_en >= case.cita_inicio:
         raise RefundRefused("CANCELACION_TARDIA")
+    if case.cita_inicio - case.cancelada_en < timedelta(hours=REFUND_NOTICE_HOURS):
+        raise RefundRefused("CANCELACION_TARDIA")
     if any(state in _ACTIVE_REFUND_STATES for state in case.reembolsos_activos):
         raise RefundRefused("REEMBOLSO_EXISTENTE")
     if now - case.pagado_en > timedelta(days=REFUND_WINDOW_DAYS):
         raise RefundRefused("FUERA_DE_VENTANA")
-    if case.solicitudes_recientes >= MAX_REQUESTS_PER_WINDOW:
-        raise RefundRefused("DEMASIADAS_SOLICITUDES")
     if case.motivo_codigo not in REASON_CODES:
         raise RefundRefused("MOTIVO_INVALIDO")
     if case.monto_solicitado != case.monto_pagado:
         raise RefundRefused("MONTO_NO_TOTAL")
+
+
+def refund_block_code(case: RefundCase, *, now: datetime) -> str | None:
+    """The first rule that blocks the refund of [case] at [now]; None when it is eligible.
+
+    The reason is only a code: the listing sends it so the portal can say why no refund is offered.
+    """
+    try:
+        check_refund_eligibility(case, now=now)
+    except RefundRefused as refused:
+        return refused.code
+    return None

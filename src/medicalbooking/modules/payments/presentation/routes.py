@@ -242,6 +242,11 @@ def _payment_methods() -> PaymentMethodService:
     return current_app.extensions[PAYMENT_METHODS_EXTENSION]
 
 
+def refund_eligibility_for_patient(actor, cita_ids: list[str]) -> dict:
+    """Hook for the patient's listing: whether each appointment's payment can be refunded now."""
+    return _refunds().eligibility_for_patient(actor, cita_ids)
+
+
 def reconcile_patient_refunds(actor) -> None:
     """Hook for the patient's listing: asks Stripe about the pending refunds of that patient."""
     _refunds().reconcile_pending_for_user(actor)
