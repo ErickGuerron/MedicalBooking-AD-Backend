@@ -113,6 +113,13 @@ class RefundStore(Protocol):
 
     def mark_failed(self, refund_id: str) -> None: ...
 
+    def eligibility_for_appointments(
+        self, *, usuario_id: str, cita_ids: list[str], now: datetime
+    ) -> dict[str, tuple[str | None, datetime | None]]:
+        """For each appointment of the patient with a confirmed payment: the rule that blocks its
+        refund (None when eligible) and, for the request limit, when the next request frees up."""
+        ...
+
     def record_provider_answer(
         self, refund_id: str, stripe_refund_id: str, estado: str
     ) -> None: ...
@@ -310,6 +317,16 @@ class RefundService:
             logger.error("automatic refund error: %s", type(unexpected).__name__)
             self._record_automatic(cita_id, "FALLIDO")
             return {"estado": None, "motivo": "ERROR"}
+
+    def eligibility_for_patient(
+        self, actor: AccessProfile, cita_ids: list[str]
+    ) -> dict[str, tuple[str | None, datetime | None]]:
+        """Read-only: the refund eligibility of the patient's appointments, for the listing."""
+        if not cita_ids:
+            return {}
+        return self._store.eligibility_for_appointments(
+            usuario_id=str(actor.user_id), cita_ids=cita_ids, now=self._clock()
+        )
 
     def _record_automatic(self, cita_id: str, resultado: str) -> None:
         """Keeps the outcome on the appointment so the cancellation mail can tell the

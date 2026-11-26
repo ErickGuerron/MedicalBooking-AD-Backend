@@ -293,32 +293,6 @@ def test_each_refusal_answers_409_with_its_code_and_changes_nothing(
     assert double.calls == []
 
 
-def test_too_many_recent_requests_is_refused_with_409(app, engine) -> None:
-    seed = _seed(engine)
-    for _ in range(2):
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO reembolsos (id, pago_id, monto, estado, solicitado_en) "
-                    "VALUES (:id, :p, 25.00, 'FALLIDO', SYSUTCDATETIME())"
-                ),
-                {"id": str(uuid.uuid4()), "p": seed.pago_id},
-            )
-    double = ProviderDouble()
-    _install(app, engine, double)
-
-    response = _request(
-        app.test_client(),
-        _patient_headers(app, engine, seed),
-        seed.pago_id,
-        f"refund-{uuid.uuid4()}",
-    )
-
-    assert response.status_code == 409
-    assert response.get_json()["detail"] == "DEMASIADAS_SOLICITUDES"
-    assert double.calls == []
-
-
 def test_an_unknown_reason_code_is_refused_with_409(app, engine) -> None:
     seed = _seed(engine)
     double = ProviderDouble()

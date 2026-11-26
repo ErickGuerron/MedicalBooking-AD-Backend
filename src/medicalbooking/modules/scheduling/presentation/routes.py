@@ -137,7 +137,9 @@ def _positive_int_query(name: str) -> int | None:
     return value
 
 
-def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
+def _summary_json(
+    appointment: AppointmentSummary, refund: tuple[str | None, Any] | None = None
+) -> dict[str, Any]:
     item: dict[str, Any] = {
         "id": appointment.id,
         "estado": appointment.estado,
@@ -163,6 +165,12 @@ def _summary_json(appointment: AppointmentSummary) -> dict[str, Any]:
         item["pago_id"] = appointment.pago_id
     if appointment.reembolso_estado is not None:
         item["reembolso_estado"] = appointment.reembolso_estado
+    if refund is not None:
+        blocked_by, available_at = refund
+        item["reembolso_elegible"] = blocked_by is None
+        item["reembolso_motivo"] = blocked_by
+        if available_at is not None:
+            item["proximo_reembolso_disponible_en"] = available_at.isoformat()
     return item
 
 
@@ -316,7 +324,23 @@ def list_appointments() -> tuple[Response, int]:
         limit=_int_query("limit", DEFAULT_PAGE_SIZE),
         offset=_int_query("offset", 0),
     )
-    return jsonify(items=[_summary_json(item) for item in items]), 200
+    eligibility = _refund_eligibility(items)
+    return jsonify(
+        items=[_summary_json(item, eligibility.get(str(item.id).lower())) for item in items]
+    ), 200
+
+
+def _refund_eligibility(items) -> dict:
+    """Refund eligibility of the listed appointments, from the payments module. Without it the rows
+    simply carry no refund advice; the listing itself still loads."""
+    hook = current_app.extensions.get("medicalbooking.refund_eligibility_for_patient")
+    if hook is None or not items:
+        return {}
+    try:
+        return hook(g.actor, [str(item.id) for item in items])
+    except Exception:  # the listing still loads when the advice cannot be read
+        current_app.logger.warning("refund eligibility skipped")
+        return {}
 
 
 @scheduling_bp.get("/appointments/cancellation-approvals")

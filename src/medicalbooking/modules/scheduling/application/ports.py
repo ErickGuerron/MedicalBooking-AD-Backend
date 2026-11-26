@@ -283,6 +283,13 @@ class SchedulingStore(Protocol):
 
     def find_appointment_by_key(self, key: str) -> Appointment | None: ...
 
+    def late_cancellations_since(
+        self, patient_user_id: str, *, since: datetime, notice_hours: int
+    ) -> int:
+        """Count the patient's cancellations made at or after since, less than notice_hours
+        before the slot start (a cancellation after the start counts too)."""
+        ...
+
     def has_doctor_profile(self, user_id: str) -> bool: ...
 
     def list_patient_appointments(

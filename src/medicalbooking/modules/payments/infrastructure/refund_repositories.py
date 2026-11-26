@@ -8,7 +8,7 @@ never called from here.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import Engine, text
@@ -19,8 +19,8 @@ from medicalbooking.modules.payments.application.refund_service import (
     RefundReservation,
 )
 from medicalbooking.modules.payments.domain.refunds import (
-    REFUND_WINDOW_DAYS,
     RefundCase,
+    refund_block_code,
 )
 from medicalbooking.modules.payments.infrastructure.billing_repositories import (
     emit_reembolso_snapshot,
@@ -42,12 +42,6 @@ _STORED_REFUND = text(
     "SELECT id, pago_id, estado, monto, motivo, solicitado_en FROM reembolsos WHERE id = :id"
 )
 _ACTIVE_STATES = text("SELECT estado FROM reembolsos WHERE pago_id = :pago")
-_RECENT_REQUESTS = text(
-    "SELECT COUNT(*) FROM reembolsos AS r "
-    "JOIN pagos AS p2 ON p2.id = r.pago_id "
-    "JOIN facturas AS f2 ON f2.id = p2.factura_id "
-    "WHERE f2.paciente_id = :paciente AND r.solicitado_en >= :desde"
-)
 _INSERT_REFUND = text(
     "INSERT INTO reembolsos (id, pago_id, monto, estado, motivo, solicitado_en) "
     "VALUES (:id, :pago, :monto, 'PENDIENTE', :motivo, :ahora)"
@@ -60,6 +54,20 @@ _RECORD_ANSWER = text(
     "UPDATE reembolsos SET stripe_refund_id = :sid, estado = :estado "
     "WHERE id = :id AND estado = 'PENDIENTE'"
 )
+_PATIENT_OF_USER = text("SELECT id FROM pacientes WHERE usuario_id = :usuario")
+# The newest confirmed payment of each appointment of the patient
+# (the rows are ordered newest first).
+_CONFIRMED_PAYMENTS = (
+    "SELECT c.id AS cita_id, p.id AS pago_id, p.monto, p.pagado_en, p.creado_en, "
+    "c.estado AS cita_estado, c.cancelada_en, h.inicio_utc, cm.inicio_atencion "
+    "FROM citas AS c JOIN pacientes AS pa ON pa.id = c.paciente_id AND pa.usuario_id = :usuario "
+    "JOIN horarios_disponibles AS h ON h.id = c.horario_id "
+    "JOIN facturas AS f ON f.cita_id = c.id "
+    "JOIN pagos AS p ON p.factura_id = f.id AND p.estado = 'CONFIRMADO' "
+    "LEFT JOIN consultas_medicas AS cm ON cm.cita_id = c.id "
+    "WHERE c.id IN ({in_citas}) ORDER BY p.creado_en DESC"
+)
+_REFUNDS_OF_PAYMENTS = "SELECT pago_id, estado FROM reembolsos WHERE pago_id IN ({in_pagos})"
 _NO_CITA_START = datetime(1, 1, 1, tzinfo=UTC)
 
 
@@ -90,10 +98,6 @@ class SqlRefundStore:
                     payment_intent_id=None,
                 )
             activos = tuple(row.estado for row in conn.execute(_ACTIVE_STATES, {"pago": pago_id}))
-            desde = _utc_naive(now - timedelta(days=REFUND_WINDOW_DAYS))
-            recientes = conn.execute(
-                _RECENT_REQUESTS, {"paciente": pago.paciente_id, "desde": desde}
-            ).scalar_one()
             monto = Decimal(pago.monto)
             check(
                 RefundCase(
@@ -105,7 +109,6 @@ class SqlRefundStore:
                     cita_inicio=_aware(pago.inicio_utc) or _NO_CITA_START,
                     consulta_atendida=pago.inicio_atencion is not None,
                     reembolsos_activos=activos,
-                    solicitudes_recientes=int(recientes),
                     motivo_codigo=motivo_codigo,
                     # The amount is never taken from the client: the full payment is requested.
                     monto_solicitado=monto,
@@ -203,6 +206,56 @@ class SqlRefundStore:
             stripe_refund_id=row.stripe_refund_id,
             owner_user_id=str(row.owner_user_id).lower(),
         )
+
+    def eligibility_for_appointments(
+        self, *, usuario_id: str, cita_ids: list[str], now: datetime
+    ) -> dict[str, tuple[str | None, datetime | None]]:
+        """Read-only. Builds the eligibility inputs of each appointment's newest confirmed
+        payment and runs the same rules as a request. No lock: the answer is advice, the
+        request re-checks it."""
+        names = {f"c{i}": cita for i, cita in enumerate(cita_ids)}
+        in_citas = ", ".join(f":{name}" for name in names)
+        with self._engine.connect() as conn:
+            paciente = conn.execute(_PATIENT_OF_USER, {"usuario": usuario_id}).first()
+            if paciente is None:
+                return {}
+            rows = conn.execute(
+                text(_CONFIRMED_PAYMENTS.format(in_citas=in_citas)),
+                {"usuario": usuario_id, **names},
+            ).all()
+            # Newest confirmed payment first: the first row seen for a cita is the one that counts.
+            latest: dict[str, object] = {}
+            for row in rows:
+                latest.setdefault(str(row.cita_id).lower(), row)
+            pago_ids = [str(row.pago_id) for row in latest.values()]
+            activos: dict[str, list[str]] = {}
+            if pago_ids:
+                pago_names = {f"p{i}": pago for i, pago in enumerate(pago_ids)}
+                in_pagos = ", ".join(f":{name}" for name in pago_names)
+                for estado_row in conn.execute(
+                    text(_REFUNDS_OF_PAYMENTS.format(in_pagos=in_pagos)), pago_names
+                ).all():
+                    activos.setdefault(str(estado_row.pago_id), []).append(estado_row.estado)
+        # The request limit is gone: only the notice, window and one-refund-per-payment
+        # rules remain.
+        result: dict[str, tuple[str | None, datetime | None]] = {}
+        for cita, row in latest.items():
+            monto = Decimal(row.monto)
+            case = RefundCase(
+                pago_estado="CONFIRMADO",
+                monto_pagado=monto,
+                pagado_en=_aware(row.pagado_en or row.creado_en),
+                cita_estado=row.cita_estado or "",
+                cancelada_en=_aware(row.cancelada_en),
+                cita_inicio=_aware(row.inicio_utc) or _NO_CITA_START,
+                consulta_atendida=row.inicio_atencion is not None,
+                reembolsos_activos=tuple(activos.get(str(row.pago_id), ())),
+                motivo_codigo="CANCELACION_PACIENTE",
+                monto_solicitado=monto,
+            )
+            code = refund_block_code(case, now=now)
+            result[cita] = (code, None)
+        return result
 
     def mark_failed(self, refund_id: str) -> None:
         with self._engine.begin() as conn:
