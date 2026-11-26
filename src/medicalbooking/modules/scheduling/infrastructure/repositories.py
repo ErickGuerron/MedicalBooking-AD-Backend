@@ -633,6 +633,23 @@ class SqlSchedulingStore:
             ).first()
         return None if row is None else _appointment(row)
 
+    def late_cancellations_since(
+        self, patient_user_id: str, *, since: datetime, notice_hours: int
+    ) -> int:
+        with self._engine.connect() as conn:
+            count = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM citas c "
+                    "JOIN pacientes p ON p.id = c.paciente_id "
+                    "JOIN horarios_disponibles h ON h.id = c.horario_id "
+                    "WHERE p.usuario_id = :u AND c.estado = 'CANCELADA' "
+                    "AND c.cancelada_en >= :desde "
+                    "AND DATEDIFF(MINUTE, c.cancelada_en, h.inicio_utc) < :minutos"
+                ),
+                {"u": patient_user_id, "desde": _utc_naive(since), "minutos": notice_hours * 60},
+            ).scalar()
+        return int(count or 0)
+
     def has_doctor_profile(self, user_id: str) -> bool:
         with self._engine.connect() as conn:
             found = conn.execute(

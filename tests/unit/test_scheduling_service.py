@@ -55,6 +55,10 @@ class FakeStore:
     slot_id: str = ""
     window_closed: bool = False
     franjas: dict = field(default_factory=dict)  # servicio id -> MANANA or TARDE
+    late_cancellations: int = 0
+
+    def late_cancellations_since(self, patient_user_id, *, since, notice_hours):
+        return self.late_cancellations
 
     def list_available(self, start, end, medico_id, limit, especialidad_id=None, franja=None):
         return [
@@ -429,3 +433,17 @@ def test_running_expiration_twice_is_a_no_op_the_second_time(store, patient) -> 
 
     assert later.expire_overdue_holds() == 1
     assert later.expire_overdue_holds() == 0
+
+
+def test_patient_with_three_late_cancellations_cannot_book(store, patient) -> None:
+    store.late_cancellations = 3
+
+    with pytest.raises(Forbidden):
+        _book(_service(store), patient, store)
+    assert store.reserve_calls == 0
+
+
+def test_two_late_cancellations_still_allow_booking(store, patient) -> None:
+    store.late_cancellations = 2
+
+    assert _book(_service(store), patient, store).replayed is False

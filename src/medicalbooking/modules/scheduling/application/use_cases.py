@@ -44,6 +44,10 @@ from medicalbooking.modules.scheduling.domain.policies import (
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
 
 MAX_RESULTS = 200
+# A patient who cancels inside the notice window too often cannot book for a while.
+LATE_CANCEL_NOTICE_HOURS = 48
+LATE_CANCEL_LIMIT = 3
+LATE_CANCEL_WINDOW_DAYS = 30
 EXPIRY_BATCH_SIZE = 100
 
 
@@ -132,6 +136,16 @@ class SchedulingService:
             raise NotFound("Medical service not found")
         self._check_franja(servicio_id, slot_start)
 
+        late = self._store.late_cancellations_since(
+            actor.user_id,
+            since=now - timedelta(days=LATE_CANCEL_WINDOW_DAYS),
+            notice_hours=LATE_CANCEL_NOTICE_HOURS,
+        )
+        if late >= LATE_CANCEL_LIMIT:
+            raise Forbidden(
+                f"Too many late cancellations in the last {LATE_CANCEL_WINDOW_DAYS} days; "
+                "booking is blocked until older ones expire"
+            )
         outcome = self._store.reserve(
             ReserveCommand(
                 key=idempotency_key,
