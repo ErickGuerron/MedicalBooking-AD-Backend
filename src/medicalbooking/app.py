@@ -7,6 +7,7 @@ Concurrency is enforced by the database.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,6 +23,7 @@ from medicalbooking.modules.clinical.application.clinical_profile import Patient
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
 from medicalbooking.modules.clinical.application.proposals import ProposalService
 from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
+from medicalbooking.modules.clinical.infrastructure.knowledge_snapshot import digest_provider
 from medicalbooking.modules.clinical.infrastructure.repositories import SqlClinicalStore
 from medicalbooking.modules.clinical.presentation.openapi import clinical_fragment
 from medicalbooking.modules.clinical.presentation.routes import clinical_bp
@@ -97,7 +99,15 @@ from medicalbooking.shared.presentation.health import health_bp
 _CORRELATION_HEADER = "X-Correlation-ID"
 
 
-def create_app(settings: Settings | None = None) -> Flask:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    knowledge_digest: Callable[[], str] | None = None,
+) -> Flask:
+    """``knowledge_digest`` reports the digest of the clinical knowledge the database holds.
+
+    By default it is read from the database. Tests may pass another provider.
+    """
     settings = settings or Settings()
     app = Flask("medicalbooking")
     app.extensions["medicalbooking.settings"] = settings
@@ -132,7 +142,9 @@ def create_app(settings: Settings | None = None) -> Flask:
         settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None,
         settings.jwt_access_ttl_minutes,
     )
-    knowledge, proposals, shadow, patient_profile = _build_clinical(engine)
+    knowledge, proposals, shadow, patient_profile = _build_clinical(
+        engine, knowledge_digest or digest_provider(engine)
+    )
     app.extensions["medicalbooking.knowledge"] = knowledge
     app.extensions["medicalbooking.proposals"] = proposals
     app.extensions["medicalbooking.shadow"] = shadow
@@ -286,6 +298,7 @@ def _build_stripe_gateway(settings: Settings) -> StripeCheckoutGateway:
 
 def _build_clinical(
     engine: Any,
+    knowledge_digest: Callable[[], str],
 ) -> tuple[KnowledgeService, ProposalService, ShadowFindingsService, PatientProfileService]:
     """Composition root for clinical knowledge (E5), shadow findings (S13) and the patient profile
     (S12): one shared store."""
@@ -293,7 +306,7 @@ def _build_clinical(
     return (
         KnowledgeService(store=store, clock=_utc_now),
         ProposalService(store=store, clock=_utc_now),
-        ShadowFindingsService(store=store, clock=_utc_now),
+        ShadowFindingsService(store=store, clock=_utc_now, knowledge_digest=knowledge_digest),
         PatientProfileService(store=store, clock=_utc_now),
     )
 

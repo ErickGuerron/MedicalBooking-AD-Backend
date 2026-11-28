@@ -8,6 +8,7 @@ from decimal import Decimal
 from medicalbooking.modules.clinical.application.ports import OrderForEvaluation
 from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
 from medicalbooking.modules.clinical.domain.anemia import ANEMIA_MODERADA
+from medicalbooking.modules.clinical.domain.knowledge_bundle import BUNDLE_DIGEST
 from medicalbooking.modules.clinical.domain.microcitosis import NO_EVALUABLE, SENAL_MICROCITOSIS
 from medicalbooking.modules.clinical.domain.references import Reference
 from medicalbooking.modules.identity.application.ports import AccessProfile
@@ -88,7 +89,11 @@ class FakeStore:
 
 
 def service(store: FakeStore) -> ShadowFindingsService:
-    return ShadowFindingsService(store, clock=lambda: datetime(2026, 11, 9, 12, 0))
+    return ShadowFindingsService(
+        store,
+        clock=lambda: datetime(2026, 11, 9, 12, 0),
+        knowledge_digest=lambda: BUNDLE_DIGEST,
+    )
 
 
 def test_a_validated_reference_turns_the_signal_on_and_leaves_anaemia_alone() -> None:

@@ -1,0 +1,4 @@
+{"analito":"1558-6","contexto":"AYUNO","operador":"GE","orden_criterio":1,"regla":"GLU-AYUNO-ALTERADA-ADA","umbral_numerico":"100","unidad":"mg/dL","valor_codificado":null,"version_regla":1}
+{"analito":"1558-6","contexto":"AYUNO","operador":"GE","orden_criterio":1,"regla":"GLU-AYUNO-DIABETES-ADA","umbral_numerico":"126","unidad":"mg/dL","valor_codificado":null,"version_regla":1}
+{"analito":null,"contexto":null,"operador":"FUERA_REFERENCIA","orden_criterio":1,"regla":"GLU-FUERA-SINT","umbral_numerico":null,"unidad":"mg/dL","valor_codificado":null,"version_regla":1}
+{"analito":null,"contexto":null,"operador":"LT","orden_criterio":1,"regla":"HB-BAJA-SINT","umbral_numerico":"12","unidad":"g/dL","valor_codificado":null,"version_regla":1}

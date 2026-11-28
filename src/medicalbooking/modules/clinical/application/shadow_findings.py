@@ -24,6 +24,7 @@ from medicalbooking.modules.clinical.application.ports import (
     ShadowSnapshotRecord,
 )
 from medicalbooking.modules.clinical.domain.hb_adjustments import total_adjustment
+from medicalbooking.modules.clinical.domain.knowledge_bundle import BUNDLE_DIGEST
 from medicalbooking.modules.clinical.domain.loinc_roles import (
     AmbiguousResult,
     evidence_by_role,
@@ -54,13 +55,33 @@ _ENTIDAD_SNAPSHOT = "hallazgos_sombra"
 VCM_LOINC = "787-2"
 
 
+KNOWLEDGE_MISMATCH_MESSAGE = (
+    "The clinical knowledge base does not match the bundle this application was built with; "
+    "load the bundle before evaluating orders"
+)
+
+
 class ShadowFindingsService:
-    def __init__(self, store: ClinicalStore, clock: Callable[[], datetime]) -> None:
+    def __init__(
+        self,
+        store: ClinicalStore,
+        clock: Callable[[], datetime],
+        knowledge_digest: Callable[[], str],
+        expected_digest: str = BUNDLE_DIGEST,
+    ) -> None:
         self._store = store
         self._clock = clock
+        self._knowledge_digest = knowledge_digest
+        self._expected_digest = expected_digest
+
+    def _require_knowledge_bundle(self) -> None:
+        """Two databases must not give different findings for the same order (D1: refuse, 409)."""
+        if self._knowledge_digest() != self._expected_digest:
+            raise Conflict(KNOWLEDGE_MISMATCH_MESSAGE)
 
     def get(self, actor: AccessProfile, order_id: str) -> ShadowReport:
         order = self._authorize(actor, order_id, _ENTIDAD_LECTURA, "consultar")
+        self._require_knowledge_bundle()
         try:
             roles = roles_from_loinc(self._store.loinc_results_for_order(order_id))
         except AmbiguousResult as error:
@@ -71,6 +92,7 @@ class ShadowFindingsService:
 
     def record_snapshot(self, actor: AccessProfile, order_id: str) -> ShadowSnapshotRecord:
         order = self._authorize(actor, order_id, _ENTIDAD_SNAPSHOT, "registrar")
+        self._require_knowledge_bundle()
         try:
             evidence = evidence_by_role(self._store.loinc_evidence_for_order(order_id))
         except AmbiguousResult as error:

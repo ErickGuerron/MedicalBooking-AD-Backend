@@ -45,8 +45,9 @@ TABLES: tuple[TableSpec, ...] = (
         ),
     ),
     TableSpec(
+        # codigo_loinc is NULL for some analytes, so the name completes the key.
         "analitos",
-        ("codigo_loinc",),
+        ("codigo_loinc", "nombre"),
         (
             "codigo_loinc",
             "nombre",
@@ -57,8 +58,19 @@ TABLES: tuple[TableSpec, ...] = (
         ),
     ),
     TableSpec(
+        # A reference is identified by its population and context, not by its version alone.
         "referencias",
-        ("analito", "fuente", "version"),
+        (
+            "analito",
+            "fuente",
+            "version",
+            "sexo_aplicable",
+            "edad_min_dias",
+            "edad_max_dias",
+            "tipo_muestra",
+            "metodo_analitico",
+            "contexto",
+        ),
         (
             "analito",
             "fuente",
@@ -118,7 +130,7 @@ TABLES: tuple[TableSpec, ...] = (
     ),
     TableSpec(
         "contenidos",
-        ("analito", "fuente", "idioma", "tipo", "version"),
+        ("analito", "fuente", "idioma", "tipo", "version", "texto"),
         (
             "analito",
             "fuente",

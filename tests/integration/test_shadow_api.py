@@ -17,6 +17,7 @@ from sqlalchemy.exc import DBAPIError
 
 from medicalbooking.app import create_app
 from medicalbooking.config import Settings
+from medicalbooking.modules.clinical.domain.knowledge_bundle import BUNDLE_DIGEST
 from tests.integration.test_lab_api import _detail, _order_for, _test_type
 from tests.integration.test_scheduling_api import _count, _token, _user
 
@@ -29,7 +30,8 @@ HB_LOINC = "718-7"
 @pytest.fixture(scope="module")
 def app(migrated_engine: Engine, test_settings: Settings) -> Iterator[Flask]:
     settings = test_settings.model_copy(update={"jwt_signing_key": SecretStr(KEY)})
-    yield create_app(settings)
+    # The shadow behaviour is tested here; the knowledge gate has its own tests.
+    yield create_app(settings, knowledge_digest=lambda: BUNDLE_DIGEST)
 
 
 @pytest.fixture

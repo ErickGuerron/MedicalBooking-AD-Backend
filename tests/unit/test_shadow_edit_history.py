@@ -14,6 +14,7 @@ import pytest
 
 from medicalbooking.modules.clinical.application.ports import OrderForEvaluation
 from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
+from medicalbooking.modules.clinical.domain.knowledge_bundle import BUNDLE_DIGEST
 from medicalbooking.modules.clinical.domain.shadow_edits import DESCARTADO
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.shared.domain.errors import Forbidden
@@ -119,7 +120,11 @@ class FakeStore:
 
 
 def service(store: FakeStore) -> ShadowFindingsService:
-    return ShadowFindingsService(store, clock=lambda: datetime(2026, 11, 11, 12, 0))
+    return ShadowFindingsService(
+        store,
+        clock=lambda: datetime(2026, 11, 11, 12, 0),
+        knowledge_digest=lambda: BUNDLE_DIGEST,
+    )
 
 
 def _two_edits() -> list[SimpleNamespace]:
