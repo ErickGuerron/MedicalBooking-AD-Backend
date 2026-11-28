@@ -395,13 +395,7 @@ class BillingService:
         confirms the payment (the same step the webhook takes), an expired one is cancelled, and an
         open or still-processing one changes nothing. The answer is the stored status afterwards.
         """
-        _require(actor, PERM_CHECKOUT)
-        invoice = self._store.find_invoice(str(factura_id))
-        if invoice is None or invoice.paciente_user_id != actor.user_id:
-            raise Forbidden("Access to this resource is not allowed")
-        payment = self._store.find_latest_payment_for_invoice(str(factura_id))
-        if payment is None:
-            raise NotFound("This invoice has no checkout attempt")
+        invoice, payment = self._own_latest_attempt(actor, factura_id)
         if payment.estado == PAGO_PENDIENTE and payment.session_id is not None:
             snapshot = self._retrieve(payment.session_id)
             if snapshot.status == "complete" and snapshot.payment_status == "paid":
@@ -463,7 +457,13 @@ class BillingService:
             raise Conflict("The payment attempt is no longer pending")
         return resumed
 
-    def checkout_status(self, actor: AccessProfile, *, factura_id: str) -> CheckoutStatus:
+    def _own_latest_attempt(
+        self, actor: AccessProfile, factura_id: str
+    ) -> tuple[InvoiceRecord, PaymentRecord]:
+        """The own invoice and its latest checkout attempt.
+
+        Other owners and missing invoices get the same 403.
+        """
         _require(actor, PERM_CHECKOUT)
         invoice = self._store.find_invoice(str(factura_id))
         if invoice is None or invoice.paciente_user_id != actor.user_id:
@@ -471,6 +471,10 @@ class BillingService:
         payment = self._store.find_latest_payment_for_invoice(str(factura_id))
         if payment is None:
             raise NotFound("This invoice has no checkout attempt")
+        return invoice, payment
+
+    def checkout_status(self, actor: AccessProfile, *, factura_id: str) -> CheckoutStatus:
+        _, payment = self._own_latest_attempt(actor, factura_id)
         return CheckoutStatus(
             pago_id=payment.id,
             estado=payment.estado,
