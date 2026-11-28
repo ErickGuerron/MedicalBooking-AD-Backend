@@ -13,6 +13,7 @@ from medicalbooking.modules.payments.application.billing_service import (
     BillingService,
     CheckoutRequest,
     CheckoutSession,
+    CheckoutSnapshot,
 )
 from medicalbooking.modules.payments.presentation.routes import BILLING_EXTENSION, payments_bp
 from medicalbooking.shared.domain.errors import AppError
@@ -30,6 +31,17 @@ class OkGateway:
 
     def create_session(self, request: CheckoutRequest) -> CheckoutSession:
         return CheckoutSession(id="cs_route_1", client_secret="cs_route_1_secret")
+
+    def retrieve_session(self, session_id: str) -> CheckoutSnapshot:
+        # The session is still open, so a replay reopens it (the status check runs first).
+        return CheckoutSnapshot(
+            id=session_id,
+            url="https://checkout.test/route",
+            status="open",
+            payment_status="unpaid",
+            amount_cents=2550,
+            currency="USD",
+        )
 
 
 class _Tokens:
