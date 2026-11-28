@@ -141,6 +141,9 @@ class OrderForEvaluation:
     paciente_user_id: str
     medico_user_id: str
     results: tuple[ResultInput, ...]
+    # Results the laboratory has not read yet, and whether the order is already confirmed.
+    revisiones_pendientes: int = 0
+    confirmada: bool = False
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,8 @@ from medicalbooking.modules.scheduling.domain.policies import APPOINTMENT_STATES
 from medicalbooking.modules.scheduling.presentation.routes import (
     BookAppointmentRequest,
     CancelAppointmentRequest,
+    GenerateSlotsRequest,
+    WorkHoursRequest,
 )
 
 _PROBLEM_CONTENT = {
@@ -47,6 +49,144 @@ def _query(
 def scheduling_fragment() -> dict[str, Any]:
     return {
         "paths": {
+            "/api/v1/me/horario-trabajo": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "getMyWorkHours",
+                    "summary": "Read the weekly hours the signed-in doctor works",
+                    "security": _BEARER,
+                    "responses": {
+                        "200": _json_response("Declared work blocks", "WorkHoursList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller is not a doctor with a profile"),
+                    },
+                },
+                "put": {
+                    "tags": ["Scheduling"],
+                    "operationId": "setMyWorkHours",
+                    "summary": "Declare the weekly hours the signed-in doctor works",
+                    "description": (
+                        "Replaces the whole weekly schedule. Hours are inside the clinic's opening "
+                        "hours (08:00 to 17:00), start and end on a 15-minute step, do not overlap "
+                        "on the same day, and at most four blocks a day. An empty list "
+                        "removes them."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/WorkHoursRequest"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": _json_response("Saved work blocks", "WorkHoursList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller is not a doctor with a profile"),
+                        "422": _problem("Hours outside the clinic, overlapping or off the step"),
+                    },
+                },
+            },
+            "/api/v1/admin/consultorios": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "listConsultorios",
+                    "summary": "List the active consultorios where a week of slots can be created",
+                    "security": _BEARER,
+                    "responses": {
+                        "200": _json_response("Active consultorios", "ConsultorioList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks horario.generar"),
+                    },
+                },
+            },
+            "/api/v1/admin/medicos/{medico_id}/horario-trabajo": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "getDoctorWorkHours",
+                    "summary": "Read the weekly hours a doctor declared, to plan their week",
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "medico_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "responses": {
+                        "200": _json_response("Declared work blocks", "WorkHoursList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks horario.generar"),
+                        "404": _problem("Doctor not found or inactive"),
+                    },
+                },
+            },
+            "/api/v1/admin/horarios/propuesta": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "proposeDoctorSlots",
+                    "summary": "Propose the one-hour slots of a week from a doctor's hours",
+                    "description": (
+                        "Writes nothing. The week starts on a Monday, is not over yet, is at most "
+                        "12 weeks ahead, and needs the doctor to have declared hours."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        _query(
+                            "medico_id",
+                            "Doctor",
+                            required=True,
+                            schema={"type": "string", "format": "uuid"},
+                        ),
+                        _query(
+                            "semana",
+                            "Monday that starts the week, YYYY-MM-DD",
+                            required=True,
+                            schema={"type": "string", "format": "date"},
+                        ),
+                    ],
+                    "responses": {
+                        "200": _json_response("Proposed slots", "ProposedSlotList"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks horario.generar"),
+                        "404": _problem("Doctor not found or inactive"),
+                        "409": _problem("The doctor has not declared work hours"),
+                        "422": _problem("Invalid range or dates"),
+                    },
+                },
+            },
+            "/api/v1/admin/horarios/generar": {
+                "post": {
+                    "tags": ["Scheduling"],
+                    "operationId": "generateDoctorSlots",
+                    "summary": "Create the one-hour slots of a week, in one consultorio",
+                    "description": (
+                        "Idempotent: a slot the doctor already has at the same start is counted as "
+                        "existing and is not created again."
+                    ),
+                    "security": _BEARER,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/GenerateSlotsRequest"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": _json_response(
+                            "Created and already existing slots", "GeneratedSlots"
+                        ),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks horario.generar"),
+                        "404": _problem("Doctor or consultorio not found"),
+                        "409": _problem("The doctor has not declared work hours"),
+                        "422": _problem("Invalid range or dates"),
+                    },
+                },
+            },
             "/api/v1/availability": {
                 "get": {
                     "tags": ["Scheduling"],
@@ -82,6 +222,13 @@ def scheduling_fragment() -> dict[str, Any]:
                             required=False,
                             schema={"type": "integer", "minimum": 1},
                         ),
+                        _query(
+                            "servicio_id",
+                            "Optional: only the slots of the service's window (samples in the "
+                            "morning, consultations in the afternoon)",
+                            required=False,
+                            schema={"type": "string", "format": "uuid"},
+                        ),
                     ],
                     "responses": {
                         "200": _json_response("Free slots", "AvailabilityResponse"),
@@ -95,15 +242,16 @@ def scheduling_fragment() -> dict[str, Any]:
                 "get": {
                     "tags": ["Scheduling"],
                     "operationId": "listAppointments",
-                    "summary": "List own appointments, doctor's agenda, or admin review listing",
+                    "summary": "List own appointments or the doctor's agenda",
                     "description": (
-                        "A patient sees own appointments; a doctor with a doctor profile sees "
-                        "appointments of his or her agenda; an actor with "
-                        "citas.revisar_cancelaciones sees appointments across agendas for "
-                        "cancellation review; any other caller gets 403. Ordered by slot start, "
-                        "then id. A doctor's rows also carry 'paciente' ({id, nombre}; id is the "
-                        "patient profile id used by lab orders); an admin's rows carry 'paciente' "
-                        "and 'medico' ({id, nombre}); a patient's own rows never do."
+                        "A patient sees own appointments; each row names its doctor in 'medico' "
+                        "({id, nombre, registro_profesional, telefono}) so the patient can contact "
+                        "them. A doctor with a doctor profile sees appointments of his or her "
+                        "agenda; each row names the patient in 'paciente' ({id, nombre}; id is the "
+                        "patient profile id used by lab orders). Any other caller gets 403, "
+                        "administrators included: cancellation review uses "
+                        "GET /api/v1/appointments/cancellation-approvals. Ordered by slot start, "
+                        "then id."
                     ),
                     "security": _BEARER,
                     "parameters": [
@@ -275,6 +423,121 @@ def scheduling_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/appointments/{appointment_id}/consultation/close": {
+                "post": {
+                    "tags": ["Scheduling"],
+                    "operationId": "closeConsultation",
+                    "summary": "Register the attention and close the consultation",
+                    "description": (
+                        "Requires consultas.abrir (MEDICO) and an appointment of the caller's own "
+                        "agenda in CONFIRMADA or COMPLETADA. observaciones (the diagnosis) is "
+                        "required; plan_tratamiento is optional (up to 1000 characters each; "
+                        "letters, digits and clinical punctuation only). Sets the consultation to "
+                        "CERRADA with fin_atencion and the appointment to COMPLETADA. "
+                        "Final: a repeat answers 409. Missing and foreign appointments answer 403."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "appointment_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "requestBody": {
+                        "required": False,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "observaciones": {
+                                            "type": ["string", "null"],
+                                            "maxLength": 1000,
+                                        },
+                                        "plan_tratamiento": {
+                                            "type": ["string", "null"],
+                                            "maxLength": 1000,
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": _json_response("Consultation closed", "Consultation"),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem(
+                            "Caller lacks consultas.abrir, or the appointment is missing or not "
+                            "of the caller's agenda"
+                        ),
+                        "409": _problem(
+                            "The appointment is not CONFIRMADA or COMPLETADA, or the consultation "
+                            "is already registered"
+                        ),
+                        "422": _problem("A note is too long or contains characters not allowed"),
+                    },
+                }
+            },
+            "/api/v1/appointments/cancellation-approvals": {
+                "get": {
+                    "tags": ["Scheduling"],
+                    "operationId": "listCancellationCandidates",
+                    "summary": "List appointments for cancellation review (administrator)",
+                    "description": (
+                        "Requires citas.revisar_cancelaciones. Each row carries the doctor's "
+                        "identity only: no patient and no doctor phone. Filter by the exact doctor "
+                        "registration number with medico_registro (blank means no filter). Every "
+                        "read and denial is audited."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "estado",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
+                        },
+                        {
+                            "name": "medico_registro",
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "maxLength": 80},
+                        },
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 200,
+                                "default": 50,
+                            },
+                        },
+                        {
+                            "name": "offset",
+                            "in": "query",
+                            "required": False,
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "default": 0,
+                            },
+                        },
+                    ],
+                    "responses": {
+                        "200": _json_response(
+                            "Appointments for cancellation review", "CancellationCandidateList"
+                        ),
+                        "401": _problem("Missing, malformed or inactive credentials"),
+                        "403": _problem("Caller lacks citas.revisar_cancelaciones"),
+                        "422": _problem("Invalid estado, medico_registro, limit or offset"),
+                    },
+                },
+            },
             "/api/v1/appointments/{appointment_id}/cancellation-approval": {
                 "post": {
                     "tags": ["Scheduling"],
@@ -325,6 +588,81 @@ def scheduling_fragment() -> dict[str, Any]:
         "components": {
             "schemas": {
                 "BookAppointmentRequest": BookAppointmentRequest.model_json_schema(),
+                "WorkHoursRequest": WorkHoursRequest.model_json_schema(),
+                "GenerateSlotsRequest": GenerateSlotsRequest.model_json_schema(),
+                "WorkHoursList": {
+                    "type": "object",
+                    "required": ["vigente_desde", "actual", "proximo"],
+                    "description": (
+                        "actual: hours in force this week. proximo: hours from next week on, "
+                        "the ones the doctor edits. Changes never reach the week in progress."
+                    ),
+                    "properties": {
+                        "vigente_desde": {"type": "string", "format": "date"},
+                        "actual": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/WorkBlock"},
+                        },
+                        "proximo": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/WorkBlock"},
+                        },
+                    },
+                },
+                "WorkBlock": {
+                    "type": "object",
+                    "required": ["dia_semana", "inicio", "fin"],
+                    "properties": {
+                        "dia_semana": {"type": "integer", "minimum": 0, "maximum": 6},
+                        "inicio": {"type": "string", "example": "08:00"},
+                        "fin": {"type": "string", "example": "10:00"},
+                    },
+                },
+                "ConsultorioList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "nombre", "sede"],
+                                "properties": {
+                                    "id": {"type": "string", "format": "uuid"},
+                                    "nombre": {"type": "string"},
+                                    "sede": {"type": "string"},
+                                },
+                            },
+                        }
+                    },
+                },
+                "ProposedSlotList": {
+                    "type": "object",
+                    "required": ["items", "total"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["inicio_utc", "fin_utc", "franja"],
+                                "properties": {
+                                    "inicio_utc": {"type": "string", "format": "date-time"},
+                                    "fin_utc": {"type": "string", "format": "date-time"},
+                                    "franja": {"type": "string", "enum": ["MANANA", "TARDE"]},
+                                },
+                            },
+                        },
+                        "total": {"type": "integer"},
+                    },
+                },
+                "GeneratedSlots": {
+                    "type": "object",
+                    "required": ["creados", "existentes"],
+                    "properties": {
+                        "creados": {"type": "integer"},
+                        "existentes": {"type": "integer"},
+                    },
+                },
                 "CancelAppointmentRequest": CancelAppointmentRequest.model_json_schema(),
                 "CancellationApproval": {
                     "type": "object",
@@ -360,11 +698,16 @@ def scheduling_fragment() -> dict[str, Any]:
                         },
                         "medico": {
                             "type": "object",
-                            "description": "Only on admin review listing rows (additive, optional)",
-                            "required": ["id", "nombre"],
+                            "description": (
+                                "The row's doctor, on a patient's own rows only (additive, "
+                                "optional). telefono is present when the doctor has one."
+                            ),
+                            "required": ["id", "nombre", "registro_profesional"],
                             "properties": {
                                 "id": {"type": "string", "format": "uuid"},
                                 "nombre": {"type": "string"},
+                                "registro_profesional": {"type": "string"},
+                                "telefono": {"type": "string"},
                             },
                         },
                         "tiene_aprobacion": {
@@ -384,6 +727,40 @@ def scheduling_fragment() -> dict[str, Any]:
                         "items": {
                             "type": "array",
                             "items": {"$ref": "#/components/schemas/AppointmentSummary"},
+                        }
+                    },
+                },
+                "CancellationCandidate": {
+                    "type": "object",
+                    "description": "Doctor identity only; no patient and no doctor phone.",
+                    "required": ["id", "estado", "inicio", "fin", "tiene_aprobacion", "medico"],
+                    "properties": {
+                        "id": {"type": "string", "format": "uuid"},
+                        "estado": {"type": "string", "enum": sorted(APPOINTMENT_STATES)},
+                        "inicio": {"type": "string", "format": "date-time"},
+                        "fin": {"type": "string", "format": "date-time"},
+                        "tiene_aprobacion": {
+                            "type": "boolean",
+                            "description": "True when cancellation approval is already registered",
+                        },
+                        "medico": {
+                            "type": "object",
+                            "required": ["id", "nombre", "registro_profesional"],
+                            "properties": {
+                                "id": {"type": "string", "format": "uuid"},
+                                "nombre": {"type": "string"},
+                                "registro_profesional": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+                "CancellationCandidateList": {
+                    "type": "object",
+                    "required": ["items"],
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/CancellationCandidate"},
                         }
                     },
                 },

@@ -28,6 +28,9 @@ from medicalbooking.modules.payments.application.payment_methods import (
     PaymentMethodService,
     SavedCard,
 )
+from medicalbooking.modules.payments.application.refund_reconciliation import (
+    RefundReconciliationService,
+)
 from medicalbooking.modules.payments.application.refund_service import (
     RefundRecord,
     RefundService,
@@ -40,6 +43,7 @@ from medicalbooking.modules.payments.domain.invoice_links import verify_invoice_
 from medicalbooking.modules.payments.domain.payment_methods import parse_page_limit
 from medicalbooking.modules.payments.infrastructure.invoice_store import SqlInvoiceStore
 from medicalbooking.modules.payments.infrastructure.refund_repositories import SqlRefundStore
+from medicalbooking.modules.payments.infrastructure.repositories import SqlPaymentsStore
 from medicalbooking.modules.payments.infrastructure.stripe_checkout import StripeCheckoutGateway
 from medicalbooking.shared.domain.errors import NotFound, ValidationFailed
 
@@ -122,6 +126,17 @@ def checkout_status(factura_id: str) -> tuple[Response, int]:
     return jsonify(_status_json(status)), 200
 
 
+@payments_bp.post("/invoices/<factura_id>/checkout-status/reconcile")
+@authenticated
+def reconcile_checkout_status(factura_id: str) -> tuple[Response, int]:
+    try:
+        factura = uuid.UUID(factura_id)
+    except ValueError as error:
+        raise NotFound("This invoice has no checkout attempt") from error
+    status = _billing().reconcile_checkout(g.actor, factura_id=str(factura))
+    return jsonify(_status_json(status)), 200
+
+
 @payments_bp.post("/payments/<pago_id>/refunds")
 @authenticated
 def request_refund(pago_id: str) -> tuple[Response, int]:
@@ -141,6 +156,16 @@ def request_refund(pago_id: str) -> tuple[Response, int]:
         idempotency_key=key,
     )
     return jsonify(_refund_json(outcome.record)), 200 if outcome.replayed else 201
+
+
+@payments_bp.get("/payments/<pago_id>/refund-status")
+@authenticated
+def refund_status(pago_id: str) -> tuple[Response, int]:
+    try:
+        pago = uuid.UUID(pago_id)
+    except ValueError as error:
+        raise NotFound("This payment does not exist") from error
+    return jsonify(estado=_refunds().status(g.actor, pago_id=str(pago))), 200
 
 
 @payments_bp.get("/payments/<pago_id>/factura.pdf")
@@ -228,6 +253,16 @@ def _payment_methods() -> PaymentMethodService:
     return current_app.extensions[PAYMENT_METHODS_EXTENSION]
 
 
+def refund_eligibility_for_patient(actor, cita_ids: list[str]) -> dict:
+    """Hook for the patient's listing: whether each appointment's payment can be refunded now."""
+    return _refunds().eligibility_for_patient(actor, cita_ids)
+
+
+def reconcile_patient_refunds(actor) -> None:
+    """Hook for the patient's listing: asks Stripe about the pending refunds of that patient."""
+    _refunds().reconcile_pending_for_user(actor)
+
+
 def _refunds() -> RefundService:
     """The refund service from the composition root. Built here on first use when the root has
     not registered it, with the same settings and store as the other payment services."""
@@ -235,10 +270,21 @@ def _refunds() -> RefundService:
     if service is None:
         settings = current_app.extensions["medicalbooking.settings"]
         key = settings.stripe_secret_key.get_secret_value() if settings.stripe_secret_key else None
+        engine = current_app.extensions["medicalbooking.engine"]
+        gateway = StripeCheckoutGateway(secret_key=key, return_url="")
+        clock = lambda: datetime.now(UTC)  # noqa: E731
+        reconciliation = RefundReconciliationService(
+            find_stale=lambda cutoff: [],
+            refunds=SqlRefundStore(engine),
+            payments=SqlPaymentsStore(engine, clock=clock),
+            gateway=gateway,
+            clock=clock,
+        )
         service = RefundService(
-            store=SqlRefundStore(current_app.extensions["medicalbooking.engine"]),
-            gateway=StripeCheckoutGateway(secret_key=key, return_url=""),
-            clock=lambda: datetime.now(UTC),
+            store=SqlRefundStore(engine),
+            gateway=gateway,
+            clock=clock,
+            checker=reconciliation.check_refund,
         )
         current_app.extensions[REFUNDS_EXTENSION] = service
     return service
@@ -310,9 +356,9 @@ def _checkout_json(result: CheckoutStart) -> dict[str, Any]:
     }
 
 
-def auto_refund_after_cancel(actor, cita_id: str) -> None:
+def auto_refund_after_cancel(actor, cita_id: str) -> dict | None:
     """Hook for a cancelled appointment: request its refund if the patient's own payment qualifies.
 
     Registered by the composition root. It never raises; see request_after_cancellation.
     """
-    _refunds().request_after_cancellation(actor, cita_id)
+    return _refunds().request_after_cancellation(actor, cita_id)

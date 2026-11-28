@@ -13,7 +13,7 @@ S7. Re-running the worker with no new rows changes nothing.
 ## Tasks
 T1. Watermark store + migration 0028 (sincronizacion_watermarks), unit tests. Status: done (commit e7069b4). Migration APPLIED on Medilo (alembic 0028_sincronizacion_watermarks = head).
 T2. Changed-row reader for citas, unit tests. Status: done (commit b43e4b3).
-T2b. Changed-row reader for usuarios (roles and patient profile in the payload). Status: PENDING.
+T2b. Changed-row reader for usuarios (roles and patient profile in the payload). Status: done on feat/replica-watermark-usuarios (reader, publisher, usuario.actualizado handled by the usuario.creado upsert, unit and live SQL Server tests).
 T3. Worker sync_external_writes + publisher + run_cycle, unit tests. Status: done (commit d8598a0). Full unit suite: 1031 passed, 1 skipped.
 T4. Docs: docs/replica-watermark-sync.md (merged). Status: done for the design; the scheduled deployment section is pending (see P1).
 T5. Apply migration 0028 on Medilo. Status: done (verified: table exists, 0 rows initially).
@@ -22,13 +22,13 @@ T5. Apply migration 0028 on Medilo. Status: done (verified: table exists, 0 rows
 - Full history: queued=6, watermark citas=2350 = max version; rerun queued=0.
 - Dispatcher with KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092: citas events 18 ENTREGADO on KAFKA, MONGODB and NOTIFICACIONES.
 - MongoDB collection citas: 6 documents, same as Medilo.
-- Supabase replica.citas: 6 rows before this run, matching Azure 6/6. The 18 SUPABASE deliveries stay PENDIENTE by design (Kafka consumer feeds Supabase); consumer run not verified in this session.
+- Supabase replica.citas: 6 rows before this run, matching Azure 6/6. The 18 SUPABASE deliveries stayed PENDIENTE because this run had no SUPABASE_WRITER_DATABASE_URL: the dispatcher writes to Supabase directly (SupabaseOutboxHandler) when that URL is set. This note previously said "by design, Kafka feeds Supabase"; that was wrong since Kafka was removed from the project. Configuring the writer URL in the scheduled run is still required.
 - Mongo fix: the Atlas role for replica_projection needed find/insert/remove/update on Medilo including collection `tombstones` (typo `tombstone` was corrected by the user).
 
 ## Pending (resume from here, in this order)
 P1. Scheduling (Windows Task Scheduler, every 15 min): sync_external_writes and outbox_dispatcher. NEEDS USER DECISION: schedule from feature/replica-watermark-sync (requires the worktree kept) or after merging the PR to develop. The scheduled run needs the .env loaded (wrapper script) and KAFKA_BOOTSTRAP_SERVERS.
 P2. Phase 2 (S4): detect hard deletes. Compare cita/usuario ids in Supabase and Mongo against Azure, queue deletes through the outbox (cita.eliminada / usuario.eliminado), bounded per cycle. Start with citas.
-P3. T2b usuarios: reader with roles and paciente payload, same run_cycle pattern as citas.
+P3. T2b usuarios: done (see T2b). Limit: a role change without a change to the user row is not detected, because usuarios.version_fila moves only with the user row.
 P4. Consumer check: verify replica.citas after a Kafka consumer run (optional, small).
 P5. Integration tests for T1, T2 and T3 against a test DB (not the production .env).
 P6. Open PRs for the branches (user decides merge; ordinary repository policy).
@@ -39,3 +39,4 @@ L2. Decision: rowversion watermark (usuarios.version_fila, citas.version_fila), 
 L3. Incident: scripts ran against local DB MedicalBooking when the env was not loaded; the watermark and outbox rows from that run exist in the LOCAL database only (4 cita events pending on KAFKA/MONGODB locally). Do not run the dispatcher with production replica settings against the local DB.
 L4. Incident: Mongo ping passed while auth-requiring operations failed (ping needs no auth). Real checks use find on a collection.
 L5. Other branches in flight: feature/replica-reconciliation (PR #44 draft), fix/seed-odbc-database (PR #45), feature/replica-watermark-sync (no PR yet).
+L6 (decision, user: write directly from the dispatcher, no Kafka): the outbox dispatcher writes to Supabase through SupabaseOutboxHandler when SUPABASE_WRITER_DATABASE_URL is set. T2b done: users changed since the watermark become usuario.actualizado events, which the replica applies with the usuario.creado upsert. Limit: role-only changes are not detected (usuarios.version_fila does not move).

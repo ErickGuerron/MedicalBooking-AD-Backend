@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     # Read-write role that writes the projection collections (outbox destination MONGODB).
     # Unset: the MONGODB deliveries stay PENDIENTE.
     mongodb_projection_uri: SecretStr | None = None
+    # Role with readWrite on the GridFS collections (fs.files, fs.chunks) for lab PDFs.
+    # Unset: GridFS falls back to the projection role, which must then hold those privileges.
+    mongodb_documents_uri: SecretStr | None = None
     mail_from: str | None = None
     mail_from_name: str = Field(default="MedicalBooking", min_length=1, max_length=70)
     # Absolute public URL of the email images (for example a public Supabase Storage folder).
@@ -114,10 +117,12 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _check_mongo_documents(self) -> Settings:
         if self.document_storage == "mongo" and (
-            self.mongodb_projection_uri is None or not self.mongodb_database
+            (self.mongodb_documents_uri is None and self.mongodb_projection_uri is None)
+            or not self.mongodb_database
         ):
             raise ValueError(
-                "DOCUMENT_STORAGE=mongo needs MONGODB_PROJECTION_URI and MONGODB_DATABASE"
+                "DOCUMENT_STORAGE=mongo needs MONGODB_DOCUMENTS_URI (or MONGODB_PROJECTION_URI) "
+                "and MONGODB_DATABASE"
             )
         return self
 

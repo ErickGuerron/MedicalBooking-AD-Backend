@@ -257,13 +257,164 @@ class SqlUserDirectory:
         self._create(new_user, verification=(token_hash, valid_hours))
 
     def consume_verification(self, token_hash: str) -> bool:
-        """Activate the account behind a valid token, marking the token used atomically."""
+        """Activate the account behind a valid token, marking the token used atomically.
+
+        A token used in the last ten minutes still answers success for a patient account,
+        so a repeated
+        request (a reloaded page, a mail client that opens the link first) does not show a failure.
+        Only the first use changes the account and emits the event.
+        """
+        grace_minutes = -10
         with self._engine.begin() as conn:
             row = conn.execute(
                 text(
-                    "SELECT id, usuario_id FROM verificaciones_correo WITH (UPDLOCK, ROWLOCK) "
-                    "WHERE token_hash = :hash AND usado_en IS NULL "
-                    "AND expira_en > SYSUTCDATETIME()"
+                    "SELECT id, usuario_id, usado_en FROM verificaciones_correo "
+                    "WITH (UPDLOCK, ROWLOCK) "
+                    "WHERE token_hash = :hash AND expira_en > SYSUTCDATETIME() "
+                    "AND (usado_en IS NULL OR usado_en >= DATEADD(MINUTE, :grace, "
+                    "SYSUTCDATETIME())) "
+                    "AND EXISTS (SELECT 1 FROM usuarios_roles ur JOIN roles r ON r.id = ur.rol_id "
+                    "WHERE ur.usuario_id = verificaciones_correo.usuario_id "
+                    "AND r.nombre = 'PACIENTE')"
+                ),
+                {"hash": token_hash, "grace": grace_minutes},
+            ).first()
+            if row is None:
+                return False
+            if row.usado_en is not None:
+                return True
+            conn.execute(
+                text("UPDATE verificaciones_correo SET usado_en = SYSUTCDATETIME() WHERE id = :id"),
+                {"id": row.id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE usuarios SET estado = 'ACTIVO', actualizado_en = SYSUTCDATETIME() "
+                    "WHERE id = :u"
+                ),
+                {"u": row.usuario_id},
+            )
+            append_outbox(
+                conn,
+                "usuario",
+                str(row.usuario_id),
+                "usuario.activado",
+                {"usuario": {"id": str(row.usuario_id), "estado": "ACTIVO"}},
+                datetime.now(UTC).replace(tzinfo=None),
+            )
+            return True
+
+    def verification_state(self, token_hash: str) -> str:
+        """Why a link cannot be used now: INVALID (unknown), USED, EXPIRED, or VALID."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT usado_en, CASE WHEN expira_en > SYSUTCDATETIME() THEN 1 ELSE 0 END "
+                    "AS vigente "
+                    "FROM verificaciones_correo WHERE token_hash = :hash"
+                ),
+                {"hash": token_hash},
+            ).first()
+        if row is None:
+            return "INVALID"
+        if row.usado_en is not None:
+            return "USED"
+        if not row.vigente:
+            return "EXPIRED"
+        return "VALID"
+
+    def create_password_reset(self, user_id: str, token_hash: str, valid_minutes: int) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE restablecimientos_contrasena SET usado_en = SYSUTCDATETIME() "
+                    "WHERE usuario_id = :u AND usado_en IS NULL"
+                ),
+                {"u": user_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO restablecimientos_contrasena (id, usuario_id, "
+                    "token_hash, creado_en, expira_en) "
+                    "VALUES (NEWID(), :u, :hash, SYSUTCDATETIME(), DATEADD(MINUTE, :minutes, "
+                    "SYSUTCDATETIME()))"
+                ),
+                {"u": user_id, "hash": token_hash, "minutes": valid_minutes},
+            )
+
+    def password_reset_state(self, token_hash: str) -> str:
+        """Why a reset link cannot be used now: INVALID (unknown), USED, EXPIRED, or VALID."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT usado_en, CASE WHEN expira_en > SYSUTCDATETIME() THEN 1 ELSE 0 END "
+                    "AS vigente "
+                    "FROM restablecimientos_contrasena WHERE token_hash = :hash"
+                ),
+                {"hash": token_hash},
+            ).first()
+        if row is None:
+            return "INVALID"
+        if row.usado_en is not None:
+            return "USED"
+        if not row.vigente:
+            return "EXPIRED"
+        return "VALID"
+
+    def consume_password_reset(self, token_hash: str, password_hash: str) -> bool:
+        """Set the new password behind a valid link, once. Only active accounts can reset."""
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT r.id, r.usuario_id FROM restablecimientos_contrasena r "
+                    "WITH (UPDLOCK, ROWLOCK) "
+                    "JOIN usuarios u ON u.id = r.usuario_id "
+                    "WHERE r.token_hash = :hash AND r.usado_en IS NULL "
+                    "AND r.expira_en > SYSUTCDATETIME() AND u.estado = 'ACTIVO'"
+                ),
+                {"hash": token_hash},
+            ).first()
+            if row is None:
+                return False
+            conn.execute(
+                text(
+                    "UPDATE restablecimientos_contrasena SET usado_en = SYSUTCDATETIME() "
+                    "WHERE id = :id"
+                ),
+                {"id": row.id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE credenciales_usuario SET password_hash = :hash, intentos_fallidos = 0, "
+                    "actualizado_en = SYSUTCDATETIME() WHERE usuario_id = :u"
+                ),
+                {"hash": password_hash, "u": row.usuario_id},
+            )
+            conn.execute(
+                text("UPDATE usuarios SET bloqueado_hasta = NULL WHERE id = :u"),
+                {"u": row.usuario_id},
+            )
+            return True
+
+    def create_pending_staff(self, new_user: NewUser, token_hash: str, valid_hours: int) -> None:
+        self._create(new_user, verification=(token_hash, valid_hours))
+
+    def activate_staff(self, token_hash: str, password_hash: str) -> bool:
+        """Set the password of an inactive staff account and activate it, behind a valid token.
+
+        Patient tokens never qualify: patients activate through consume_verification only.
+        """
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT v.id, v.usuario_id FROM verificaciones_correo v "
+                    "WITH (UPDLOCK, ROWLOCK) "
+                    "JOIN usuarios u ON u.id = v.usuario_id "
+                    "WHERE v.token_hash = :hash AND v.usado_en IS NULL "
+                    "AND v.expira_en > SYSUTCDATETIME() AND u.estado = 'INACTIVO' "
+                    "AND NOT EXISTS (SELECT 1 FROM usuarios_roles ur JOIN roles r ON r.id = "
+                    "ur.rol_id "
+                    "WHERE ur.usuario_id = v.usuario_id AND r.nombre = 'PACIENTE')"
                 ),
                 {"hash": token_hash},
             ).first()
@@ -272,6 +423,13 @@ class SqlUserDirectory:
             conn.execute(
                 text("UPDATE verificaciones_correo SET usado_en = SYSUTCDATETIME() WHERE id = :id"),
                 {"id": row.id},
+            )
+            conn.execute(
+                text(
+                    "UPDATE credenciales_usuario SET password_hash = :hash, "
+                    "actualizado_en = SYSUTCDATETIME() WHERE usuario_id = :u"
+                ),
+                {"hash": password_hash, "u": row.usuario_id},
             )
             conn.execute(
                 text(

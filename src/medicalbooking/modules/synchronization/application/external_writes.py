@@ -11,26 +11,31 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from medicalbooking.modules.synchronization.infrastructure.changed_citas import CitaChange
+
+class Versioned(Protocol):
+    """A changed row: the watermark version it carries (citas and usuarios both comply)."""
+
+    @property
+    def version(self) -> int: ...
 
 
-class ChangeReader(Protocol):
-    def changes_since(self, watermark: int, limit: int) -> list[CitaChange]: ...
+class ChangeReader[ChangeT: Versioned](Protocol):
+    def changes_since(self, watermark: int, limit: int) -> list[ChangeT]: ...
 
 
 class WatermarkReader(Protocol):
     def get(self, table: str) -> int: ...
 
 
-class BatchPublisher(Protocol):
-    def publish(self, table: str, changes: Sequence[CitaChange], watermark: int) -> None:
+class BatchPublisher[ChangeT: Versioned](Protocol):
+    def publish(self, table: str, changes: Sequence[ChangeT], watermark: int) -> None:
         """Queue the batch and raise the watermark to ``watermark``, in one transaction."""
 
 
-def run_cycle(
-    reader: ChangeReader,
+def run_cycle[ChangeT: Versioned](
+    reader: ChangeReader[ChangeT],
     watermarks: WatermarkReader,
-    publisher: BatchPublisher,
+    publisher: BatchPublisher[ChangeT],
     *,
     table: str,
     batch_size: int,

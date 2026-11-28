@@ -92,7 +92,23 @@ class LabResult:
     # Validated reference applied to the value and its classification; absent when not evaluated.
     referencia_min: float | None = None
     referencia_max: float | None = None
+    # Effective classification: the laboratory's final reading when it reviewed the result,
+    # otherwise the system's. Never a diagnosis.
     interpretacion: str | None = None
+    # The system's classification, kept as registered. Equals `interpretacion` unless corrected.
+    interpretacion_sistema: str | None = None
+    revisado: bool = False
+    corregido: bool = False
+    motivo_correccion: str | None = None
+
+
+@dataclass(frozen=True)
+class ResultReview:
+    """The laboratory's reading of one result: confirm the system's or set another with a reason."""
+
+    resultado_id: str
+    interpretacion_final: str
+    motivo: str | None = None
 
 
 @dataclass(frozen=True)
@@ -191,6 +207,10 @@ class LabStore(Protocol):
         """True when the analyte is a part of this test (conocimiento_pruebas_analitos)."""
         ...
 
+    def detail_has_analyte_results(self, detalle_id: str) -> bool:
+        """True when this test already holds results entered per analyte (analito_id set)."""
+        ...
+
     def patient_profile(self, paciente_id: str) -> tuple[str | None, date | None]:
         """Return (sexo_registrado, fecha_nacimiento); None means unknown."""
         ...
@@ -261,6 +281,10 @@ class LabStore(Protocol):
         ...
 
     def list_results(self, order_id: str) -> list[LabResult]: ...
+
+    def review_results(
+        self, order_id: str, reviews: list[ResultReview], now: datetime, actor_user_id: str
+    ) -> str: ...
 
     def report_parties(self, order_id: str) -> ReportParties | None: ...
 

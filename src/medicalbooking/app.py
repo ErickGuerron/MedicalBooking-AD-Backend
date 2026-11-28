@@ -7,6 +7,7 @@ Concurrency is enforced by the database.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,9 +23,14 @@ from medicalbooking.modules.clinical.application.clinical_profile import Patient
 from medicalbooking.modules.clinical.application.knowledge import KnowledgeService
 from medicalbooking.modules.clinical.application.proposals import ProposalService
 from medicalbooking.modules.clinical.application.shadow_findings import ShadowFindingsService
+from medicalbooking.modules.clinical.infrastructure.knowledge_snapshot import digest_provider
 from medicalbooking.modules.clinical.infrastructure.repositories import SqlClinicalStore
 from medicalbooking.modules.clinical.presentation.openapi import clinical_fragment
 from medicalbooking.modules.clinical.presentation.routes import clinical_bp
+from medicalbooking.modules.history.application.history_service import HistoryService
+from medicalbooking.modules.history.infrastructure.repositories import SqlHistoryStore
+from medicalbooking.modules.history.presentation.openapi import history_fragment
+from medicalbooking.modules.history.presentation.routes import history_bp
 from medicalbooking.modules.identity.application.use_cases import IdentityService
 from medicalbooking.modules.identity.infrastructure.email import BrevoActivationMailer
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
@@ -57,14 +63,23 @@ from medicalbooking.modules.payments.presentation.openapi import payments_fragme
 from medicalbooking.modules.payments.presentation.routes import (
     auto_refund_after_cancel,
     payments_bp,
+    reconcile_patient_refunds,
+    refund_eligibility_for_patient,
 )
 from medicalbooking.modules.replica.infrastructure.factory import (
     ReplicaConfigError,
     build_fallback_read_service,
 )
 from medicalbooking.modules.replica.presentation.routes import replica_bp
+from medicalbooking.modules.reporting.application.use_cases import ReportingService
+from medicalbooking.modules.reporting.infrastructure.repositories import SqlReportingStore
+from medicalbooking.modules.reporting.presentation.openapi import reporting_fragment
+from medicalbooking.modules.reporting.presentation.routes import reporting_bp
+from medicalbooking.modules.scheduling.application.office_admin import OfficeAdminService
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
+from medicalbooking.modules.scheduling.application.work_hours import WorkHoursService
 from medicalbooking.modules.scheduling.infrastructure.repositories import SqlSchedulingStore
+from medicalbooking.modules.scheduling.presentation.office_openapi import office_admin_fragment
 from medicalbooking.modules.scheduling.presentation.openapi import scheduling_fragment
 from medicalbooking.modules.scheduling.presentation.routes import scheduling_bp
 from medicalbooking.modules.treatments.application.use_cases import TreatmentService
@@ -84,7 +99,15 @@ from medicalbooking.shared.presentation.health import health_bp
 _CORRELATION_HEADER = "X-Correlation-ID"
 
 
-def create_app(settings: Settings | None = None) -> Flask:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    knowledge_digest: Callable[[], str] | None = None,
+) -> Flask:
+    """``knowledge_digest`` reports the digest of the clinical knowledge the database holds.
+
+    By default it is read from the database. Tests may pass another provider.
+    """
     settings = settings or Settings()
     app = Flask("medicalbooking")
     app.extensions["medicalbooking.settings"] = settings
@@ -94,9 +117,23 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["medicalbooking.engine"] = engine
     app.extensions["medicalbooking.identity"] = _build_identity(settings, engine)
     app.extensions["medicalbooking.scheduling"] = _build_scheduling(settings, engine)
+    app.extensions["medicalbooking.work_hours"] = WorkHoursService(
+        store=SqlSchedulingStore(engine), clock=lambda: datetime.now(UTC)
+    )
+    app.extensions["medicalbooking.offices"] = OfficeAdminService(
+        store=SqlSchedulingStore(engine), clock=lambda: datetime.now(UTC)
+    )
     app.extensions["medicalbooking.catalog"] = CatalogService(SqlCatalogStore(engine))
     app.extensions["medicalbooking.laboratory"] = _build_laboratory(settings, engine)
     app.extensions["medicalbooking.treatments"] = _build_treatments(engine)
+    app.extensions["medicalbooking.history"] = HistoryService(
+        store=SqlHistoryStore(engine),
+        clock=lambda: datetime.now(UTC),
+        correlation_id=lambda: g.get("correlation_id"),
+    )
+    app.extensions["medicalbooking.reporting"] = ReportingService(
+        SqlReportingStore(engine), clock=_utc_now
+    )
     app.extensions["medicalbooking.laboratory_status"] = LaboratoryStatusService(
         orders=app.extensions["medicalbooking.laboratory"], clock=_utc_now
     )
@@ -105,7 +142,9 @@ def create_app(settings: Settings | None = None) -> Flask:
         settings.jwt_signing_key.get_secret_value() if settings.jwt_signing_key else None,
         settings.jwt_access_ttl_minutes,
     )
-    knowledge, proposals, shadow, patient_profile = _build_clinical(engine)
+    knowledge, proposals, shadow, patient_profile = _build_clinical(
+        engine, knowledge_digest or digest_provider(engine)
+    )
     app.extensions["medicalbooking.knowledge"] = knowledge
     app.extensions["medicalbooking.proposals"] = proposals
     app.extensions["medicalbooking.shadow"] = shadow
@@ -125,21 +164,28 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(catalog_bp)
     app.register_blueprint(lab_bp)
     app.register_blueprint(treatments_bp)
+    app.register_blueprint(history_bp)
     app.register_blueprint(soap_bp)
     app.register_blueprint(clinical_bp)
     app.extensions["medicalbooking.after_appointment_cancelled"] = auto_refund_after_cancel
+    app.extensions["medicalbooking.before_patient_listing"] = reconcile_patient_refunds
+    app.extensions["medicalbooking.refund_eligibility_for_patient"] = refund_eligibility_for_patient
     app.register_blueprint(replica_bp)
+    app.register_blueprint(reporting_bp)
     if settings.docs_enabled:
         register_api_docs(
             app,
             [
                 identity_fragment(),
                 scheduling_fragment(),
+                office_admin_fragment(),
+                history_fragment(),
                 catalog_fragment(),
                 laboratory_fragment(),
                 treatments_fragment(),
                 clinical_fragment(),
                 payments_fragment(),
+                reporting_fragment(),
             ],
         )
     _register_error_handlers(app)
@@ -158,6 +204,8 @@ def _build_identity(settings: Settings, engine: Any) -> IdentityService:
         mailer=_build_mailer(settings),
         public_base_url=settings.app_public_url,
         verification_hours=settings.email_verification_hours,
+        staff_activation_url=settings.angular_front_url,
+        patient_verification_url=settings.flutter_front_url,
     )
 
 
@@ -250,6 +298,7 @@ def _build_stripe_gateway(settings: Settings) -> StripeCheckoutGateway:
 
 def _build_clinical(
     engine: Any,
+    knowledge_digest: Callable[[], str],
 ) -> tuple[KnowledgeService, ProposalService, ShadowFindingsService, PatientProfileService]:
     """Composition root for clinical knowledge (E5), shadow findings (S13) and the patient profile
     (S12): one shared store."""
@@ -257,7 +306,7 @@ def _build_clinical(
     return (
         KnowledgeService(store=store, clock=_utc_now),
         ProposalService(store=store, clock=_utc_now),
-        ShadowFindingsService(store=store, clock=_utc_now),
+        ShadowFindingsService(store=store, clock=_utc_now, knowledge_digest=knowledge_digest),
         PatientProfileService(store=store, clock=_utc_now),
     )
 

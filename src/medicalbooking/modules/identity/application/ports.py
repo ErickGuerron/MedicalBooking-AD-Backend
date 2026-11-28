@@ -69,6 +69,24 @@ class ActivationMailer(Protocol):
         """Send the account activation link. Raises MailDeliveryError on failure."""
         ...
 
+    def send_password_reset(self, to_email: str, first_name: str, link: str) -> None:
+        """Send the password reset link. Raises MailDeliveryError on failure."""
+        ...
+
+    def send_staff_activation(
+        self,
+        to_email: str,
+        first_name: str,
+        link: str,
+        *,
+        role_label: str,
+        expiry_hours: int,
+        intro_list: str,
+        benefits: tuple[tuple[str, str], tuple[str, str], tuple[str, str]],
+    ) -> None:
+        """Send the staff activation link. Raises MailDeliveryError on failure."""
+        ...
+
 
 class UserDirectory(Protocol):
     def document_taken(self, document_type: str, document_number: str) -> bool: ...
@@ -83,6 +101,25 @@ class UserDirectory(Protocol):
     def consume_verification(self, token_hash: str) -> bool:
         """Activate the account behind a valid, unused, unexpired token. Single use."""
         ...
+
+    def create_pending_staff(
+        self, new_user: NewUser, token_hash: str, valid_hours: int
+    ) -> None: ...
+
+    def verification_state(self, token_hash: str) -> str:
+        """VALID, USED, EXPIRED or INVALID: why a link cannot be used now.
+        Carries no account data."""
+        ...
+
+    def create_password_reset(self, user_id: str, token_hash: str, valid_minutes: int) -> None:
+        """Store a new single-use reset link and retire the account's unused ones."""
+        ...
+
+    def password_reset_state(self, token_hash: str) -> str: ...
+
+    def consume_password_reset(self, token_hash: str, password_hash: str) -> bool: ...
+
+    def activate_staff(self, token_hash: str, password_hash: str) -> bool: ...
 
     def find_credentials_by_email(self, email: str) -> CredentialRecord | None: ...
 

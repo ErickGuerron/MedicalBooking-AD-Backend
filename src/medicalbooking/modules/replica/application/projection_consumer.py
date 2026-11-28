@@ -73,6 +73,12 @@ def _resultado_registrado(envelope: dict[str, Any], tx: Any) -> None:
     tx.upsert_results(detalle["id"], payload.get("resultados", []))
 
 
+def _resultado_revisado(envelope: dict[str, Any], tx: Any) -> None:
+    # The laboratory's final reading of a result replaces the system's in the replica.
+    payload = envelope["payload"]
+    tx.update_result_reading(payload["resultado_id"], payload["interpretacion_final"])
+
+
 def _propuesta_revisada(envelope: dict[str, Any], tx: Any) -> None:
     payload = envelope["payload"]
     propuesta = payload["propuesta"]
@@ -190,12 +196,22 @@ def _seguimiento_registrado(envelope: dict[str, Any], tx: Any) -> None:
     tx.upsert_seguimiento(_pick(envelope["payload"]["seguimiento"], _SEGUIMIENTO_FIELDS))
 
 
+def _horario_declarado(envelope: dict[str, Any], tx: Any) -> None:
+    """The whole declared week: the sink keeps the stored row only over an older version."""
+    payload = envelope["payload"]
+    tx.upsert_horario_version(payload["horario"], payload["bloques"], envelope["aggregate_version"])
+
+
 _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
+    "horario_trabajo.declarado": _horario_declarado,
     "usuario.creado": _usuario_creado,
+    # Watermark sync of changed users: the same upsert as creation, so replaying it is harmless.
+    "usuario.actualizado": _usuario_creado,
     "usuario.activado": _usuario_activado,
     "usuario.eliminado": _usuario_eliminado,
     "orden_laboratorio.creada": _orden_creada,
     "resultado_laboratorio.registrado": _resultado_registrado,
+    "resultado_laboratorio.revisado": _resultado_revisado,
     "propuesta.revisada": _propuesta_revisada,
     "factura.creada": _factura_creada,
     "pago.actualizado": _pago_actualizado,

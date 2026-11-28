@@ -4,11 +4,12 @@ from decimal import Decimal
 import pytest
 
 from medicalbooking.modules.payments.domain.refunds import (
-    MAX_REQUESTS_PER_WINDOW,
+    REFUND_NOTICE_HOURS,
     REFUND_WINDOW_DAYS,
     RefundCase,
     RefundRefused,
     check_refund_eligibility,
+    refund_block_code,
 )
 
 NOW = datetime(2026, 11, 12, 18, 0, tzinfo=UTC)
@@ -24,7 +25,6 @@ def _case(**overrides) -> RefundCase:
         "cita_inicio": NOW + timedelta(days=3),
         "consulta_atendida": False,
         "reembolsos_activos": (),
-        "solicitudes_recientes": 0,
         "motivo_codigo": "CANCELACION_PACIENTE",
         "monto_solicitado": Decimal("25.00"),
     }
@@ -78,12 +78,6 @@ def test_a_request_after_the_window_is_refused():
     assert raised.value.code == "FUERA_DE_VENTANA"
 
 
-def test_the_request_rate_limit_is_enforced():
-    with pytest.raises(RefundRefused) as raised:
-        check_refund_eligibility(_case(solicitudes_recientes=MAX_REQUESTS_PER_WINDOW), now=NOW)
-    assert raised.value.code == "DEMASIADAS_SOLICITUDES"
-
-
 def test_the_reason_must_be_from_the_closed_catalog():
     with pytest.raises(RefundRefused) as raised:
         check_refund_eligibility(_case(motivo_codigo="porque_quiero"), now=NOW)
@@ -96,3 +90,28 @@ def test_a_cancellation_after_the_appointment_started_is_not_refundable():
             _case(cancelada_en=NOW, cita_inicio=NOW - timedelta(minutes=5)), now=NOW
         )
     assert raised.value.code == "CANCELACION_TARDIA"
+
+
+def test_a_cancellation_with_less_than_the_notice_window_is_not_refundable():
+    with pytest.raises(RefundRefused) as raised:
+        check_refund_eligibility(
+            _case(cancelada_en=NOW, cita_inicio=NOW + timedelta(hours=REFUND_NOTICE_HOURS - 1)),
+            now=NOW,
+        )
+    assert raised.value.code == "CANCELACION_TARDIA"
+
+
+def test_a_cancellation_at_exactly_the_notice_window_is_refundable():
+    check_refund_eligibility(
+        _case(cancelada_en=NOW, cita_inicio=NOW + timedelta(hours=REFUND_NOTICE_HOURS)),
+        now=NOW,
+    )
+
+
+def test_block_code_is_none_when_the_refund_is_eligible():
+    assert refund_block_code(_case(), now=NOW) is None
+
+
+def test_block_code_names_the_first_rule_that_blocks_the_refund():
+    case = _case(cancelada_en=NOW, cita_inicio=NOW + timedelta(hours=REFUND_NOTICE_HOURS - 1))
+    assert refund_block_code(case, now=NOW) == "CANCELACION_TARDIA"

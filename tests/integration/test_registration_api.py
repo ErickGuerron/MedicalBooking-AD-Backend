@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from flask import Flask
@@ -92,8 +93,10 @@ def _register(client, email: str, password: str = PASSWORD):
 
 
 def _activation_path(mailer: RecordingMailer, email: str) -> str:
-    link = mailer.links[email]
-    return link.replace("http://testserver", "")
+    # The email opens the Flutter portal (#/verificar?token=...), which then calls the API.
+    fragment_query = urlsplit(mailer.links[email]).fragment.partition("?")[2]
+    token = parse_qs(fragment_query)["token"][0]
+    return f"/api/v1/auth/verify-email?token={token}"
 
 
 def test_registration_is_accepted_with_a_generic_message(client, mailer) -> None:
@@ -243,7 +246,9 @@ def test_a_link_works_only_once(client, mailer) -> None:
     second = client.get(path)
 
     assert first.status_code == 200
-    assert second.status_code == 422
+    # A patient token used in the last ten minutes still answers success (reloads and double
+    # clicks); the grace period is intentional. Past it, the link is refused.
+    assert second.status_code == 200
 
 
 def test_a_forged_token_is_refused_generically(client) -> None:

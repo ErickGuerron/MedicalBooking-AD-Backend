@@ -22,6 +22,25 @@ EXPECTED_PATHS = {
     "/api/v1/me/password",
     "/api/v1/users",
     "/api/v1/availability",
+    "/api/v1/me/horario-trabajo",
+    "/api/v1/admin/medicos/{medico_id}/horario-trabajo",
+    "/api/v1/admin/consultorios",
+    "/api/v1/admin/consultorios/{consultorio_id}",
+    "/api/v1/admin/sedes",
+    "/api/v1/patients/{paciente_id}/historia",
+    "/api/v1/patients/{paciente_id}/historia/{path_kind}",
+    "/api/v1/patients/{paciente_id}/historia/{path_kind}/{entry_id}/verificar",
+    "/api/v1/patients/{paciente_id}/historia/{path_kind}/{entry_id}/estado",
+    "/api/v1/citas/{cita_id}/signos-vitales",
+    "/api/v1/signos-vitales/{vitals_id}/correccion",
+    "/api/v1/patients/{paciente_id}/historia/eventos",
+    "/api/v1/me/historia",
+    "/api/v1/me/historia/eventos",
+    "/api/v1/catalogos/{catalog_path}",
+    "/api/v1/admin/sedes/{sede_id}",
+    "/api/v1/admin/sedes/{sede_id}/consultorios",
+    "/api/v1/admin/horarios/propuesta",
+    "/api/v1/admin/horarios/generar",
     "/api/v1/specialties",
     "/api/v1/specialties/{especialidad_id}",
     "/api/v1/doctors",
@@ -29,8 +48,10 @@ EXPECTED_PATHS = {
     "/api/v1/services",
     "/api/v1/services/{servicio_id}",
     "/api/v1/appointments",
+    "/api/v1/appointments/cancellation-approvals",
     "/api/v1/appointments/{appointment_id}/cancel",
     "/api/v1/appointments/{appointment_id}/consultation",
+    "/api/v1/appointments/{appointment_id}/consultation/close",
     "/api/v1/appointments/{appointment_id}/cancellation-approval",
     "/api/v1/me/payment-methods",
     "/api/v1/me/payment-methods/setup-intents",
@@ -40,6 +61,7 @@ EXPECTED_PATHS = {
     "/api/v1/lab/orders/{order_id}/results",
     "/api/v1/lab/orders/{order_id}/report.pdf",
     "/api/v1/lab/orders/{order_id}/review",
+    "/api/v1/lab/orders/{order_id}/results/review",
     "/api/v1/lab/orders/{order_id}/documents",
     "/api/v1/documents/{document_id}/download",
     "/api/v1/patients",
@@ -48,6 +70,8 @@ EXPECTED_PATHS = {
     "/api/v1/lab/orders/{order_id}/confirm",
     "/api/v1/lab/test-types/{test_id}/analytes",
     "/api/v1/lab/worklist",
+    "/api/v1/admin/reportes/resumen",
+    "/api/v1/admin/monitoreo/estado",
     "/api/v1/knowledge/analytes",
     "/api/v1/knowledge/analytes/{analyte_id}/references",
     "/api/v1/knowledge/references",
@@ -66,6 +90,7 @@ EXPECTED_PATHS = {
     "/api/v1/invoices",
     "/api/v1/payments/checkout",
     "/api/v1/invoices/{factura_id}/checkout-status",
+    "/api/v1/invoices/{factura_id}/checkout-status/reconcile",
     "/api/v1/citas/{cita_id}/tratamientos",
     "/api/v1/tratamientos/{tratamiento_id}",
     "/api/v1/tratamientos/{tratamiento_id}/seguimientos",
@@ -111,7 +136,8 @@ def test_user_creation_schema_is_generated_from_the_validating_model(spec) -> No
 
     assert schema == CreateUserRequest.model_json_schema()
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["password"]["minLength"] == 12
+    # Staff accounts are created inactive and activated by an emailed link: no password here.
+    assert "password" not in schema["properties"]
 
 
 def test_protected_operations_require_bearer_and_login_does_not(spec) -> None:
@@ -151,6 +177,11 @@ def test_protected_operations_require_bearer_and_login_does_not(spec) -> None:
             "/api/v1/appointments/{appointment_id}/consultation",
             "post",
             {"200", "201", "401", "403", "409"},
+        ),
+        (
+            "/api/v1/appointments/{appointment_id}/consultation/close",
+            "post",
+            {"200", "401", "403", "409", "422"},
         ),
         ("/api/v1/specialties", "get", {"200", "401"}),
         ("/api/v1/specialties", "post", {"201", "401", "403", "409", "422"}),
@@ -302,3 +333,22 @@ def test_scalar_reference_page_loads_the_document(client) -> None:
     assert response.mimetype == "text/html"
     assert "Scalar.createApiReference" in body
     assert "/api/v1/openapi.json" in body
+
+
+def test_result_review_is_documented_with_its_strict_request_schema(spec) -> None:
+    operation = spec["paths"]["/api/v1/lab/orders/{order_id}/results/review"]["post"]
+    schemas = spec["components"]["schemas"]
+
+    assert operation["operationId"] == "reviewLabResults"
+    assert {"200", "401", "403", "404", "422"} <= set(operation["responses"])
+    assert schemas["ReviewResultsRequest"]["required"] == ["revisiones"]
+    assert schemas["ReviewResultsRequest"]["additionalProperties"] is False
+    assert schemas["ResultReviewItem"]["additionalProperties"] is False
+
+
+def test_lab_result_documents_the_review_fields(spec) -> None:
+    properties = spec["components"]["schemas"]["LabResult"]["properties"]
+
+    assert {"interpretacion_sistema", "revisado", "corregido", "motivo_correccion"} <= set(
+        properties
+    )

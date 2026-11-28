@@ -29,9 +29,18 @@ from medicalbooking.modules.laboratory.application.ports import (
     PatientSummary,
     ReportParties,
     ResultEntry,
+    ResultReview,
     StoredDocument,
 )
 from medicalbooking.shared.infrastructure.sql_errors import retry_on_deadlock
+
+# The latest laboratory reading of each result, when one exists (append-only, see 0038).
+# Joined to resultados_laboratorio as r.
+LATEST_REVIEW = (
+    "OUTER APPLY (SELECT TOP 1 v.interpretacion_final, v.corregida, v.motivo "
+    "FROM resultados_laboratorio_revisiones v WHERE v.resultado_id = r.id "
+    "ORDER BY v.revisado_en DESC) rv "
+)
 
 
 def _canonical(value: object) -> str:
@@ -71,6 +80,20 @@ class SqlLabStore:
         self._engine = engine
 
     # ---------- lookups ----------
+
+    def detail_has_analyte_results(self, detalle_id: str) -> bool:
+        detail = _as_guid(detalle_id)
+        if detail is None:
+            return False
+        with self._engine.connect() as conn:
+            found = conn.execute(
+                text(
+                    "SELECT TOP 1 1 FROM resultados_laboratorio "
+                    "WHERE detalle_orden_id = :d AND analito_id IS NOT NULL"
+                ),
+                {"d": detail},
+            ).first()
+        return found is not None
 
     def analyte_linked_to_test(self, analito_id: str, tipo_prueba_id: str) -> bool:
         analito, prueba = _as_guid(analito_id), _as_guid(tipo_prueba_id)
@@ -497,6 +520,17 @@ class SqlLabStore:
                 return "ALREADY_CONFIRMED"
             if estado != "COMPLETADA":
                 return "NOT_COMPLETED"
+            unread = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM resultados_laboratorio r "
+                    "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                    "WHERE d.orden_id = :o AND NOT EXISTS ("
+                    "SELECT 1 FROM resultados_laboratorio_revisiones v WHERE v.resultado_id = r.id)"
+                ),
+                {"o": order_id},
+            ).scalar_one()
+            if unread:
+                return "PENDING_REVIEW"
             with_report = conn.execute(
                 text(
                     "SELECT COUNT(*) FROM documentos_clinicos "
@@ -686,9 +720,11 @@ class SqlLabStore:
                 text(
                     "SELECT r.id, r.detalle_orden_id, r.nombre_analito, r.valor_texto, "
                     "r.valor_numerico, r.unidad, r.referencia_min, r.referencia_max, "
-                    "r.interpretacion FROM resultados_laboratorio r "
+                    "r.interpretacion, rv.interpretacion_final, rv.corregida, rv.motivo "
+                    "FROM resultados_laboratorio r "
                     "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
-                    "WHERE d.orden_id = :o ORDER BY d.id, r.nombre_analito"
+                    + LATEST_REVIEW
+                    + "WHERE d.orden_id = :o ORDER BY d.id, r.nombre_analito"
                 ),
                 {"o": guid},
             ).all()
@@ -702,10 +738,79 @@ class SqlLabStore:
                 unidad=row.unidad,
                 referencia_min=None if row.referencia_min is None else float(row.referencia_min),
                 referencia_max=None if row.referencia_max is None else float(row.referencia_max),
-                interpretacion=row.interpretacion,
+                interpretacion=(
+                    row.interpretacion
+                    if row.interpretacion_final is None
+                    else row.interpretacion_final
+                ),
+                interpretacion_sistema=row.interpretacion,
+                revisado=row.interpretacion_final is not None,
+                corregido=bool(row.corregida),
+                motivo_correccion=row.motivo,
             )
             for row in rows
         ]
+
+    def review_results(
+        self, order_id: str, reviews: list[ResultReview], now: datetime, actor_user_id: str
+    ) -> str:
+        return retry_on_deadlock(
+            lambda: self._review_results_once(order_id, reviews, now, actor_user_id)
+        )
+
+    def _review_results_once(
+        self, order_id: str, reviews: list[ResultReview], now: datetime, actor_user_id: str
+    ) -> str:
+        moment = _utc_naive(now)
+        with self._engine.begin() as conn:
+            estado = _lock_order(conn, order_id)
+            if estado is None:
+                return "NOT_FOUND"
+            if _is_confirmed(conn, order_id):
+                return "ALREADY_CONFIRMED"
+            for review in reviews:
+                row = conn.execute(
+                    text(
+                        "SELECT r.interpretacion FROM resultados_laboratorio r "
+                        "JOIN ordenes_laboratorio_detalle d ON d.id = r.detalle_orden_id "
+                        "WHERE d.orden_id = :o AND r.id = :r"
+                    ),
+                    {"o": order_id, "r": review.resultado_id},
+                ).first()
+                if row is None:
+                    return "RESULT_NOT_FOUND"
+                system_reading = row.interpretacion
+                corrected = review.interpretacion_final != (system_reading or "NO_EVALUABLE")
+                conn.execute(
+                    text(
+                        "INSERT INTO resultados_laboratorio_revisiones (id, resultado_id, "
+                        "interpretacion_sistema, interpretacion_final, corregida, motivo, "
+                        "revisado_por, revisado_en) VALUES (:id, :r, :sistema, :final, :corr, "
+                        ":motivo, :por, :en)"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "r": review.resultado_id,
+                        "sistema": system_reading,
+                        "final": review.interpretacion_final,
+                        "corr": 1 if corrected else 0,
+                        "motivo": review.motivo,
+                        "por": actor_user_id,
+                        "en": moment,
+                    },
+                )
+                _outbox(
+                    conn,
+                    order_id,
+                    "resultado_laboratorio.revisado",
+                    {
+                        "resultado_id": review.resultado_id,
+                        "interpretacion_final": review.interpretacion_final,
+                        "corregido": corrected,
+                    },
+                    moment,
+                )
+        return "REVIEWED"
 
     def report_parties(self, order_id: str) -> ReportParties | None:
         guid = _as_guid(order_id)
@@ -908,7 +1013,11 @@ class SqlLabStore:
                 text(
                     "INSERT INTO auditoria_accesos (id, usuario_id, paciente_id, entidad, "
                     "entidad_id, accion, fecha_evento, resultado, correlation_id) "
-                    "VALUES (:id, :u, :p, :entidad, :entidad_id, :accion, :ahora, :resultado, "
+                    # A denied request may name a patient that does not exist: the FK would reject
+                    # the audit row and turn the 403 into a 500. The requested id stays in
+                    # entidad_id.
+                    "VALUES (:id, :u, (SELECT p.id FROM pacientes AS p WHERE p.id = :p), "
+                    ":entidad, :entidad_id, :accion, :ahora, :resultado, "
                     ":correlacion)"
                 ),
                 {

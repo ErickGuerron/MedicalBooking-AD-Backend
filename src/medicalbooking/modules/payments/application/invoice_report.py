@@ -386,3 +386,8 @@ def build_invoice_pdf(invoice: InvoiceDocument) -> bytes:
     end = _lines(document, invoice, top - 20)
     _totals(document, invoice, end)
     return document.render()
+
+
+# Public names of the brand drawing pieces, shared with the laboratory results report.
+Sheet = _Sheet
+brand_mark = _brand_mark

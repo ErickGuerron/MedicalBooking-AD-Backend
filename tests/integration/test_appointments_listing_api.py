@@ -20,6 +20,7 @@ from medicalbooking.config import Settings
 from medicalbooking.modules.identity.application.ports import NewUser
 from medicalbooking.modules.identity.infrastructure.repositories import SqlUserDirectory
 from medicalbooking.modules.identity.infrastructure.security import Argon2PasswordHasher
+from tests.integration.clinic_time import afternoon
 
 pytestmark = pytest.mark.integration
 
@@ -70,7 +71,9 @@ def _headers(app: Flask, user_id: str) -> dict[str, str]:
 def _agenda(engine: Engine) -> tuple[str, str]:
     """Create a clinician with one agenda and one free slot; return (doctor user, slot id)."""
     doctor = _user(engine, "MEDICO")
-    start = (datetime.now(UTC) + timedelta(days=4)).replace(second=0, microsecond=0, tzinfo=None)
+    start = afternoon(datetime.now(UTC) + timedelta(days=4)).replace(
+        second=0, microsecond=0, tzinfo=None
+    )
     with engine.begin() as conn:
         medico_id = conn.execute(
             text(
@@ -145,15 +148,18 @@ def test_patient_sees_own_appointments_and_never_another_patients(app, engine) -
     assert theirs not in ids
 
 
-def test_rows_carry_only_id_estado_and_utc_times(app, engine) -> None:
+def test_patient_rows_carry_id_estado_utc_times_and_the_doctor(app, engine) -> None:
     patient = _user(engine, "PACIENTE")
-    _, slot = _agenda(engine)
+    doctor, slot = _agenda(engine)
     cita = _book(app, _headers(app, patient), slot, _service(engine))
 
     items = app.test_client().get(PATH, headers=_headers(app, patient)).get_json()["items"]
     item = next(entry for entry in items if entry["id"] == cita)
 
-    assert set(item) == {"id", "estado", "inicio", "fin"}
+    assert set(item) == {"id", "estado", "inicio", "fin", "medico"}
+    assert set(item["medico"]) <= {"id", "nombre", "registro_profesional", "telefono"}
+    assert item["medico"]["registro_profesional"] == f"REG-{doctor}"
+    assert "paciente" not in item
     assert item["estado"] == "PENDIENTE_PAGO"
     assert item["inicio"].endswith("+00:00")
     assert item["fin"].endswith("+00:00")
@@ -225,3 +231,83 @@ def test_invalid_filters_and_paging_answer_422(app, engine, query) -> None:
 
 def test_listing_requires_authentication(app) -> None:
     assert app.test_client().get(PATH).status_code == 401
+
+
+def _set_phone(engine: Engine, user_id: str, phone: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE usuarios SET telefono = :t WHERE id = :u"), {"t": phone, "u": user_id}
+        )
+
+
+def _audit_rows(engine: Engine, user_id: str) -> list[tuple]:
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT entidad, accion, resultado, entidad_id, paciente_id "
+                "FROM auditoria_accesos WHERE usuario_id = :u "
+                "AND accion = 'listar_revision_cancelacion'"
+            ),
+            {"u": user_id},
+        ).all()
+
+
+def test_patient_sees_the_doctor_phone_and_registration_of_each_row(app, engine) -> None:
+    patient = _user(engine, "PACIENTE")
+    doctor, slot = _agenda(engine)
+    _set_phone(engine, doctor, "0999000111")
+    cita = _book(app, _headers(app, patient), slot, _service(engine))
+
+    items = app.test_client().get(PATH, headers=_headers(app, patient)).get_json()["items"]
+    item = next(entry for entry in items if entry["id"] == cita)
+
+    assert item["medico"]["telefono"] == "0999000111"
+    assert item["medico"]["registro_profesional"] == f"REG-{doctor}"
+
+
+def test_admin_candidates_carry_doctor_identity_and_no_patient_or_phone(app, engine) -> None:
+    admin = _user(engine, "ADMINISTRADOR")
+    patient = _user(engine, "PACIENTE")
+    doctor, slot = _agenda(engine)
+    _set_phone(engine, doctor, "0988777666")
+    cita = _book(app, _headers(app, patient), slot, _service(engine))
+
+    response = app.test_client().get(
+        "/api/v1/appointments/cancellation-approvals",
+        query_string={"medico_registro": f"REG-{doctor}"},
+        headers=_headers(app, admin),
+    )
+
+    assert response.status_code == 200
+    items = response.get_json()["items"]
+    assert [item["id"] for item in items] == [cita]
+    assert set(items[0]) == {"id", "estado", "inicio", "fin", "tiene_aprobacion", "medico"}
+    assert set(items[0]["medico"]) == {"id", "nombre", "registro_profesional"}
+    body = response.get_data(as_text=True)
+    assert "0988777666" not in body
+    assert "@synthetic.test" not in body
+
+
+def test_admin_general_listing_is_refused(app, engine) -> None:
+    admin = _user(engine, "ADMINISTRADOR")
+
+    assert app.test_client().get(PATH, headers=_headers(app, admin)).status_code == 403
+
+
+def test_candidates_reads_are_audited_ok_and_denials_as_denied(app, engine) -> None:
+    admin = _user(engine, "ADMINISTRADOR")
+    patient = _user(engine, "PACIENTE")
+
+    ok = app.test_client().get(
+        "/api/v1/appointments/cancellation-approvals", headers=_headers(app, admin)
+    )
+    denied = app.test_client().get(
+        "/api/v1/appointments/cancellation-approvals", headers=_headers(app, patient)
+    )
+
+    assert ok.status_code == 200
+    assert denied.status_code == 403
+    assert _audit_rows(engine, admin) == [("cita", "listar_revision_cancelacion", "OK", None, None)]
+    assert _audit_rows(engine, patient) == [
+        ("cita", "listar_revision_cancelacion", "DENEGADO", None, None)
+    ]

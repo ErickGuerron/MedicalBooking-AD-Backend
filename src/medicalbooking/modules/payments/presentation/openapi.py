@@ -61,6 +61,32 @@ _CARD_SCHEMA = {
 }
 
 
+_FACTURA_ID_PARAMETERS = [
+    {
+        "name": "factura_id",
+        "in": "path",
+        "required": True,
+        "schema": {"type": "string", "format": "uuid"},
+    }
+]
+
+_CHECKOUT_ATTEMPT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "pago_id": {"type": "string", "format": "uuid"},
+        "estado": {
+            "type": "string",
+            "enum": ["PENDIENTE", "CONFIRMADO", "RECHAZADO", "CANCELADO"],
+        },
+        "reintentos_realizados": {"type": "integer", "minimum": 0, "maximum": 5},
+        "reintentos_maximos": {"type": "integer", "const": 5},
+        "reintentos_agotados": {"type": "boolean"},
+        "ultimo_error_codigo": {"type": ["string", "null"]},
+        "proximo_reintento_en": {"type": ["string", "null"], "format": "date-time"},
+    },
+}
+
+
 def _problem(description: str) -> dict[str, Any]:
     return {"description": description, "content": _PROBLEM_CONTENT}
 
@@ -127,52 +153,40 @@ def payments_fragment() -> dict[str, Any]:
                         "the scheduled worker, or immediately with reintentar_ahora on checkout."
                     ),
                     "security": _BEARER,
-                    "parameters": [
-                        {
-                            "name": "factura_id",
-                            "in": "path",
-                            "required": True,
-                            "schema": {"type": "string", "format": "uuid"},
-                        }
-                    ],
+                    "parameters": _FACTURA_ID_PARAMETERS,
                     "responses": {
                         "200": {
                             "description": "Latest checkout attempt",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "pago_id": {"type": "string", "format": "uuid"},
-                                            "estado": {
-                                                "type": "string",
-                                                "enum": [
-                                                    "PENDIENTE",
-                                                    "CONFIRMADO",
-                                                    "RECHAZADO",
-                                                    "CANCELADO",
-                                                ],
-                                            },
-                                            "reintentos_realizados": {
-                                                "type": "integer",
-                                                "minimum": 0,
-                                                "maximum": 5,
-                                            },
-                                            "reintentos_maximos": {"type": "integer", "const": 5},
-                                            "reintentos_agotados": {"type": "boolean"},
-                                            "ultimo_error_codigo": {"type": ["string", "null"]},
-                                            "proximo_reintento_en": {
-                                                "type": ["string", "null"],
-                                                "format": "date-time",
-                                            },
-                                        },
-                                    }
-                                }
-                            },
+                            "content": {"application/json": {"schema": _CHECKOUT_ATTEMPT_SCHEMA}},
                         },
                         "401": _problem("Missing or invalid bearer token"),
                         "403": _problem("Not the owner, or the invoice does not exist"),
                         "404": _problem("The invoice has no checkout attempt yet"),
+                    },
+                }
+            },
+            "/api/v1/invoices/{factura_id}/checkout-status/reconcile": {
+                "post": {
+                    "tags": ["Payments"],
+                    "operationId": "reconcileCheckoutStatus",
+                    "summary": "Settle the latest checkout attempt against Stripe (owner only)",
+                    "description": (
+                        "Asks Stripe about the latest attempt. A session Stripe reports as paid "
+                        "confirms the payment, as the verified webhook would; an expired one is "
+                        "cancelled. It never opens a session or charges again. Answers the same "
+                        "body as the GET checkout-status."
+                    ),
+                    "security": _BEARER,
+                    "parameters": _FACTURA_ID_PARAMETERS,
+                    "responses": {
+                        "200": {
+                            "description": "Attempt status after reconciling with Stripe",
+                            "content": {"application/json": {"schema": _CHECKOUT_ATTEMPT_SCHEMA}},
+                        },
+                        "401": _problem("Missing or invalid bearer token"),
+                        "403": _problem("Not the owner, or the invoice does not exist"),
+                        "404": _problem("The invoice has no checkout attempt yet"),
+                        "503": _problem("Stripe is unavailable or the paid session does not match"),
                     },
                 }
             },
@@ -332,7 +346,7 @@ def payments_fragment() -> dict[str, Any]:
                         "409": _problem(
                             "Refused by a rule: PAGO_NO_CONFIRMADO, CITA_NO_CANCELADA, "
                             "CONSULTA_ATENDIDA, CANCELACION_TARDIA, REEMBOLSO_EXISTENTE, "
-                            "FUERA_DE_VENTANA, DEMASIADAS_SOLICITUDES, MOTIVO_INVALIDO or "
+                            "FUERA_DE_VENTANA, MOTIVO_INVALIDO or "
                             "SIN_PAYMENT_INTENT (the code is the problem detail)"
                         ),
                         "422": _problem("Missing Idempotency-Key header or invalid body"),

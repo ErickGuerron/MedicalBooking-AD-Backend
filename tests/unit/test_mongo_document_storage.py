@@ -83,3 +83,40 @@ def test_mongo_storage_needs_its_connection_settings(tmp_path: Path) -> None:
 def test_an_unknown_storage_name_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unknown document storage"):
         build_document_storage("s3", root=tmp_path)
+
+
+def _mongo_settings(**overrides: object):
+    from medicalbooking.config import Settings
+
+    return Settings(_env_file=None, document_storage="mongo", mongodb_database="db", **overrides)
+
+
+def test_mongo_storage_accepts_a_dedicated_documents_uri() -> None:
+    settings = _mongo_settings(mongodb_documents_uri="mongodb://docs")
+
+    assert settings.mongodb_documents_uri.get_secret_value() == "mongodb://docs"
+
+
+def test_mongo_storage_still_accepts_the_projection_uri_alone() -> None:
+    _mongo_settings(mongodb_projection_uri="mongodb://proj")
+
+
+def test_mongo_storage_without_any_uri_is_refused() -> None:
+    with pytest.raises(ValueError, match="MONGODB_DOCUMENTS_URI"):
+        _mongo_settings()
+
+
+def test_the_documents_uri_wins_over_the_projection_uri(monkeypatch: pytest.MonkeyPatch) -> None:
+    from medicalbooking.modules.laboratory.infrastructure import mongo_storage
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        mongo_storage, "build_document_storage", lambda kind, **kw: seen.update(kw) or kind
+    )
+    settings = _mongo_settings(
+        mongodb_documents_uri="mongodb://docs", mongodb_projection_uri="mongodb://proj"
+    )
+
+    mongo_storage.document_storage_for(settings)
+
+    assert seen["mongo_uri"] == "mongodb://docs"

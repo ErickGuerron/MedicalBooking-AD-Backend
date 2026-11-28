@@ -11,6 +11,7 @@ import pytest
 from medicalbooking.modules.identity.application.ports import AccessProfile
 from medicalbooking.modules.scheduling.application.ports import (
     Appointment,
+    ApprovalStatus,
     AvailableSlot,
     CancelCommand,
     CancelOutcome,
@@ -20,6 +21,7 @@ from medicalbooking.modules.scheduling.application.ports import (
     ReserveStatus,
 )
 from medicalbooking.modules.scheduling.application.use_cases import SchedulingService
+from medicalbooking.modules.scheduling.domain.policies import cancellation_window_closed
 from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
 
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
@@ -51,8 +53,14 @@ class FakeStore:
     reserve_calls: int = 0
     taken: set[str] = field(default_factory=set)
     slot_id: str = ""
+    window_closed: bool = False
+    franjas: dict = field(default_factory=dict)  # servicio id -> MANANA or TARDE
+    late_cancellations: int = 0
 
-    def list_available(self, start, end, medico_id, limit, especialidad_id=None):
+    def late_cancellations_since(self, patient_user_id, *, since, notice_hours):
+        return self.late_cancellations
+
+    def list_available(self, start, end, medico_id, limit, especialidad_id=None, franja=None):
         return [
             AvailableSlot(horario_id=sid, medico_id="medico", inicio_utc=ini, fin_utc=ini)
             for sid, ini in sorted(self.slots.items(), key=lambda item: item[1])
@@ -66,6 +74,9 @@ class FakeStore:
 
     def service_is_active(self, servicio_id):
         return servicio_id in self.services
+
+    def service_franja(self, servicio_id):
+        return self.franjas.get(servicio_id)
 
     def find_appointment_by_key(self, key):
         return next((a for a in self.appointments.values() if a.key == key), None)
@@ -96,6 +107,8 @@ class FakeStore:
             return CancelOutcome(CancelStatus.NOT_FOUND_OR_FORBIDDEN, None)
         if appointment.estado not in ("PENDIENTE_PAGO", "CONFIRMADA"):
             return CancelOutcome(CancelStatus.NOT_CANCELLABLE, None)
+        if self.window_closed:
+            return CancelOutcome(CancelStatus.WINDOW_CLOSED, None)
         cancelled = Appointment(**{**appointment.__dict__, "estado": "CANCELADA"})
         self.appointments[cancelled.id] = cancelled
         self.taken.discard(cancelled.horario_id)
@@ -284,6 +297,83 @@ def test_missing_and_forbidden_appointments_look_identical(store, patient) -> No
     assert missing.value.detail == forbidden.value.detail
 
 
+def test_the_cancellation_window_closes_one_hour_after_the_start() -> None:
+    start = datetime(2026, 11, 22, 14, 0, tzinfo=UTC)
+
+    assert not cancellation_window_closed(start, start + timedelta(minutes=60))
+    assert cancellation_window_closed(start, start + timedelta(minutes=61))
+
+
+def test_cancelling_after_the_window_conflicts(store, patient) -> None:
+    service = _service(store)
+    booked = _book(service, patient, store).appointment
+    store.window_closed = True
+
+    with pytest.raises(Conflict):
+        service.cancel(patient, booked.id)
+
+
+def test_an_approval_after_the_window_conflicts() -> None:
+    class ClosedWindowStore:
+        def approve_doctor_cancellation(self, *args):
+            return ApprovalStatus.WINDOW_CLOSED
+
+    service = SchedulingService(store=ClosedWindowStore(), clock=lambda: NOW, hold_minutes=15)
+    admin = _actor(permissions=frozenset({"citas.revisar_cancelaciones"}))
+
+    with pytest.raises(Conflict):
+        service.approve_doctor_cancellation(admin, _id(), motivo="Cubre la guardia")
+
+
+# ---------- franjas: sample collection in the morning, consultations in the afternoon ----------
+
+MORNING = datetime(2026, 11, 3, 13, 0, tzinfo=UTC)  # 08:00 branch time
+AFTERNOON = datetime(2026, 11, 3, 17, 0, tzinfo=UTC)  # 12:00 branch time
+
+
+def test_a_consultation_cannot_be_booked_into_the_morning_window(store, patient) -> None:
+    store.franjas["servicio-activo"] = "TARDE"
+    store.slots["manana"] = MORNING
+
+    with pytest.raises(ValidationFailed):
+        _service(store).book(
+            patient,
+            idempotency_key=KEY,
+            horario_id="manana",
+            servicio_id="servicio-activo",
+            motivo=None,
+        )
+
+
+def test_sample_collection_cannot_be_booked_in_the_afternoon(store, patient) -> None:
+    store.franjas["servicio-activo"] = "MANANA"
+    store.slots["tarde"] = AFTERNOON
+
+    with pytest.raises(ValidationFailed):
+        _service(store).book(
+            patient,
+            idempotency_key=KEY,
+            horario_id="tarde",
+            servicio_id="servicio-activo",
+            motivo=None,
+        )
+
+
+def test_a_consultation_books_into_the_afternoon_window(store, patient) -> None:
+    store.franjas["servicio-activo"] = "TARDE"
+    store.slots["tarde"] = AFTERNOON
+
+    result = _service(store).book(
+        patient,
+        idempotency_key=KEY,
+        horario_id="tarde",
+        servicio_id="servicio-activo",
+        motivo=None,
+    )
+
+    assert result.appointment.estado == "PENDIENTE_PAGO"
+
+
 def test_cancelling_twice_conflicts(store, patient) -> None:
     service = _service(store)
     booked = _book(service, patient, store).appointment
@@ -343,3 +433,17 @@ def test_running_expiration_twice_is_a_no_op_the_second_time(store, patient) -> 
 
     assert later.expire_overdue_holds() == 1
     assert later.expire_overdue_holds() == 0
+
+
+def test_patient_with_three_late_cancellations_cannot_book(store, patient) -> None:
+    store.late_cancellations = 3
+
+    with pytest.raises(Forbidden):
+        _book(_service(store), patient, store)
+    assert store.reserve_calls == 0
+
+
+def test_two_late_cancellations_still_allow_booking(store, patient) -> None:
+    store.late_cancellations = 2
+
+    assert _book(_service(store), patient, store).replayed is False

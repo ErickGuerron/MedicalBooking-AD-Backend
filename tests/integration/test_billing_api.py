@@ -21,6 +21,7 @@ from medicalbooking.modules.payments.application.billing_service import (
     BillingService,
     CheckoutRequest,
     CheckoutSession,
+    CheckoutSnapshot,
 )
 from medicalbooking.modules.payments.application.customers import CustomerDirectory
 from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
@@ -59,6 +60,17 @@ class StubGateway:
 
     def create_customer(self, idempotency_key: str) -> str:
         return f"cus_test_{uuid.uuid4().hex[:12]}"
+
+    def retrieve_session(self, session_id: str) -> CheckoutSnapshot:
+        # Still open: a replay reconciles first (reads Stripe) and then reopens the session.
+        return CheckoutSnapshot(
+            id=session_id,
+            url=f"https://checkout.test/{session_id}",
+            status="open",
+            payment_status="unpaid",
+            amount_cents=None,
+            currency=None,
+        )
 
 
 def _billing(engine: Engine, gateway: StubGateway) -> BillingService:
@@ -112,14 +124,15 @@ def test_invoice_for_a_booked_appointment_has_one_detail_line(app, engine) -> No
     )
 
 
-def test_second_invoice_for_the_same_appointment_conflicts(app, engine) -> None:
+def test_repeated_invoice_request_returns_the_same_invoice(app, engine) -> None:
     headers, cita = _booked_appointment(app, engine)
     client = app.test_client()
-    assert (
-        client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers).status_code == 201
-    )
+    first = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers)
+    assert first.status_code == 201
     again = client.post("/api/v1/invoices", json={"cita_id": cita}, headers=headers)
-    assert again.status_code == 409
+    assert again.status_code == 201
+    assert again.get_json()["id"] == first.get_json()["id"]
+    assert _count(engine, "SELECT COUNT(*) FROM facturas WHERE cita_id = :c", c=cita) == 1
 
 
 def test_foreign_patient_cannot_invoice_and_gets_the_same_answer_as_missing(app, engine) -> None:

@@ -8,6 +8,7 @@ transaction. Credentials and contact data are never projected.
 import json
 import uuid
 from collections.abc import Iterator
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from flask import Flask
@@ -144,8 +145,9 @@ def test_activation_emits_the_new_account_state(app, engine, mailer):
     _register(client, email)
     user_id = _user_id(engine, email)
 
-    link = mailer.links[email].replace("http://testserver", "")
-    response = client.get(link)
+    fragment_query = urlsplit(mailer.links[email]).fragment.partition("?")[2]
+    token = parse_qs(fragment_query)["token"][0]
+    response = client.get(f"/api/v1/auth/verify-email?token={token}")
     assert response.status_code in (200, 302), response.get_json() if response.is_json else ""
 
     events = _events(engine, user_id)

@@ -8,6 +8,12 @@ from datetime import UTC, datetime, timedelta
 from medicalbooking.shared.domain.errors import ValidationFailed
 
 PERM_BOOK = "citas.reservar"
+PERM_DECLARE_HOURS = "horario.declarar"  # a doctor declares the hours they work
+PERM_GENERATE_SLOTS = "horario.generar"  # an administrator proposes and creates slots
+PERM_MANAGE_OFFICES = "sedes.administrar"  # creates and edits sedes and consultorios
+# Appointments that still hold a consultorio's future slots: a sede or consultorio with one cannot
+# be deactivated (it is blocked, never cancelled).
+ACTIVE_BOOKING_STATES = ("PENDIENTE_PAGO", "CONFIRMADA")
 PERM_CANCEL_MEDICO = "citas.cancelar_medico"
 ROLE_PATIENT = "PACIENTE"
 PERM_OPEN_CONSULTATION = "consultas.abrir"
@@ -15,12 +21,17 @@ PERM_OPEN_CONSULTATION = "consultas.abrir"
 # Payment confirmation does not move an appointment to CONFIRMADA yet (pagos and facturas change,
 # citas.estado does not): until it does, widen this set or fix that step.
 CONSULTATION_APPOINTMENT_STATES = frozenset({"CONFIRMADA", "COMPLETADA"})
+# Notes of the attention (observaciones, plan_tratamiento): mirror the frontend clinical rule.
+CONSULTATION_TEXT_MAX = 1000
+_CLINICAL_TEXT = re.compile(r"[A-Za-z0-9áéíóúÁÉÍÓÚñÑüÜ\s.,:;()/\-–%°'\"]*")
 # Closed catalog of the reasons a doctor gives when cancelling an appointment of an own agenda.
 MOTIVOS_CANCELACION_MEDICO = frozenset({"IMPREVISTO_MEDICO", "OTRO_MEDICO"})
 MOTIVO_TEXTO_MAX = 1500  # mirrors citas.motivo_cancelacion_texto nvarchar(1500)
 REASON_REQUIRED = "MOTIVO_CANCELACION_REQUERIDO"
 REASON_INVALID = "MOTIVO_CANCELACION_INVALIDO"
 MAX_WINDOW = timedelta(days=31)
+# Patients and doctors may cancel until one hour after the start; an approval cannot reopen it.
+CANCELLATION_WINDOW = timedelta(hours=1)
 # Appointments that still hold a slot. Mirrors the filtered unique index UX_citas_horario_activa.
 ACTIVE_STATES = frozenset({"PENDIENTE_PAGO", "CONFIRMADA"})
 # Mirrors the CK_citas_estado check constraint.
@@ -51,6 +62,23 @@ def validate_page(limit: int, offset: int) -> None:
         raise ValidationFailed(f"'offset' must be between 0 and {MAX_PAGE_OFFSET}")
 
 
+def normalize_clinical_note(field: str, text: object) -> str | None:
+    """Optional clinical note: None or blank means absent; otherwise letters, digits and clinical
+    punctuation only, up to CONSULTATION_TEXT_MAX characters. Returns the trimmed text."""
+    if text is None:
+        return None
+    if not isinstance(text, str):
+        raise ValidationFailed(f"'{field}' must be a string")
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > CONSULTATION_TEXT_MAX:
+        raise ValidationFailed(f"'{field}' cannot exceed {CONSULTATION_TEXT_MAX} characters")
+    if not _CLINICAL_TEXT.fullmatch(cleaned):
+        raise ValidationFailed(f"'{field}' contains characters that are not allowed")
+    return cleaned
+
+
 def validate_estado(estado: str) -> None:
     if estado not in APPOINTMENT_STATES:
         raise ValidationFailed("'estado' must be one of: " + ", ".join(sorted(APPOINTMENT_STATES)))
@@ -61,6 +89,12 @@ def validate_idempotency_key(key: str) -> None:
         raise ValidationFailed(
             "Idempotency-Key must be 8-100 characters: letters, digits, '.', '_', ':' or '-'"
         )
+
+
+def cancellation_window_closed(start_utc: datetime, now: datetime) -> bool:
+    """True once the cancellation window of an appointment has passed. Both datetimes must be of
+    the same kind: aware, or naive UTC as the SQL adapter reads them."""
+    return now > start_utc + CANCELLATION_WINDOW
 
 
 def validate_cancellation_reason(codigo: str | None, texto: str | None) -> None:

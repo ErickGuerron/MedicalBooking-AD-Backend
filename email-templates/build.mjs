@@ -18,6 +18,7 @@ const outputDir = path.join(root, "src", "medicalbooking", "modules", "identity"
 const notificationsDir = path.join(root, "src", "medicalbooking", "modules", "notifications", "infrastructure", "email_templates");
 const templates = [
   { source: path.join(here, "activation", "activation.mjml"), output: path.join(outputDir, "activation.html") },
+  { source: path.join(here, "password-reset", "password-reset.mjml"), output: path.join(outputDir, "password_reset.html") },
   { source: path.join(here, "results", "resultados.mjml"), output: path.join(notificationsDir, "resultados.html") },
   { source: path.join(here, "reminder", "recordatorio-cita.mjml"), output: path.join(notificationsDir, "recordatorio_cita.html") },
   { source: path.join(here, "cancelada", "cita-cancelada.mjml"), output: path.join(notificationsDir, "cita_cancelada.html") },
@@ -28,12 +29,20 @@ const templates = [
 const check = process.argv.includes("--check");
 let stale = false;
 
+// mj-button wraps its link in a <td role="presentation">. A cell that holds a link is interactive
+// content, so the presentation role is removed from that cell only. Layout tables keep theirs.
+// MJML has no attribute to change this, so the compiled output is adjusted here.
+function linkCellWithoutPresentationRole(compiled) {
+  return compiled.replace(/(<td\b[^>]*?)\srole="presentation"([^>]*>\s*<a\b)/g, "$1$2");
+}
+
 for (const { source, output } of templates) {
   const input = await readFile(source, "utf8");
-  const { html, errors } = await mjml2html(input, { validationLevel: "strict" });
+  const { html: compiled, errors } = await mjml2html(input, { validationLevel: "strict" });
   if (errors.length > 0) {
     throw new Error(`MJML errors in ${source}: ${JSON.stringify(errors)}`);
   }
+  const html = linkCellWithoutPresentationRole(compiled);
   if (check) {
     const committed = await readFile(output, "utf8").catch(() => "");
     if (committed !== html) {

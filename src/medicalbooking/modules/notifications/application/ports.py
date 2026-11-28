@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
@@ -26,6 +27,9 @@ class CitaCancellation:
     por_medico: bool
     motivo_codigo: str | None = None
     motivo_texto: str | None = None
+    # The confirmed payment of the visit (None: not paid) and the outcome of its automatic refund.
+    monto_pagado: Decimal | None = None
+    reembolso_resultado: str | None = None
 
 
 @dataclass(frozen=True)

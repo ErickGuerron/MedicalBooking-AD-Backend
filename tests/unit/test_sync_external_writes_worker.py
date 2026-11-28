@@ -32,26 +32,33 @@ def test_help_prints_the_module_docstring_and_exits_zero(monkeypatch, capsys) ->
 
 def test_reports_how_many_external_writes_were_queued(monkeypatch, argv, capsys) -> None:
     engine = _Engine()
-    calls: dict = {}
+    cycles: list[dict] = []
 
     def fake_run_cycle(**kwargs):
-        calls.update(kwargs)
-        return 4
+        cycles.append(kwargs)
+        return 4 if kwargs["table"] == worker.TABLE_CITAS else 3
 
     monkeypatch.setattr(worker, "Settings", lambda: SimpleNamespace())
     monkeypatch.setattr(worker, "create_database_engine", lambda settings: engine)
-    monkeypatch.setattr(worker, "SqlChangedCitasReader", lambda e: ("reader", e))
+    monkeypatch.setattr(worker, "SqlChangedCitasReader", lambda e: ("reader-citas", e))
+    monkeypatch.setattr(worker, "SqlChangedUsuariosReader", lambda e: ("reader-usuarios", e))
     monkeypatch.setattr(worker, "SqlWatermarkStore", lambda e: ("watermarks", e))
-    monkeypatch.setattr(worker, "SqlOutboxPublisher", lambda e: ("publisher", e))
+    monkeypatch.setattr(worker, "SqlOutboxPublisher", lambda e: ("publisher-citas", e))
+    monkeypatch.setattr(worker, "SqlUsuarioOutboxPublisher", lambda e: ("publisher-usuarios", e))
     monkeypatch.setattr(worker, "run_cycle", fake_run_cycle)
 
     assert worker.main() == 0
-    assert capsys.readouterr().out.strip() == "queued=4"
-    assert calls["table"] == worker.TABLE_CITAS
-    assert calls["batch_size"] == worker.BATCH_SIZE
-    assert calls["reader"] == ("reader", engine)
-    assert calls["watermarks"] == ("watermarks", engine)
-    assert calls["publisher"] == ("publisher", engine)
+    assert capsys.readouterr().out.strip() == "queued=7"
+
+    citas, usuarios = cycles
+    assert citas["table"] == worker.TABLE_CITAS
+    assert citas["reader"] == ("reader-citas", engine)
+    assert citas["publisher"] == ("publisher-citas", engine)
+    assert usuarios["table"] == worker.TABLE_USUARIOS
+    assert usuarios["reader"] == ("reader-usuarios", engine)
+    assert usuarios["publisher"] == ("publisher-usuarios", engine)
+    assert citas["watermarks"] == usuarios["watermarks"] == ("watermarks", engine)
+    assert citas["batch_size"] == usuarios["batch_size"] == worker.BATCH_SIZE
     assert engine.disposed is True
 
 

@@ -18,13 +18,14 @@ from medicalbooking.modules.laboratory.application.ports import (
     LabResult,
     NewDocument,
     NewOrder,
+    ResultReview,
     StoredDocument,
 )
 from medicalbooking.modules.laboratory.application.use_cases import (
     DocumentIntegrityError,
     LabService,
 )
-from medicalbooking.shared.domain.errors import Conflict, Forbidden, ValidationFailed
+from medicalbooking.shared.domain.errors import Conflict, Forbidden, NotFound, ValidationFailed
 
 NOW = datetime(2026, 11, 2, 9, 0, tzinfo=UTC)
 PDF = b"%PDF-1.4\n% synthetic test report\n%%EOF\n"
@@ -60,17 +61,22 @@ class FakeStore:
     orders: dict[str, LabOrder] = field(default_factory=dict)
     results: dict[str, list[LabResult]] = field(default_factory=dict)
     reviews: dict[str, str] = field(default_factory=dict)
+    reviewed: list = field(default_factory=list)
     documents: dict[str, StoredDocument] = field(default_factory=dict)
     audit: list = field(default_factory=list)
     recorded_entries: list = field(default_factory=list)
     references: list = field(default_factory=list)
     profile: tuple = (None, None)
     linked: set | None = None  # None: every analyte is linked (no restriction in the fake)
+    analyte_detail_ids: set = field(default_factory=set)  # details already reported per analyte
     related: set = field(default_factory=set)  # (medico_id, paciente_id) pairs with a relation
     inactive: set = field(default_factory=set)  # paciente ids whose account is not ACTIVO
 
     def analyte_linked_to_test(self, analito_id, tipo_prueba_id):
         return self.linked is None or (analito_id, tipo_prueba_id) in self.linked
+
+    def detail_has_analyte_results(self, detalle_id):
+        return detalle_id in self.analyte_detail_ids
 
     def patient_profile(self, paciente_id):
         return self.profile
@@ -156,6 +162,15 @@ class FakeStore:
 
     def list_results(self, order_id):
         return list(self.results.get(order_id, []))
+
+    def review_results(self, order_id, reviews, now, actor_user_id):
+        if order_id not in self.orders:
+            return "NOT_FOUND"
+        known = {result.id for result in self.results.get(order_id, [])}
+        if any(review.resultado_id not in known for review in reviews):
+            return "RESULT_NOT_FOUND"
+        self.reviewed.extend((review, actor_user_id) for review in reviews)
+        return "REVIEWED"
 
     def record_review(self, order_id, conclusion, recomendaciones, now, actor_user_id):
         order = self.orders[order_id]
@@ -588,6 +603,37 @@ def test_a_result_needs_a_text_or_numeric_value(store, storage, world) -> None:
         )
 
 
+def test_a_free_text_result_cannot_join_a_test_already_reported_per_analyte(
+    store, storage, world
+) -> None:
+    service = _service(store, storage)
+    order = _order(service, world)
+    store.analyte_detail_ids.add(order.details[0].id)
+
+    with pytest.raises(ValidationFailed):
+        service.record_results(
+            world["lab"],
+            order.id,
+            order.details[0].id,
+            [_entry(nombre_analito="Valor suelto", valor_numerico=7.0)],
+        )
+    assert store.recorded_entries == []
+
+
+def test_a_numeric_result_cannot_be_negative(store, storage, world) -> None:
+    service = _service(store, storage)
+    order = _order(service, world)
+
+    with pytest.raises(ValidationFailed):
+        service.record_results(
+            world["lab"],
+            order.id,
+            order.details[0].id,
+            [_entry(valor_numerico=-5.0)],
+        )
+    assert store.recorded_entries == []
+
+
 def test_results_never_carry_a_clinical_classification(store, storage, world) -> None:
     service = _service(store, storage)
     order = _order(service, world)
@@ -907,3 +953,129 @@ def test_a_linked_analyte_is_accepted_under_its_test(store, storage, world) -> N
         [_entry(analito_id="analito-hb", valor_numerico=13.0)],
     )
     assert len(store.recorded_entries) == 1
+
+
+# ---------- result review: the laboratory reads every interpretation before confirming ----------
+
+
+def _classified_order(store, service, world, interpretacion="ALTO"):
+    order = _order(service, world)
+    result_id = _id()
+    store.results[order.id] = [
+        LabResult(
+            id=result_id,
+            detalle_id=order.details[0].id,
+            nombre_analito="Hemoglobina",
+            valor_texto=None,
+            valor_numerico=10.4,
+            unidad="g/dL",
+            interpretacion=interpretacion,
+            interpretacion_sistema=interpretacion,
+        )
+    ]
+    return order, result_id
+
+
+def test_the_laboratory_confirms_the_system_reading_without_a_reason(store, storage, world) -> None:
+    service = _service(store, storage)
+    order, result_id = _classified_order(store, service, world, interpretacion="ALTO")
+
+    service.review_results(
+        world["lab"], order.id, [ResultReview(resultado_id=result_id, interpretacion_final="ALTO")]
+    )
+
+    assert [(review.interpretacion_final, actor) for review, actor in store.reviewed] == [
+        ("ALTO", world["lab"].user_id)
+    ]
+
+
+def test_a_corrected_reading_needs_a_reason(store, storage, world) -> None:
+    service = _service(store, storage)
+    order, result_id = _classified_order(store, service, world, interpretacion="ALTO")
+
+    with pytest.raises(ValidationFailed):
+        service.review_results(
+            world["lab"],
+            order.id,
+            [ResultReview(resultado_id=result_id, interpretacion_final="BAJO", motivo="  ")],
+        )
+    assert store.reviewed == []
+
+
+def test_a_correction_with_a_reason_is_kept_and_audited_as_a_correction(
+    store, storage, world
+) -> None:
+    service = _service(store, storage)
+    order, result_id = _classified_order(store, service, world, interpretacion="ALTO")
+
+    service.review_results(
+        world["lab"],
+        order.id,
+        [
+            ResultReview(
+                resultado_id=result_id,
+                interpretacion_final="BAJO",
+                motivo="Valor transcrito con coma decimal",
+            )
+        ],
+    )
+
+    assert store.reviewed[0][0].interpretacion_final == "BAJO"
+    assert any("corregir" in str(event) for event in store.audit)
+
+
+def test_an_unclassified_result_counts_as_no_evaluable_when_confirmed(
+    store, storage, world
+) -> None:
+    service = _service(store, storage)
+    order, result_id = _classified_order(store, service, world, interpretacion=None)
+
+    service.review_results(
+        world["lab"],
+        order.id,
+        [ResultReview(resultado_id=result_id, interpretacion_final="NO_EVALUABLE")],
+    )
+    assert len(store.reviewed) == 1
+
+
+def test_an_unknown_result_or_reading_is_refused(store, storage, world) -> None:
+    service = _service(store, storage)
+    order, result_id = _classified_order(store, service, world)
+
+    with pytest.raises(NotFound):
+        service.review_results(
+            world["lab"],
+            order.id,
+            [ResultReview(resultado_id=_id(), interpretacion_final="ALTO")],
+        )
+    with pytest.raises(ValidationFailed):
+        service.review_results(
+            world["lab"],
+            order.id,
+            [ResultReview(resultado_id=result_id, interpretacion_final="MUY_ALTO")],
+        )
+
+
+def test_only_the_laboratory_reads_results(store, storage, world) -> None:
+    service = _service(store, storage)
+    order, result_id = _classified_order(store, service, world)
+
+    with pytest.raises(Forbidden):
+        service.review_results(
+            world["doctor"],
+            order.id,
+            [ResultReview(resultado_id=result_id, interpretacion_final="ALTO")],
+        )
+
+
+def test_the_laboratory_reads_the_results_it_reviews_but_not_the_rest_of_the_order(
+    store, storage, world
+) -> None:
+    service = _service(store, storage)
+    order, result_id = _classified_order(store, service, world)
+
+    results = service.list_results(world["lab"], order.id)
+
+    assert [result.id for result in results] == [result_id]
+    with pytest.raises(Forbidden):
+        service.get_order(world["lab"], order.id)
