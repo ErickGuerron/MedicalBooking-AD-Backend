@@ -205,6 +205,8 @@ def _horario_declarado(envelope: dict[str, Any], tx: Any) -> None:
 _HANDLERS: dict[str, Callable[[dict[str, Any], Any], None]] = {
     "horario_trabajo.declarado": _horario_declarado,
     "usuario.creado": _usuario_creado,
+    # Watermark sync of changed users: the same upsert as creation, so replaying it is harmless.
+    "usuario.actualizado": _usuario_creado,
     "usuario.activado": _usuario_activado,
     "usuario.eliminado": _usuario_eliminado,
     "orden_laboratorio.creada": _orden_creada,
