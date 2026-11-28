@@ -241,10 +241,10 @@ def cancel(appointment_id: uuid.UUID) -> tuple[Response, int]:
     # The cancellation is committed. Hooks run afterwards and must not change its answer.
     hook = current_app.extensions.get("medicalbooking.after_appointment_cancelled")
     refund = hook(g.actor, str(appointment_id)) if hook is not None else None
-    body = _appointment_json(appointment)
+    response = _appointment_json(appointment)
     if refund is not None:
-        body["reembolso"] = refund
-    return jsonify(body), 200
+        response["reembolso"] = refund
+    return jsonify(response), 200
 
 
 @scheduling_bp.post("/appointments/<uuid:appointment_id>/consultation")

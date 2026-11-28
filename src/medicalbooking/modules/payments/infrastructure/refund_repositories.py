@@ -10,8 +10,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, Row, text
 
 from medicalbooking.modules.payments.application.refund_service import (
     LatestRefund,
@@ -224,7 +225,7 @@ class SqlRefundStore:
                 {"usuario": usuario_id, **names},
             ).all()
             # Newest confirmed payment first: the first row seen for a cita is the one that counts.
-            latest: dict[str, object] = {}
+            latest: dict[str, Row[Any]] = {}
             for row in rows:
                 latest.setdefault(str(row.cita_id).lower(), row)
             pago_ids = [str(row.pago_id) for row in latest.values()]

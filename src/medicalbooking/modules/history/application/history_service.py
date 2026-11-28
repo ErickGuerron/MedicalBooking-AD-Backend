@@ -314,7 +314,7 @@ class HistoryService:
             and PERM_REGISTRAR in actor.permissions
             and self._store.resolve_medico_id(actor.user_id) == cita.medico_id
         )
-        if not treating:
+        if cita is None or not treating:
             raise self._denied(actor, cita.paciente_id if cita else None, _VITALS, cita_id, "crear")
         measures = validate_vitales({k: values.get(k) for k in _VITAL_KEYS})
         now = self._clock()

@@ -69,6 +69,10 @@ class ActivationMailer(Protocol):
         """Send the account activation link. Raises MailDeliveryError on failure."""
         ...
 
+    def send_password_reset(self, to_email: str, first_name: str, link: str) -> None:
+        """Send the password reset link. Raises MailDeliveryError on failure."""
+        ...
+
     def send_staff_activation(
         self,
         to_email: str,

@@ -102,13 +102,11 @@ def _result_text(result: LabResult) -> str:
 
 def _reference_text(result: LabResult) -> str:
     low, high = result.referencia_min, result.referencia_max
-    if low is None and high is None:
-        return EM_DASH
-    if low is not None and high is not None:
-        return f"{_number(low)} – {_number(high)}"
-    if low is not None:
+    if low is None:
+        return EM_DASH if high is None else f"<= {_number(high)}"
+    if high is None:
         return f">= {_number(low)}"
-    return f"<= {_number(high)}"
+    return f"{_number(low)} – {_number(high)}"
 
 
 class _Report:

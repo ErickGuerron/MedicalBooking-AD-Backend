@@ -86,7 +86,7 @@ class SqlChangedUsuariosReader:
         return [
             UsuarioChange(
                 version=int(row["version"]),
-                payload=usuario_payload(row, roles_by_user.get(_canonical(row["id"]), [])),
+                payload=usuario_payload(dict(row), roles_by_user.get(_canonical(row["id"]), [])),
             )
             for row in rows
         ]
