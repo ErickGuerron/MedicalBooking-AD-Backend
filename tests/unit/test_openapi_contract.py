@@ -90,6 +90,7 @@ EXPECTED_PATHS = {
     "/api/v1/invoices",
     "/api/v1/payments/checkout",
     "/api/v1/invoices/{factura_id}/checkout-status",
+    "/api/v1/invoices/{factura_id}/checkout-status/reconcile",
     "/api/v1/citas/{cita_id}/tratamientos",
     "/api/v1/tratamientos/{tratamiento_id}",
     "/api/v1/tratamientos/{tratamiento_id}/seguimientos",

@@ -176,6 +176,68 @@ def payments_fragment() -> dict[str, Any]:
                     },
                 }
             },
+            "/api/v1/invoices/{factura_id}/checkout-status/reconcile": {
+                "post": {
+                    "tags": ["Payments"],
+                    "operationId": "reconcileCheckoutStatus",
+                    "summary": "Settle the latest checkout attempt against Stripe (owner only)",
+                    "description": (
+                        "Asks Stripe about the latest attempt. A session Stripe reports as paid "
+                        "confirms the payment, as the verified webhook would; an expired one is "
+                        "cancelled. It never opens a session or charges again. Answers the same "
+                        "body as the GET checkout-status."
+                    ),
+                    "security": _BEARER,
+                    "parameters": [
+                        {
+                            "name": "factura_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "format": "uuid"},
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Attempt status after reconciling with Stripe",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "pago_id": {"type": "string", "format": "uuid"},
+                                            "estado": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "PENDIENTE",
+                                                    "CONFIRMADO",
+                                                    "RECHAZADO",
+                                                    "CANCELADO",
+                                                ],
+                                            },
+                                            "reintentos_realizados": {
+                                                "type": "integer",
+                                                "minimum": 0,
+                                                "maximum": 5,
+                                            },
+                                            "reintentos_maximos": {"type": "integer", "const": 5},
+                                            "reintentos_agotados": {"type": "boolean"},
+                                            "ultimo_error_codigo": {"type": ["string", "null"]},
+                                            "proximo_reintento_en": {
+                                                "type": ["string", "null"],
+                                                "format": "date-time",
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "401": _problem("Missing or invalid bearer token"),
+                        "403": _problem("Not the owner, or the invoice does not exist"),
+                        "404": _problem("The invoice has no checkout attempt yet"),
+                        "503": _problem("Stripe is unavailable or the paid session does not match"),
+                    },
+                }
+            },
             "/api/v1/payments/checkout": {
                 "post": {
                     "tags": ["Payments"],

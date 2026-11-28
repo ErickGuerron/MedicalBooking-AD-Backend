@@ -372,13 +372,43 @@ class BillingService:
             raise ServiceUnavailable("Payment provider returned an unknown session state")
         if snapshot.payment_status != "paid":
             raise Conflict("The payment is still being processed")
+        self._confirm_paid_session(invoice, payment, snapshot)
+        raise Conflict("The invoice is already paid")
+
+    def _confirm_paid_session(
+        self, invoice: InvoiceRecord, payment: PaymentRecord, snapshot: CheckoutSnapshot
+    ) -> None:
+        """Confirm the payment from a session Stripe reports as paid, once its amount and currency
+        match the invoice. Shared by every path that reads the provider, so none of them can skip
+        the check."""
         if (
             snapshot.amount_cents != to_cents(invoice.total)
             or snapshot.currency != invoice.moneda.upper()
         ):
             raise ServiceUnavailable("The paid session does not match the invoice")
         self._store.confirm_payment(payment.id, payment.factura_id, self._clock())
-        raise Conflict("The invoice is already paid")
+
+    def reconcile_checkout(self, actor: AccessProfile, *, factura_id: str) -> CheckoutStatus:
+        """Ask Stripe about the latest attempt of an own invoice and settle it if it was paid.
+
+        Read-only towards the provider: it never opens a session or charges again. A paid session
+        confirms the payment (the same step the webhook takes), an expired one is cancelled, and an
+        open or still-processing one changes nothing. The answer is the stored status afterwards.
+        """
+        _require(actor, PERM_CHECKOUT)
+        invoice = self._store.find_invoice(str(factura_id))
+        if invoice is None or invoice.paciente_user_id != actor.user_id:
+            raise Forbidden("Access to this resource is not allowed")
+        payment = self._store.find_latest_payment_for_invoice(str(factura_id))
+        if payment is None:
+            raise NotFound("This invoice has no checkout attempt")
+        if payment.estado == PAGO_PENDIENTE and payment.session_id is not None:
+            snapshot = self._retrieve(payment.session_id)
+            if snapshot.status == "complete" and snapshot.payment_status == "paid":
+                self._confirm_paid_session(invoice, payment, snapshot)
+            elif snapshot.status == "expired":
+                self._store.cancel_pending_payment(payment.id)
+        return self.checkout_status(actor, factura_id=factura_id)
 
     def _retrieve(self, session_id: str) -> CheckoutSnapshot:
         try:
@@ -426,7 +456,12 @@ class BillingService:
             raise Conflict("The Idempotency-Key was already used for another invoice")
         if payment.estado != PAGO_PENDIENTE:
             raise Conflict("The payment attempt is no longer pending")
-        return self._reopen_pending(invoice, payment, reintentar_ahora)
+        # The same key may come back after the patient paid (the webhook never arrived). Ask Stripe
+        # first, exactly as a new key does: replaying the session would hand back a paid checkout.
+        resumed = self._resume_pending(invoice, payment, reintentar_ahora)
+        if resumed is None:
+            raise Conflict("The payment attempt is no longer pending")
+        return resumed
 
     def checkout_status(self, actor: AccessProfile, *, factura_id: str) -> CheckoutStatus:
         _require(actor, PERM_CHECKOUT)

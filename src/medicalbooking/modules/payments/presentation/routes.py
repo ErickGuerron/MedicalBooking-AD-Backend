@@ -126,6 +126,17 @@ def checkout_status(factura_id: str) -> tuple[Response, int]:
     return jsonify(_status_json(status)), 200
 
 
+@payments_bp.post("/invoices/<factura_id>/checkout-status/reconcile")
+@authenticated
+def reconcile_checkout_status(factura_id: str) -> tuple[Response, int]:
+    try:
+        factura = uuid.UUID(factura_id)
+    except ValueError as error:
+        raise NotFound("This invoice has no checkout attempt") from error
+    status = _billing().reconcile_checkout(g.actor, factura_id=str(factura))
+    return jsonify(_status_json(status)), 200
+
+
 @payments_bp.post("/payments/<pago_id>/refunds")
 @authenticated
 def request_refund(pago_id: str) -> tuple[Response, int]:
