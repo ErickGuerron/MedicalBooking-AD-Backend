@@ -115,12 +115,14 @@ def test_unsupported_value_types_are_refused() -> None:
         canonical_value(object())
 
 
-def test_a_duplicate_natural_key_is_refused() -> None:
+def test_rows_sharing_a_natural_key_are_counted_not_merged_or_refused() -> None:
     tables = _sample()
     tables["analitos"].append(dict(tables["analitos"][0]))
 
-    with pytest.raises(ValueError, match="duplicate natural key"):
-        knowledge_digest(tables)
+    result = knowledge_digest(tables)
+
+    assert result.counts["analitos"] == 2
+    assert result.digest != knowledge_digest(_sample()).digest
 
 
 def test_a_missing_table_is_refused_not_treated_as_empty() -> None:
@@ -149,5 +151,9 @@ def test_counts_report_every_table() -> None:
     assert set(result.counts) == {spec.name for spec in TABLES}
 
 
-def test_an_empty_knowledge_base_has_a_stable_digest() -> None:
-    assert knowledge_digest(_empty_tables()).digest == knowledge_digest(_empty_tables()).digest
+EMPTY_KNOWLEDGE_DIGEST = "0f786788e61b0fdf8b4edb3034ad95df2988e43ff06d3c0d67d03a812d89b661"
+
+
+def test_an_empty_knowledge_base_has_a_pinned_digest() -> None:
+    # Pinned: changing TABLES (order, keys or fields) changes every digest, on purpose only.
+    assert knowledge_digest(_empty_tables()).digest == EMPTY_KNOWLEDGE_DIGEST

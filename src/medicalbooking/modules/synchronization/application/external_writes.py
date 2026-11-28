@@ -9,7 +9,7 @@ which keeps retrying while a replica is down.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol, TypeVar
+from typing import Protocol
 
 
 class Versioned(Protocol):
@@ -19,10 +19,7 @@ class Versioned(Protocol):
     def version(self) -> int: ...
 
 
-ChangeT = TypeVar("ChangeT", bound=Versioned)
-
-
-class ChangeReader(Protocol[ChangeT]):
+class ChangeReader[ChangeT: Versioned](Protocol):
     def changes_since(self, watermark: int, limit: int) -> list[ChangeT]: ...
 
 
@@ -30,12 +27,12 @@ class WatermarkReader(Protocol):
     def get(self, table: str) -> int: ...
 
 
-class BatchPublisher(Protocol[ChangeT]):
+class BatchPublisher[ChangeT: Versioned](Protocol):
     def publish(self, table: str, changes: Sequence[ChangeT], watermark: int) -> None:
         """Queue the batch and raise the watermark to ``watermark``, in one transaction."""
 
 
-def run_cycle(
+def run_cycle[ChangeT: Versioned](
     reader: ChangeReader[ChangeT],
     watermarks: WatermarkReader,
     publisher: BatchPublisher[ChangeT],

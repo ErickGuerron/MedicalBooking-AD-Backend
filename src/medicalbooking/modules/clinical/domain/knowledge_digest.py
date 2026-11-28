@@ -170,21 +170,23 @@ def _sort_key(values: tuple[Any, ...]) -> tuple[tuple[int, str], ...]:
 
 
 def canonical_lines(spec: TableSpec, rows: Sequence[Mapping[str, Any]]) -> list[str]:
-    """One JSON line per row, sorted by the natural key; duplicate keys are refused."""
+    """One JSON line per row, ordered by the natural key and then by the whole line.
+
+    Rows that share a natural key are kept and counted: a real database can hold them (for
+    example references that differ only in a field outside the key), and the digest must not fail
+    on the database it is meant to check. Ordering by the full line keeps the result independent of
+    the order the rows were read in.
+    """
     prepared: list[tuple[tuple[tuple[int, str], ...], str]] = []
-    seen: set[tuple[Any, ...]] = set()
     for row in rows:
         missing = [f for f in spec.fields if f not in row]
         if missing:
             raise KeyError(f"{spec.name}: row is missing {', '.join(missing)}")
         values = {f: canonical_value(row[f]) for f in spec.fields}
         key = tuple(values[k] for k in spec.key)
-        if key in seen:
-            raise ValueError(f"{spec.name}: duplicate natural key {key!r}")
-        seen.add(key)
         line = json.dumps(values, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         prepared.append((_sort_key(key), line))
-    prepared.sort(key=lambda item: item[0])
+    prepared.sort()
     return [line for _, line in prepared]
 
 

@@ -21,6 +21,7 @@ from medicalbooking.modules.payments.application.billing_service import (
     BillingService,
     CheckoutRequest,
     CheckoutSession,
+    CheckoutSnapshot,
 )
 from medicalbooking.modules.payments.application.customers import CustomerDirectory
 from medicalbooking.modules.payments.infrastructure.billing_repositories import SqlBillingStore
@@ -59,6 +60,17 @@ class StubGateway:
 
     def create_customer(self, idempotency_key: str) -> str:
         return f"cus_test_{uuid.uuid4().hex[:12]}"
+
+    def retrieve_session(self, session_id: str) -> CheckoutSnapshot:
+        # Still open: a replay reconciles first (reads Stripe) and then reopens the session.
+        return CheckoutSnapshot(
+            id=session_id,
+            url=f"https://checkout.test/{session_id}",
+            status="open",
+            payment_status="unpaid",
+            amount_cents=None,
+            currency=None,
+        )
 
 
 def _billing(engine: Engine, gateway: StubGateway) -> BillingService:
