@@ -1,0 +1,34 @@
+{
+  "bundle_version": "1.0.0",
+  "digest": "0e7eba58e7e7529ce70cce406bd620b220a978956618e8b52ddee89ab9b9f63d",
+  "files": {
+    "analitos": {
+      "rows": 10,
+      "sha256": "dc9b804108b6d53194ae7971289e3d0bc4d84142a6b305e605cf72d536864b2f"
+    },
+    "contenidos": {
+      "rows": 4,
+      "sha256": "d86db93ee604b78db87b3f1d8fec3dbae74bf6be62f73f2b5ac834b33af6c982"
+    },
+    "fuentes": {
+      "rows": 12,
+      "sha256": "8bb07eb4430032b7da131de73a47264dadb9fdf86482aded895153b9b869973a"
+    },
+    "referencias": {
+      "rows": 30,
+      "sha256": "ef10518c93678d26ea59e84518e3098092a2c94428a7f4d9c7724449b918fbd6"
+    },
+    "reglas": {
+      "rows": 4,
+      "sha256": "fc9468e876b2ab2f21f72b78d0f006302510b3a31a8fa92b451421fb1187d647"
+    },
+    "reglas_criterios": {
+      "rows": 4,
+      "sha256": "b00d064d6ba99bec8dbe1ac6e34f24adb1f385de7339c5097273d6c31b9883df"
+    },
+    "reglas_fuentes": {
+      "rows": 4,
+      "sha256": "702aa37cd728ddd980d1f918ef5cd17eaddde463880f8b01b32d1ba10e12345f"
+    }
+  }
+}

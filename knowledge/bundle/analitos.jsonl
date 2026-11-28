@@ -1,0 +1,10 @@
+{"activo":true,"codigo_loinc":null,"descripcion":"Colesterol total en suero.","nombre":"Colesterol total","tipo_valor":"NUMERICO","unidad_canonica":"mg/dL"}
+{"activo":true,"codigo_loinc":null,"descripcion":"Analito sintetico para pruebas del sistema","nombre":"Glucosa (SINTETICO)","tipo_valor":"NUMERICO","unidad_canonica":"mg/dL"}
+{"activo":true,"codigo_loinc":null,"descripcion":"Analito sintetico para pruebas del sistema","nombre":"Hemoglobina (SINTETICO)","tipo_valor":"NUMERICO","unidad_canonica":"g/dL"}
+{"activo":true,"codigo_loinc":null,"descripcion":"Triglicéridos en suero.","nombre":"Triglicéridos","tipo_valor":"NUMERICO","unidad_canonica":"mg/dL"}
+{"activo":true,"codigo_loinc":"1558-6","descripcion":"Glucosa plasmatica medida en la muestra en ayunas.","nombre":"Glucosa en plasma en ayunas","tipo_valor":"NUMERICO","unidad_canonica":"mg/dL"}
+{"activo":true,"codigo_loinc":"1988-5","descripcion":null,"nombre":"Proteina C reactiva (PCR)","tipo_valor":"NUMERICO","unidad_canonica":"mg/L"}
+{"activo":true,"codigo_loinc":"2276-4","descripcion":null,"nombre":"Ferritina serica (WHO 2020)","tipo_valor":"NUMERICO","unidad_canonica":"ug/L"}
+{"activo":true,"codigo_loinc":"4548-4","descripcion":null,"nombre":"Hemoglobina glicosilada (HbA1c, NGSP)","tipo_valor":"NUMERICO","unidad_canonica":"%"}
+{"activo":true,"codigo_loinc":"718-7","descripcion":"Concentracion de hemoglobina en sangre total.","nombre":"Hemoglobina en sangre total","tipo_valor":"NUMERICO","unidad_canonica":"g/dL"}
+{"activo":true,"codigo_loinc":"787-2","descripcion":null,"nombre":"Volumen corpuscular medio (VCM)","tipo_valor":"NUMERICO","unidad_canonica":"fL"}
